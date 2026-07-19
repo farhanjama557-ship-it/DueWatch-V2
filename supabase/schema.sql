@@ -27,16 +27,20 @@ create table if not exists public.clients (
 );
 
 -- ---------- invoices ----------
+-- NOTE: matches the existing/validated table. There is no `status` column —
+-- status is derived in the app from `paid` + `due_date`.
 create table if not exists public.invoices (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users (id) on delete cascade,
   client_id uuid references public.clients (id) on delete set null,
-  invoice_number text,
-  status text not null default 'draft',
-  issue_date date,
-  due_date date,
+  inv_num text,
   amount numeric(12, 2) not null default 0,
+  amount_paid numeric(12, 2) not null default 0,
+  inv_date date,
+  due_date date,
   notes text,
+  paid boolean not null default false,
+  last_reminder timestamptz,
   created_at timestamptz not null default now()
 );
 

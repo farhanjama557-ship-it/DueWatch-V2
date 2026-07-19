@@ -5,10 +5,9 @@ import { daysOverdue } from '../lib/format'
 
 const DataContext = createContext(null)
 
-const CLOSED_STATUSES = new Set(['paid', 'cancelled', 'void'])
-
+// An invoice is outstanding until it is marked paid.
 export function isOutstanding(inv) {
-  return !CLOSED_STATUSES.has(String(inv.status || '').toLowerCase())
+  return inv.paid !== true
 }
 
 export function balanceOf(inv) {
@@ -17,76 +16,35 @@ export function balanceOf(inv) {
   return Math.max(amount - paid, 0)
 }
 
-const firstDefined = (...vals) => vals.find((v) => v !== undefined && v !== null)
-
-// Map the pre-existing table's real columns to the canonical fields the UI
-// uses. Tolerates common naming variants so the app doesn't break on a rename.
+// Map the invoices table's real columns to the canonical fields the UI uses.
+// Actual columns: id, user_id, client_id, inv_num, amount, amount_paid,
+// inv_date, due_date, notes, paid, last_reminder, created_at (no status).
 export function normalizeInvoice(row) {
   return {
     ...row,
-    invoice_number: firstDefined(row.invoice_number, row.inv_num, row.number) ?? null,
-    issue_date: firstDefined(row.issue_date, row.issued_date, row.issued_on) ?? null,
-    due_date: firstDefined(row.due_date, row.due, row.due_on) ?? null,
-    amount: Number(firstDefined(row.amount, row.total, row.total_amount)) || 0,
-    amount_paid: Number(firstDefined(row.amount_paid, row.paid_amount, row.paid)) || 0,
-    last_reminder: firstDefined(row.last_reminder, row.last_reminder_at) ?? null,
-    status:
-      firstDefined(
-        row.status,
-        row.state,
-        row.invoice_status,
-        row.stage,
-        row.reminder_stage,
-        row.status_label
-      ) ?? '',
+    invoice_number: row.inv_num ?? null,
+    issue_date: row.inv_date ?? null,
+    due_date: row.due_date ?? null,
+    amount: Number(row.amount) || 0,
+    amount_paid: Number(row.amount_paid) || 0,
+    last_reminder: row.last_reminder ?? null,
+    paid: row.paid === true,
   }
 }
 
-const KNOWN_STATUSES = new Set(['sent', 'overdue', 'firm', 'final_notice', 'paid'])
-
-// Common variants seen in seed/test data mapped to the five known pill states.
-const STATUS_SYNONYMS = {
-  past_due: 'overdue',
-  pastdue: 'overdue',
-  late: 'overdue',
-  final: 'final_notice',
-  final_notice_sent: 'final_notice',
-  last_notice: 'final_notice',
-  firm_reminder: 'firm',
-  second_reminder: 'firm',
-  complete: 'paid',
-  completed: 'paid',
-  settled: 'paid',
-  closed: 'paid',
-  unpaid: 'sent',
-  open: 'sent',
-  pending: 'sent',
-  emailed: 'sent',
-  delivered: 'sent',
-  awaiting: 'sent',
-}
-
-function statusKey(status) {
-  return String(status || '')
-    .toLowerCase()
-    .trim()
-    .replace(/\s+/g, '_')
-}
-
-// Resolve an invoice to one of the five known pill statuses. Falls back to a
-// value derived from reliable fields (balance / due date) so a mismatched or
-// empty status column never renders as "Unknown".
+// There is no status column — derive it from `paid` + how overdue the invoice
+// is, per the product spec.
 export function effectiveStatus(inv) {
-  const key = statusKey(inv.status)
-  if (KNOWN_STATUSES.has(key)) return key
-  if (STATUS_SYNONYMS[key]) return STATUS_SYNONYMS[key]
-  if ((Number(inv.amount) || 0) > 0 && balanceOf(inv) <= 0) return 'paid'
-  if (daysOverdue(inv.due_date) > 0) return 'overdue'
-  return 'sent'
+  if (inv.paid === true) return 'paid'
+  const overdueBy = daysOverdue(inv.due_date) // >0 means past due
+  if (overdueBy > 30) return 'final_notice'
+  if (overdueBy >= 15) return 'firm' // 15–30 days
+  if (overdueBy >= 1) return 'overdue' // 1–14 days
+  return 'sent' // not yet due
 }
 
 // Display-side safety net: collapse rows duplicated by invoice number, keeping
-// the oldest (earliest created_at when present). The DB cleanup is the real fix.
+// the oldest (earliest created_at). The DB cleanup (dedupe.sql) is the real fix.
 export function dedupeInvoices(rows) {
   const kept = new Map()
   for (const r of rows) {
@@ -103,13 +61,13 @@ export function dedupeInvoices(rows) {
   return Array.from(kept.values())
 }
 
-// Greeting name: prefer profile full_name (first name), else the email local
+// Greeting name: prefer profiles.full_name (first name), else the email local
 // part; capitalize the first letter either way.
 function greetingName(profile, user) {
   const fullName = (profile?.full_name || user?.user_metadata?.full_name || '').trim()
   const base = fullName
     ? fullName.split(/\s+/)[0]
-    : (profile?.email || user?.email || '').split('@')[0]
+    : (user?.email || '').split('@')[0]
   if (!base) return 'there'
   return base.charAt(0).toUpperCase() + base.slice(1)
 }
@@ -128,12 +86,10 @@ export function DataProvider({ children }) {
 
     const profilePromise = supabase
       .from('profiles')
-      .select('full_name, email')
+      .select('full_name')
       .eq('id', user.id)
       .maybeSingle()
 
-    // Select * so a differently-named column in the pre-existing table can't
-    // throw "column does not exist"; fields are normalized below.
     const invoicesPromise = supabase
       .from('invoices')
       .select('*, clients(name)')
