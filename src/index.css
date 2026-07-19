@@ -747,6 +747,40 @@ table {
 }
 
 /* ============================================================
+   Money input — fixed $ adornment (not part of the value)
+   ============================================================ */
+.money-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.money-prefix {
+  position: absolute;
+  left: 12px;
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+/* Attribute selector raises specificity above `.field input` / `.action-form
+   input` so the left padding for the $ prefix always wins. */
+.money-field input[type='number'] {
+  width: 100%;
+  padding-left: 26px;
+  /* hide native number spinners for a cleaner money field */
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.money-field input[type='number']::-webkit-outer-spin-button,
+.money-field input[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+/* ============================================================
    Status pills
    ============================================================ */
 .pill {

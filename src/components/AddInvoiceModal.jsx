@@ -183,16 +183,26 @@ export default function AddInvoiceModal({ open, onClose }) {
 
           <div className="field">
             <label htmlFor="amount">Amount</label>
-            <input
-              id="amount"
-              type="number"
-              min="0"
-              step="0.01"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              placeholder="0.00"
-              required
-            />
+            <div className="money-field">
+              <span className="money-prefix">$</span>
+              <input
+                id="amount"
+                type="number"
+                min="0"
+                step="0.01"
+                inputMode="decimal"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                onBlur={(e) => {
+                  const n = Number(e.target.value)
+                  if (e.target.value !== '' && !Number.isNaN(n)) {
+                    setAmount(n.toFixed(2))
+                  }
+                }}
+                placeholder="0.00"
+                required
+              />
+            </div>
           </div>
 
           <div className="field">
