@@ -814,7 +814,8 @@ table {
   top: 0;
   right: 0;
   bottom: 0;
-  width: 320px;
+  width: 420px;
+  max-width: 92vw;
   background: var(--surface);
   box-shadow: -4px 0 24px rgba(15, 17, 23, 0.12);
   transform: translateX(100%);
@@ -889,7 +890,9 @@ table {
 .detail-body {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 16px 20px;
+  min-width: 0;
 }
 
 /* Line items table */
@@ -935,10 +938,17 @@ table {
 
 .totals-row {
   display: flex;
+  align-items: baseline;
   justify-content: space-between;
+  gap: 12px;
   font-size: 13px;
   color: var(--text-secondary);
   padding: 5px 0;
+}
+
+.totals-row > span:last-child {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .totals-partial {
