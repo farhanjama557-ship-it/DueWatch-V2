@@ -155,3 +155,25 @@ alter table public.reminders enable row level security;
 drop policy if exists "reminders_all_own" on public.reminders;
 create policy "reminders_all_own" on public.reminders
   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- ============================================================
+-- Usage events — fire-and-forget analytics of key actions
+-- (invoice_created, reminder_opened, reminder_sent,
+--  payment_recorded, invoice_marked_paid)
+-- ============================================================
+create table if not exists public.events (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users (id) on delete cascade,
+  event_type text not null,
+  invoice_id uuid references public.invoices (id) on delete set null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists events_user_id_idx on public.events (user_id);
+create index if not exists events_type_idx on public.events (event_type);
+
+alter table public.events enable row level security;
+
+drop policy if exists "events_all_own" on public.events;
+create policy "events_all_own" on public.events
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);

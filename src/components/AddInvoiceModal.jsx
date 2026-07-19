@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import { useData } from '../context/DataContext'
+import { logEvent } from '../lib/events'
 import { CloseIcon } from './icons'
 
 // today / date + N days as YYYY-MM-DD (local).
@@ -89,23 +90,28 @@ export default function AddInvoiceModal({ open, onClose }) {
       clientId = newClient.id
     }
 
-    const { error: iErr } = await supabase.from('invoices').insert({
-      user_id: user.id,
-      client_id: clientId,
-      inv_num: invNum.trim(),
-      inv_date: invDate || null,
-      due_date: dueDate || null,
-      amount: amt,
-      amount_paid: 0,
-      paid: false,
-      notes: notes.trim() || null,
-    })
+    const { data: newInvoice, error: iErr } = await supabase
+      .from('invoices')
+      .insert({
+        user_id: user.id,
+        client_id: clientId,
+        inv_num: invNum.trim(),
+        inv_date: invDate || null,
+        due_date: dueDate || null,
+        amount: amt,
+        amount_paid: 0,
+        paid: false,
+        notes: notes.trim() || null,
+      })
+      .select('id')
+      .single()
 
     if (iErr) {
       setSaving(false)
       return setError(`Could not create invoice: ${iErr.message}`)
     }
 
+    logEvent('invoice_created', { userId: user.id, invoiceId: newInvoice?.id ?? null })
     await refresh()
     setSaving(false)
     onClose()
