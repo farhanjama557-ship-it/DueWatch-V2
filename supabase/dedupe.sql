@@ -98,11 +98,30 @@ with ranked as (
 delete from public.invoices
 where ctid in (select ctid from ranked where rn > 1);
 
--- ---- Verify (should both be 0 now) ----
+-- ============================================================
+-- 3) Reminders: collapse duplicate seed events.
+--    Keep the earliest row per (invoice_id, title, detail); the reminders
+--    table columns are known (invoice_id, title, detail, created_at).
+-- ============================================================
+with ranked as (
+  select
+    ctid,
+    row_number() over (
+      partition by invoice_id, title, coalesce(detail, '')
+      order by created_at asc nulls last, ctid asc
+    ) as rn
+  from public.reminders
+)
+delete from public.reminders
+where ctid in (select ctid from ranked where rn > 1);
+
+-- ---- Verify (should all be 0 now) ----
 select count(*) - count(distinct (user_id, inv_num)) as invoice_dupes_remaining
 from public.invoices;
 select count(*) - count(distinct (user_id, name)) as client_dupes_remaining
 from public.clients;
+select count(*) - count(distinct (invoice_id, title, coalesce(detail, ''))) as reminder_dupes_remaining
+from public.reminders;
 
 -- Inspect the results above, then:
 commit;
