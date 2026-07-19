@@ -8,7 +8,7 @@ import {
   formatEventDate,
   daysOverdue,
 } from '../lib/format'
-import { balanceOf } from '../context/DataContext'
+import { balanceOf, effectiveStatus } from '../context/DataContext'
 
 // line_items is a pre-existing table — tolerate common column-name variants.
 const pick = (obj, ...keys) => {
@@ -112,7 +112,7 @@ export default function InvoiceDetailPanel({ invoice, onClose }) {
           <div className="detail-header-top">
             <h2 className="detail-client">{clientName}</h2>
             <div className="detail-header-right">
-              <StatusPill status={data.status} />
+              <StatusPill status={effectiveStatus(data)} />
               <button
                 className="detail-close"
                 onClick={onClose}

@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react'
-import { useData, isOutstanding, balanceOf } from '../context/DataContext'
+import { useData, isOutstanding, balanceOf, effectiveStatus } from '../context/DataContext'
 import Avatar from '../components/Avatar'
 import StatusPill from '../components/StatusPill'
 import InvoiceDetailPanel from '../components/InvoiceDetailPanel'
@@ -49,7 +49,7 @@ function InvoiceRow({ invoice, secondary, onClick }) {
         </span>
         <span className="invoice-secondary">{secondary}</span>
       </div>
-      <StatusPill status={invoice.status} />
+      <StatusPill status={effectiveStatus(invoice)} />
       <span className="invoice-amount">{formatMoney(balanceOf(invoice))}</span>
     </li>
   )

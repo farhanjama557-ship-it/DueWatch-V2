@@ -30,8 +30,88 @@ export function normalizeInvoice(row) {
     amount: Number(firstDefined(row.amount, row.total, row.total_amount)) || 0,
     amount_paid: Number(firstDefined(row.amount_paid, row.paid_amount, row.paid)) || 0,
     last_reminder: firstDefined(row.last_reminder, row.last_reminder_at) ?? null,
-    status: firstDefined(row.status, row.state) ?? '',
+    status:
+      firstDefined(
+        row.status,
+        row.state,
+        row.invoice_status,
+        row.stage,
+        row.reminder_stage,
+        row.status_label
+      ) ?? '',
   }
+}
+
+const KNOWN_STATUSES = new Set(['sent', 'overdue', 'firm', 'final_notice', 'paid'])
+
+// Common variants seen in seed/test data mapped to the five known pill states.
+const STATUS_SYNONYMS = {
+  past_due: 'overdue',
+  pastdue: 'overdue',
+  late: 'overdue',
+  final: 'final_notice',
+  final_notice_sent: 'final_notice',
+  last_notice: 'final_notice',
+  firm_reminder: 'firm',
+  second_reminder: 'firm',
+  complete: 'paid',
+  completed: 'paid',
+  settled: 'paid',
+  closed: 'paid',
+  unpaid: 'sent',
+  open: 'sent',
+  pending: 'sent',
+  emailed: 'sent',
+  delivered: 'sent',
+  awaiting: 'sent',
+}
+
+function statusKey(status) {
+  return String(status || '')
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, '_')
+}
+
+// Resolve an invoice to one of the five known pill statuses. Falls back to a
+// value derived from reliable fields (balance / due date) so a mismatched or
+// empty status column never renders as "Unknown".
+export function effectiveStatus(inv) {
+  const key = statusKey(inv.status)
+  if (KNOWN_STATUSES.has(key)) return key
+  if (STATUS_SYNONYMS[key]) return STATUS_SYNONYMS[key]
+  if ((Number(inv.amount) || 0) > 0 && balanceOf(inv) <= 0) return 'paid'
+  if (daysOverdue(inv.due_date) > 0) return 'overdue'
+  return 'sent'
+}
+
+// Display-side safety net: collapse rows duplicated by invoice number, keeping
+// the oldest (earliest created_at when present). The DB cleanup is the real fix.
+export function dedupeInvoices(rows) {
+  const kept = new Map()
+  for (const r of rows) {
+    const key = r.invoice_number ?? r.id
+    const existing = kept.get(key)
+    if (!existing) {
+      kept.set(key, r)
+      continue
+    }
+    const t = r.created_at ? new Date(r.created_at).getTime() : Infinity
+    const te = existing.created_at ? new Date(existing.created_at).getTime() : Infinity
+    if (t < te) kept.set(key, r)
+  }
+  return Array.from(kept.values())
+}
+
+// Greeting name: prefer profile full_name (first name), else the email local
+// part; capitalize the first letter either way.
+function greetingName(profile, user) {
+  const fullName = (profile?.full_name || user?.user_metadata?.full_name || '').trim()
+  const base = fullName
+    ? fullName.split(/\s+/)[0]
+    : (profile?.email || user?.email || '').split('@')[0]
+  if (!base) return 'there'
+  return base.charAt(0).toUpperCase() + base.slice(1)
 }
 
 export function DataProvider({ children }) {
@@ -70,16 +150,8 @@ export function DataProvider({ children }) {
       return
     }
 
-    // First name only, per the greeting spec.
-    const fullName =
-      profile?.full_name || user.user_metadata?.full_name || ''
-    const firstName =
-      fullName.trim().split(/\s+/)[0] ||
-      (profile?.email || user.email || '').split('@')[0] ||
-      'there'
-
-    setName(firstName)
-    setInvoices((inv || []).map(normalizeInvoice))
+    setName(greetingName(profile, user))
+    setInvoices(dedupeInvoices((inv || []).map(normalizeInvoice)))
     setLoading(false)
   }, [user])
 
