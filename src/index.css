@@ -376,6 +376,157 @@ p {
 }
 
 /* ============================================================
+   Morning Brief (dashboard)
+   ============================================================ */
+.brief {
+  max-width: 960px;
+}
+
+.brief-greeting {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--navy);
+  margin-bottom: 20px;
+}
+
+.brief-loading,
+.brief-error {
+  color: var(--gray);
+  font-size: 14px;
+}
+
+.brief-error {
+  color: var(--red);
+}
+
+/* --- KPI cards --- */
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.kpi-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 18px 20px;
+}
+
+.kpi-value {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--navy);
+  line-height: 1.2;
+}
+
+.kpi-label {
+  margin-top: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--gray);
+}
+
+/* --- Section cards --- */
+.brief-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 16px;
+}
+
+.brief-card-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--navy);
+  margin-bottom: 14px;
+}
+
+.brief-empty {
+  font-size: 14px;
+  color: var(--gray-lt);
+}
+
+/* --- Handled for you --- */
+.handled-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.handled-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  color: var(--ink-2);
+}
+
+.check-icon {
+  color: var(--cyan);
+  flex-shrink: 0;
+}
+
+/* --- Invoice lists (Needs Attention / Due in 7 Days) --- */
+.invoice-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.invoice-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.invoice-row:last-child {
+  border-bottom: none;
+}
+
+.invoice-client {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--navy);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.invoice-meta {
+  font-size: 13px;
+  color: var(--gray);
+  justify-self: end;
+}
+
+.invoice-overdue {
+  color: var(--red);
+  font-weight: 500;
+}
+
+.invoice-amount {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--navy);
+  justify-self: end;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 720px) {
+  .kpi-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* ============================================================
    Full-screen loader
    ============================================================ */
 .app-loading {
