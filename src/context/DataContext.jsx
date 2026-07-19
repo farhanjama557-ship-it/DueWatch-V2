@@ -17,6 +17,23 @@ export function balanceOf(inv) {
   return Math.max(amount - paid, 0)
 }
 
+const firstDefined = (...vals) => vals.find((v) => v !== undefined && v !== null)
+
+// Map the pre-existing table's real columns to the canonical fields the UI
+// uses. Tolerates common naming variants so the app doesn't break on a rename.
+export function normalizeInvoice(row) {
+  return {
+    ...row,
+    invoice_number: firstDefined(row.invoice_number, row.inv_num, row.number) ?? null,
+    issue_date: firstDefined(row.issue_date, row.issued_date, row.issued_on) ?? null,
+    due_date: firstDefined(row.due_date, row.due, row.due_on) ?? null,
+    amount: Number(firstDefined(row.amount, row.total, row.total_amount)) || 0,
+    amount_paid: Number(firstDefined(row.amount_paid, row.paid_amount, row.paid)) || 0,
+    last_reminder: firstDefined(row.last_reminder, row.last_reminder_at) ?? null,
+    status: firstDefined(row.status, row.state) ?? '',
+  }
+}
+
 export function DataProvider({ children }) {
   const { user } = useAuth()
   const [invoices, setInvoices] = useState([])
@@ -35,11 +52,11 @@ export function DataProvider({ children }) {
       .eq('id', user.id)
       .maybeSingle()
 
+    // Select * so a differently-named column in the pre-existing table can't
+    // throw "column does not exist"; fields are normalized below.
     const invoicesPromise = supabase
       .from('invoices')
-      .select(
-        'id, invoice_number, status, issue_date, due_date, amount, amount_paid, last_reminder, client_id, clients(name)'
-      )
+      .select('*, clients(name)')
       .eq('user_id', user.id)
 
     const [{ data: profile }, { data: inv, error: invErr }] = await Promise.all([
@@ -62,7 +79,7 @@ export function DataProvider({ children }) {
       'there'
 
     setName(firstName)
-    setInvoices(inv || [])
+    setInvoices((inv || []).map(normalizeInvoice))
     setLoading(false)
   }, [user])
 

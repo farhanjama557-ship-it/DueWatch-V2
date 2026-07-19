@@ -10,6 +10,17 @@ import {
 } from '../lib/format'
 import { balanceOf } from '../context/DataContext'
 
+// line_items is a pre-existing table — tolerate common column-name variants.
+const pick = (obj, ...keys) => {
+  for (const k of keys) {
+    if (obj[k] !== undefined && obj[k] !== null) return obj[k]
+  }
+  return undefined
+}
+const liDesc = (li) => pick(li, 'description', 'desc', 'name', 'item') ?? ''
+const liQty = (li) => Number(pick(li, 'quantity', 'qty', 'units')) || 0
+const liPrice = (li) => Number(pick(li, 'unit_price', 'price', 'rate', 'amount')) || 0
+
 /**
  * Slide-in invoice detail panel (320px, right side, overlay behind).
  * `invoice` non-null opens it; `onClose` closes it. Esc / overlay click close.
@@ -53,7 +64,7 @@ export default function InvoiceDetailPanel({ invoice, onClose }) {
     Promise.all([
       supabase
         .from('line_items')
-        .select('id, description, quantity, unit_price')
+        .select('*')
         .eq('invoice_id', invoice.id),
       supabase
         .from('reminders')
@@ -77,7 +88,7 @@ export default function InvoiceDetailPanel({ invoice, onClose }) {
   const overdueBy = daysOverdue(data.due_date)
 
   const subtotal = lineItems.reduce(
-    (sum, li) => sum + (Number(li.quantity) || 0) * (Number(li.unit_price) || 0),
+    (sum, li) => sum + liQty(li) * liPrice(li),
     0
   )
   // Fall back to the invoice amount if there are no line items yet.
@@ -149,12 +160,10 @@ export default function InvoiceDetailPanel({ invoice, onClose }) {
               ) : (
                 lineItems.map((li) => (
                   <tr key={li.id}>
-                    <td>{li.description}</td>
-                    <td className="ta-center">{li.quantity}</td>
+                    <td>{liDesc(li)}</td>
+                    <td className="ta-center">{liQty(li)}</td>
                     <td className="ta-right">
-                      {formatMoney(
-                        (Number(li.quantity) || 0) * (Number(li.unit_price) || 0)
-                      )}
+                      {formatMoney(liQty(li) * liPrice(li))}
                     </td>
                   </tr>
                 ))
