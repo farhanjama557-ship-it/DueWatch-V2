@@ -56,7 +56,7 @@ function InvoiceRow({ invoice, secondary, onClick }) {
 }
 
 export default function Dashboard() {
-  const { invoices, name, loading, error } = useData()
+  const { invoices, name, loading, error, refresh } = useData()
   const [selected, setSelected] = useState(null)
 
   const derived = useMemo(() => {
@@ -211,7 +211,7 @@ export default function Dashboard() {
         </>
       )}
 
-      <InvoiceDetailPanel invoice={selected} onClose={() => setSelected(null)} />
+      <InvoiceDetailPanel invoice={selected} onClose={() => setSelected(null)} onMutated={refresh} />
     </div>
   )
 }
