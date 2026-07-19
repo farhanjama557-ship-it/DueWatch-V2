@@ -1,135 +1,217 @@
-import { useMorningBrief } from '../hooks/useMorningBrief'
-import { formatMoney } from '../lib/format'
+import { useState, useMemo } from 'react'
+import { useData, isOutstanding, balanceOf } from '../context/DataContext'
+import Avatar from '../components/Avatar'
+import StatusPill from '../components/StatusPill'
+import InvoiceDetailPanel from '../components/InvoiceDetailPanel'
+import {
+  formatMoney,
+  formatLongDate,
+  formatShortDate,
+  daysOverdue,
+  daysUntil,
+} from '../lib/format'
+import {
+  OutstandingIcon,
+  ExpectedIcon,
+  AttentionIcon,
+  RemindersIcon,
+} from '../components/icons'
 
-function KpiCard({ label, value, accent }) {
+function KpiCard({ Icon, label, value, valueColor, support }) {
   return (
     <div className="kpi-card">
-      <div className="kpi-value" style={accent ? { color: accent } : undefined}>
+      <div className="kpi-top">
+        <Icon className="kpi-icon" />
+        <span className="kpi-label">{label}</span>
+      </div>
+      <div className="kpi-value" style={valueColor ? { color: valueColor } : undefined}>
         {value}
       </div>
-      <div className="kpi-label">{label}</div>
+      <div className="kpi-support">{support}</div>
     </div>
   )
 }
 
-function CheckIcon() {
+function InvoiceRow({ invoice, secondary, onClick }) {
   return (
-    <svg
-      className="check-icon"
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
+    <li className="invoice-row" onClick={onClick} role="button" tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          onClick()
+        }
+      }}
     >
-      <polyline points="20 6 9 17 4 12" />
-    </svg>
+      <Avatar name={invoice.clients?.name} size={36} />
+      <div className="invoice-main">
+        <span className="invoice-client">
+          {invoice.clients?.name || 'No client'}
+        </span>
+        <span className="invoice-secondary">{secondary}</span>
+      </div>
+      <StatusPill status={invoice.status} />
+      <span className="invoice-amount">{formatMoney(balanceOf(invoice))}</span>
+    </li>
   )
 }
 
 export default function Dashboard() {
-  const {
-    loading,
-    error,
-    name,
-    kpis,
-    handled,
-    needsAttention,
-    dueIn7Days,
-  } = useMorningBrief()
+  const { invoices, name, loading, error } = useData()
+  const [selected, setSelected] = useState(null)
+
+  const derived = useMemo(() => {
+    const outstanding = invoices.filter(isOutstanding)
+
+    let outstandingTotal = 0
+    let expectedThisWeek = 0
+    const needsAttention = []
+    const dueIn7Days = []
+
+    const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000
+    let remindersSent = 0
+
+    for (const inv of outstanding) {
+      const bal = balanceOf(inv)
+      outstandingTotal += bal
+
+      if (inv.last_reminder && new Date(inv.last_reminder).getTime() >= weekAgo) {
+        remindersSent += 1
+      }
+
+      const overdueBy = daysOverdue(inv.due_date)
+      const until = daysUntil(inv.due_date)
+
+      if (overdueBy > 0) {
+        needsAttention.push(inv)
+      } else if (until !== null && until >= 0 && until <= 7) {
+        expectedThisWeek += bal
+        dueIn7Days.push(inv)
+      }
+    }
+
+    needsAttention.sort((a, b) => daysOverdue(b.due_date) - daysOverdue(a.due_date))
+    dueIn7Days.sort((a, b) => daysUntil(a.due_date) - daysUntil(b.due_date))
+
+    return {
+      outstandingTotal,
+      expectedThisWeek,
+      needsAttention,
+      dueIn7Days,
+      remindersSent,
+      outstandingCount: outstanding.length,
+    }
+  }, [invoices])
 
   if (loading) {
     return <div className="brief-loading">Loading your brief…</div>
   }
 
   if (error) {
-    return (
-      <div className="brief-error">
-        Couldn&apos;t load your brief: {error}
-      </div>
-    )
+    return <div className="brief-error">Couldn&apos;t load your brief: {error}</div>
   }
+
+  const attentionCount = derived.needsAttention.length
+  const summary =
+    attentionCount === 0
+      ? 'Everything is handled — nothing needs a decision.'
+      : `${attentionCount} ${attentionCount === 1 ? 'invoice needs' : 'invoices need'} a decision — everything else is handled.`
+
+  const hasAnyInvoices = invoices.length > 0
 
   return (
     <div className="brief">
       <h1 className="brief-greeting">Good morning, {name}.</h1>
+      <p className="brief-subline">
+        {formatLongDate()} &nbsp;·&nbsp; {summary}
+      </p>
 
       {/* KPI cards */}
       <section className="kpi-grid">
-        <KpiCard label="Outstanding" value={formatMoney(kpis.outstanding)} />
         <KpiCard
+          Icon={OutstandingIcon}
+          label="Outstanding"
+          value={formatMoney(derived.outstandingTotal)}
+          support={`across ${derived.outstandingCount} ${derived.outstandingCount === 1 ? 'invoice' : 'invoices'}`}
+        />
+        <KpiCard
+          Icon={ExpectedIcon}
           label="Expected This Week"
-          value={formatMoney(kpis.expectedThisWeek)}
+          value={formatMoney(derived.expectedThisWeek)}
+          valueColor="var(--primary)"
+          support="due within 7 days"
         />
         <KpiCard
-          label="Invoices Need Attention"
-          value={kpis.needAttention}
-          accent={kpis.needAttention > 0 ? 'var(--red)' : undefined}
+          Icon={AttentionIcon}
+          label="Need Attention"
+          value={attentionCount}
+          valueColor="var(--amber)"
+          support={attentionCount === 1 ? 'overdue invoice' : 'overdue invoices'}
         />
-        <KpiCard label="Reminders Sent" value={kpis.remindersSent} />
+        <KpiCard
+          Icon={RemindersIcon}
+          label="Reminders Sent"
+          value={derived.remindersSent}
+          support="this week"
+        />
       </section>
 
-      {/* Handled for you */}
-      <section className="brief-card">
-        <h2 className="brief-card-title">Handled for you</h2>
-        {handled.length === 0 ? (
-          <p className="brief-empty">Nothing handled automatically yet.</p>
-        ) : (
-          <ul className="handled-list">
-            {handled.map((item, i) => (
-              <li key={i} className="handled-item">
-                <CheckIcon />
-                <span>{item}</span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+      {!hasAnyInvoices ? (
+        <section className="brief-card">
+          <p className="brief-empty">No invoices yet.</p>
+        </section>
+      ) : (
+        <>
+          {/* Needs Attention */}
+          <section className="brief-card">
+            <div className="section-head">
+              <h2 className="section-title">Needs attention</h2>
+              {attentionCount > 0 && (
+                <span className="section-count">{attentionCount}</span>
+              )}
+            </div>
+            {attentionCount === 0 ? (
+              <p className="brief-empty">No overdue invoices. You&apos;re all caught up.</p>
+            ) : (
+              <ul className="invoice-list">
+                {derived.needsAttention.map((inv) => {
+                  const od = daysOverdue(inv.due_date)
+                  return (
+                    <InvoiceRow
+                      key={inv.id}
+                      invoice={inv}
+                      secondary={`${od} ${od === 1 ? 'day' : 'days'} overdue · ${inv.invoice_number || 'No number'}`}
+                      onClick={() => setSelected(inv)}
+                    />
+                  )
+                })}
+              </ul>
+            )}
+          </section>
 
-      {/* Needs Attention */}
-      <section className="brief-card">
-        <h2 className="brief-card-title">Needs Attention</h2>
-        {needsAttention.length === 0 ? (
-          <p className="brief-empty">No overdue invoices. You&apos;re all caught up.</p>
-        ) : (
-          <ul className="invoice-list">
-            {needsAttention.map((inv) => (
-              <li key={inv.id} className="invoice-row">
-                <span className="invoice-client">{inv.clientName}</span>
-                <span className="invoice-meta invoice-overdue">
-                  {inv.overdueBy} {inv.overdueBy === 1 ? 'day' : 'days'} overdue
-                </span>
-                <span className="invoice-amount">{formatMoney(inv.amount)}</span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+          {/* Due in 7 Days */}
+          <section className="brief-card">
+            <div className="section-head">
+              <h2 className="section-title">Due in 7 days</h2>
+            </div>
+            {derived.dueIn7Days.length === 0 ? (
+              <p className="brief-empty">Nothing due in the next 7 days.</p>
+            ) : (
+              <ul className="invoice-list">
+                {derived.dueIn7Days.map((inv) => (
+                  <InvoiceRow
+                    key={inv.id}
+                    invoice={inv}
+                    secondary={`Due ${formatShortDate(inv.due_date)} · ${inv.invoice_number || 'No number'} · reminder scheduled`}
+                    onClick={() => setSelected(inv)}
+                  />
+                ))}
+              </ul>
+            )}
+          </section>
+        </>
+      )}
 
-      {/* Due in 7 Days */}
-      <section className="brief-card">
-        <h2 className="brief-card-title">Due in 7 Days</h2>
-        {dueIn7Days.length === 0 ? (
-          <p className="brief-empty">Nothing due in the next 7 days.</p>
-        ) : (
-          <ul className="invoice-list">
-            {dueIn7Days.map((inv) => (
-              <li key={inv.id} className="invoice-row">
-                <span className="invoice-client">{inv.clientName}</span>
-                <span className="invoice-meta">
-                  {inv.until === 0
-                    ? 'Due today'
-                    : `Due in ${inv.until} ${inv.until === 1 ? 'day' : 'days'}`}
-                </span>
-                <span className="invoice-amount">{formatMoney(inv.amount)}</span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+      <InvoiceDetailPanel invoice={selected} onClose={() => setSelected(null)} />
     </div>
   )
 }

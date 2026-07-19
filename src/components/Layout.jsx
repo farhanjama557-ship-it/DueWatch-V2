@@ -1,17 +1,16 @@
 import { Outlet } from 'react-router-dom'
+import { DataProvider } from '../context/DataContext'
 import Sidebar from './Sidebar'
-import TopBar from './TopBar'
 
 export default function Layout() {
   return (
-    <div className="app-shell">
-      <Sidebar />
-      <div className="main-column">
-        <TopBar />
+    <DataProvider>
+      <div className="app-shell">
+        <Sidebar />
         <main className="content">
           <Outlet />
         </main>
       </div>
-    </div>
+    </DataProvider>
   )
 }

@@ -7,6 +7,8 @@ import Signup from './pages/Signup'
 import Dashboard from './pages/Dashboard'
 import Invoices from './pages/Invoices'
 import Clients from './pages/Clients'
+import CashFlow from './pages/CashFlow'
+import Activity from './pages/Activity'
 import Settings from './pages/Settings'
 
 // Redirect authenticated users away from auth screens.
@@ -47,6 +49,8 @@ export default function App() {
         <Route path="/" element={<Dashboard />} />
         <Route path="/invoices" element={<Invoices />} />
         <Route path="/clients" element={<Clients />} />
+        <Route path="/cash-flow" element={<CashFlow />} />
+        <Route path="/activity" element={<Activity />} />
         <Route path="/settings" element={<Settings />} />
       </Route>
 

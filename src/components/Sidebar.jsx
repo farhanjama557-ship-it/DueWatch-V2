@@ -1,57 +1,80 @@
 import { NavLink } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { useData } from '../context/DataContext'
+import { initials } from '../lib/format'
 import {
-  DashboardIcon,
+  MorningBriefIcon,
   InvoicesIcon,
   ClientsIcon,
+  CashFlowIcon,
+  ActivityIcon,
   SettingsIcon,
-  SignOutIcon,
   LogoMark,
 } from './icons'
 
-const navItems = [
-  { to: '/', label: 'Dashboard', Icon: DashboardIcon, end: true },
-  { to: '/invoices', label: 'Invoices', Icon: InvoicesIcon },
+const mainNav = [
+  { to: '/', label: 'Morning Brief', Icon: MorningBriefIcon, end: true },
+  { to: '/invoices', label: 'Invoices', Icon: InvoicesIcon, badge: true },
   { to: '/clients', label: 'Clients', Icon: ClientsIcon },
+  { to: '/cash-flow', label: 'Cash Flow', Icon: CashFlowIcon },
+]
+
+const workspaceNav = [
+  { to: '/activity', label: 'Activity', Icon: ActivityIcon },
   { to: '/settings', label: 'Settings', Icon: SettingsIcon },
 ]
 
+function NavItem({ to, label, Icon, end, badge, overdueCount }) {
+  return (
+    <NavLink
+      to={to}
+      end={end}
+      className={({ isActive }) =>
+        isActive ? 'nav-item active' : 'nav-item'
+      }
+    >
+      <Icon className="nav-icon" />
+      <span className="nav-label">{label}</span>
+      {badge && overdueCount > 0 && (
+        <span className="nav-badge">{overdueCount}</span>
+      )}
+    </NavLink>
+  )
+}
+
 export default function Sidebar() {
-  const { signOut } = useAuth()
+  const { user } = useAuth()
+  const { name, overdueCount } = useData()
+
+  const email = user?.email ?? ''
+  const displayName = name || email.split('@')[0] || 'Account'
 
   return (
     <aside className="sidebar">
-      <div className="sidebar-logo" title="DueWatch">
+      <div className="sidebar-brand">
         <LogoMark />
+        <span className="sidebar-brand-name">Duewatch</span>
       </div>
 
       <nav className="sidebar-nav">
-        {navItems.map(({ to, label, Icon, end }) => (
-          <NavLink
-            key={to}
-            to={to}
-            end={end}
-            className={({ isActive }) =>
-              isActive ? 'sidebar-link active' : 'sidebar-link'
-            }
-            title={label}
-            aria-label={label}
-          >
-            <Icon />
-          </NavLink>
+        {mainNav.map((item) => (
+          <NavItem key={item.to} {...item} overdueCount={overdueCount} />
+        ))}
+
+        <div className="sidebar-section-label">Workspace</div>
+
+        {workspaceNav.map((item) => (
+          <NavItem key={item.to} {...item} overdueCount={overdueCount} />
         ))}
       </nav>
 
-      <div className="sidebar-spacer" />
-
-      <button
-        className="sidebar-signout"
-        onClick={signOut}
-        title="Sign out"
-        aria-label="Sign out"
-      >
-        <SignOutIcon />
-      </button>
+      <div className="sidebar-profile">
+        <span className="profile-avatar">{initials(displayName)}</span>
+        <div className="profile-meta">
+          <span className="profile-name">{displayName}</span>
+          <span className="profile-tier">Early Access</span>
+        </div>
+      </div>
     </aside>
   )
 }

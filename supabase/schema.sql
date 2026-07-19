@@ -119,3 +119,35 @@ drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created
   after insert on auth.users
   for each row execute function public.handle_new_user();
+
+-- ============================================================
+-- Session 2 additions: partial payments, last reminder, reminder events
+-- (idempotent — safe to re-run)
+-- ============================================================
+
+-- Amount already collected against an invoice (for partial payment / balance due).
+alter table public.invoices
+  add column if not exists amount_paid numeric(12, 2) not null default 0;
+
+-- Timestamp of the most recent reminder sent for this invoice.
+alter table public.invoices
+  add column if not exists last_reminder timestamptz;
+
+-- Reminder / activity events shown in the invoice detail timeline.
+create table if not exists public.reminders (
+  id uuid primary key default gen_random_uuid(),
+  invoice_id uuid not null references public.invoices (id) on delete cascade,
+  user_id uuid not null references auth.users (id) on delete cascade,
+  title text not null,
+  detail text,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists reminders_invoice_id_idx on public.reminders (invoice_id);
+create index if not exists reminders_user_id_idx on public.reminders (user_id);
+
+alter table public.reminders enable row level security;
+
+drop policy if exists "reminders_all_own" on public.reminders;
+create policy "reminders_all_own" on public.reminders
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);

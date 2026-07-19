@@ -1,3 +1,8 @@
 export default function Invoices() {
-  return <p className="page-placeholder">Invoices — coming soon.</p>
+  return (
+    <div className="brief">
+      <h1 className="brief-greeting">Invoices</h1>
+      <p className="page-placeholder">Coming soon.</p>
+    </div>
+  )
 }

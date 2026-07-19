@@ -42,3 +42,43 @@ export function daysUntil(dueValue, today = startOfToday()) {
   if (!due) return null
   return Math.round((due - today) / MS_PER_DAY)
 }
+
+// "Saturday, July 19, 2026"
+export function formatLongDate(date = new Date()) {
+  return date.toLocaleDateString('en-US', {
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+  })
+}
+
+// "Jul 19, 2026" — accepts a YYYY-MM-DD string or a Date.
+export function formatShortDate(value) {
+  const d = value instanceof Date ? value : parseDate(value)
+  if (!d) return '—'
+  return d.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  })
+}
+
+// "Jul 19" — timeline-style, includes time if there is a timestamp.
+export function formatEventDate(value) {
+  if (!value) return ''
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return ''
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+}
+
+// Two-letter initials from a name: "Acme Corp" -> "AC", "Nova" -> "NO".
+export function initials(name) {
+  const trimmed = String(name || '').trim()
+  if (!trimmed) return '—'
+  const parts = trimmed.split(/\s+/)
+  if (parts.length === 1) {
+    return parts[0].slice(0, 2).toUpperCase()
+  }
+  return (parts[0][0] + parts[1][0]).toUpperCase()
+}
