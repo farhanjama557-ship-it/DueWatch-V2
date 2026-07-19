@@ -78,6 +78,7 @@ export function DataProvider({ children }) {
   const [name, setName] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [clients, setClients] = useState([])
 
   const load = useCallback(async () => {
     if (!user) return
@@ -95,10 +96,13 @@ export function DataProvider({ children }) {
       .select('*, clients(name)')
       .eq('user_id', user.id)
 
-    const [{ data: profile }, { data: inv, error: invErr }] = await Promise.all([
-      profilePromise,
-      invoicesPromise,
-    ])
+    const clientsPromise = supabase
+      .from('clients')
+      .select('*')
+      .eq('user_id', user.id)
+
+    const [{ data: profile }, { data: inv, error: invErr }, { data: cli }] =
+      await Promise.all([profilePromise, invoicesPromise, clientsPromise])
 
     if (invErr) {
       setError(invErr.message)
@@ -108,6 +112,7 @@ export function DataProvider({ children }) {
 
     setName(greetingName(profile, user))
     setInvoices(dedupeInvoices((inv || []).map(normalizeInvoice)))
+    setClients(cli || [])
     setLoading(false)
   }, [user])
 
@@ -119,7 +124,7 @@ export function DataProvider({ children }) {
     (i) => isOutstanding(i) && daysOverdue(i.due_date) > 0
   ).length
 
-  const value = { invoices, name, loading, error, overdueCount, refresh: load }
+  const value = { invoices, clients, name, loading, error, overdueCount, refresh: load }
 
   return <DataContext.Provider value={value}>{children}</DataContext.Provider>
 }
