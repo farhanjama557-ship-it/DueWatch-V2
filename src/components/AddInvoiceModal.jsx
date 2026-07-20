@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import { useData } from '../context/DataContext'
+import { logEvent } from '../lib/events'
 import { CloseIcon } from './icons'
 
 // today / date + N days as YYYY-MM-DD (local).
@@ -19,7 +20,7 @@ function addDays(isoDate, n) {
 
 export default function AddInvoiceModal({ open, onClose }) {
   const { user } = useAuth()
-  const { clients, refresh } = useData()
+  const { clients, refresh, addInvoiceLocal } = useData()
 
   const [clientName, setClientName] = useState('')
   const [invNum, setInvNum] = useState('')
@@ -89,23 +90,34 @@ export default function AddInvoiceModal({ open, onClose }) {
       clientId = newClient.id
     }
 
-    const { error: iErr } = await supabase.from('invoices').insert({
-      user_id: user.id,
-      client_id: clientId,
-      inv_num: invNum.trim(),
-      inv_date: invDate || null,
-      due_date: dueDate || null,
-      amount: amt,
-      amount_paid: 0,
-      paid: false,
-      notes: notes.trim() || null,
-    })
+    const { data: newInvoice, error: iErr } = await supabase
+      .from('invoices')
+      .insert({
+        user_id: user.id,
+        client_id: clientId,
+        inv_num: invNum.trim(),
+        inv_date: invDate || null,
+        due_date: dueDate || null,
+        amount: amt,
+        amount_paid: 0,
+        paid: false,
+        notes: notes.trim() || null,
+      })
+      .select('*')
+      .single()
 
     if (iErr) {
       setSaving(false)
       return setError(`Could not create invoice: ${iErr.message}`)
     }
 
+    // Add the normalized invoice to state immediately so its derived status
+    // (e.g. Overdue when the due date is in the past) is correct without a
+    // refresh; then reconcile with a full refetch.
+    if (newInvoice) {
+      addInvoiceLocal({ ...newInvoice, clients: { name } })
+    }
+    logEvent('invoice_created', { userId: user.id, invoiceId: newInvoice?.id ?? null })
     await refresh()
     setSaving(false)
     onClose()

@@ -32,7 +32,7 @@ function KpiCard({ Icon, label, value, valueColor, support }) {
   )
 }
 
-function InvoiceRow({ invoice, secondary, onClick }) {
+function InvoiceRow({ invoice, secondary, onClick, onDraft }) {
   return (
     <li className="invoice-row" onClick={onClick} role="button" tabIndex={0}
       onKeyDown={(e) => {
@@ -51,6 +51,17 @@ function InvoiceRow({ invoice, secondary, onClick }) {
       </div>
       <StatusPill status={effectiveStatus(invoice)} />
       <span className="invoice-amount">{formatMoney(balanceOf(invoice))}</span>
+      {onDraft && (
+        <button
+          className="row-action"
+          onClick={(e) => {
+            e.stopPropagation()
+            onDraft()
+          }}
+        >
+          Draft Reminder
+        </button>
+      )}
     </li>
   )
 }
@@ -181,6 +192,7 @@ export default function Dashboard() {
                       invoice={inv}
                       secondary={`${od} ${od === 1 ? 'day' : 'days'} overdue · ${inv.invoice_number || 'No number'}`}
                       onClick={() => setSelected(inv)}
+                      onDraft={() => setSelected(inv)}
                     />
                   )
                 })}
