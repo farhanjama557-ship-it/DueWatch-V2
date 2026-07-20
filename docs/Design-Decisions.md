@@ -14,7 +14,7 @@ The `invoices` table has no `status` column. Status is computed in the app:
 - unpaid & >30 days overdue → **Final Notice**
 - unpaid & 15–30 days overdue → **Critical**
 - unpaid & 1–14 days overdue → **Overdue**
-- unpaid & due within 7 days, not yet overdue → **Due Soon**
+- unpaid & due within 14 days, not yet overdue → **Due Soon**
 - unpaid & more than 7 days away → **Sent**
 
 This keeps the source of truth to two real columns and avoids status drift.

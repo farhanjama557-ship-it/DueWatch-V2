@@ -35,7 +35,7 @@ export function normalizeInvoice(row) {
 // There is no status column — derive it from `paid` + how overdue (or how
 // soon due) the invoice is, per the product spec ladder:
 //   Paid → Final Notice (>30d) → Critical (15–30d) → Overdue (1–14d)
-//   → Due Soon (due within 7d, not overdue) → Sent (more than 7d away)
+//   → Due Soon (due within 14d, not overdue) → Sent (more than 14d away)
 export function effectiveStatus(inv) {
   if (inv.paid === true) return 'paid'
   const overdueBy = daysOverdue(inv.due_date) // >0 means past due
@@ -43,8 +43,8 @@ export function effectiveStatus(inv) {
   if (overdueBy >= 15) return 'critical' // 15–30 days
   if (overdueBy >= 1) return 'overdue' // 1–14 days
   const until = daysUntil(inv.due_date) // >=0 means not yet due
-  if (until !== null && until <= 7) return 'due_soon' // due within 7 days
-  return 'sent' // more than 7 days away (or no due date)
+  if (until !== null && until <= 14) return 'due_soon' // due within 14 days
+  return 'sent' // more than 14 days away (or no due date)
 }
 
 // Display-side safety net: collapse rows duplicated by invoice number, keeping
