@@ -442,6 +442,194 @@ table {
 }
 
 /* ============================================================
+   Watching indicator card
+   ============================================================ */
+.watching-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--surface);
+  border: 0.5px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin-top: 18px;
+}
+
+.watching-dot {
+  position: relative;
+  width: 9px;
+  height: 9px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--green);
+}
+
+.watching-dot::after {
+  content: '';
+  position: absolute;
+  inset: -5px;
+  border-radius: 50%;
+  border: 2px solid var(--green);
+  opacity: 0.5;
+  animation: watching-pulse 2s ease-out infinite;
+}
+
+@keyframes watching-pulse {
+  0% { transform: scale(0.6); opacity: 0.6; }
+  100% { transform: scale(1.5); opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .watching-dot::after { animation: none; }
+}
+
+.watching-body {
+  min-width: 0;
+}
+
+.watching-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.watching-sub {
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+
+.watching-badge {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--primary);
+  background: var(--primary-tint);
+  padding: 3px 10px;
+  border-radius: 999px;
+}
+
+/* ============================================================
+   Needs Attention — inline recommendation
+   ============================================================ */
+.invoice-row-col {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+}
+
+.invoice-row-line {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.invoice-reco {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: 48px;
+  padding: 8px 12px;
+  background: var(--primary-tint);
+  border-radius: 8px;
+}
+
+.reco-icon {
+  color: var(--primary);
+  flex-shrink: 0;
+}
+
+.reco-text {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.reco-action {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.reco-explanation {
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+
+.reco-badge {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 9px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.reco-badge.tone-red { color: #C22B2B; background: #FDECEC; }
+.reco-badge.tone-orange { color: #C2540A; background: #FEF0E6; }
+.reco-badge.tone-amber { color: #B45309; background: #FEF5E7; }
+.reco-badge.tone-blue { color: #3B82F6; background: #EBF2FE; }
+
+/* ============================================================
+   Handled for you
+   ============================================================ */
+.handled-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.handled-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 0;
+  border-top: 0.5px solid var(--border);
+}
+
+.handled-item:first-child {
+  border-top: none;
+}
+
+.handled-check {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #EAFAF0;
+  color: #15803D;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.handled-text {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.handled-action {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.handled-context {
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+.handled-time {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* ============================================================
    Invoice List page
    ============================================================ */
 .list-head {

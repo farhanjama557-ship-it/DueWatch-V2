@@ -83,6 +83,7 @@ export function DataProvider({ children }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [clients, setClients] = useState([])
+  const [events, setEvents] = useState([])
 
   const load = useCallback(async () => {
     if (!user) return
@@ -105,8 +106,17 @@ export function DataProvider({ children }) {
       .select('*')
       .eq('user_id', user.id)
 
-    const [{ data: profile }, { data: inv, error: invErr }, { data: cli }] =
-      await Promise.all([profilePromise, invoicesPromise, clientsPromise])
+    // Recent activity for "Handled for you". Tolerates the events table not
+    // existing yet (query errors → treated as empty).
+    const eventsPromise = supabase
+      .from('events')
+      .select('id, event_type, invoice_id, created_at, invoices(inv_num, clients(name))')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false })
+      .limit(20)
+
+    const [{ data: profile }, { data: inv, error: invErr }, { data: cli }, { data: ev }] =
+      await Promise.all([profilePromise, invoicesPromise, clientsPromise, eventsPromise])
 
     if (invErr) {
       setError(invErr.message)
@@ -117,6 +127,7 @@ export function DataProvider({ children }) {
     setName(greetingName(profile, user))
     setInvoices(dedupeInvoices((inv || []).map(normalizeInvoice)))
     setClients(cli || [])
+    setEvents(ev || [])
     setLoading(false)
   }, [user])
 
@@ -137,6 +148,7 @@ export function DataProvider({ children }) {
   const value = {
     invoices,
     clients,
+    events,
     name,
     loading,
     error,

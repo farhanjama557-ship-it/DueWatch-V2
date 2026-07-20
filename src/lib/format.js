@@ -72,6 +72,22 @@ export function formatEventDate(value) {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
+// Relative time: "just now", "3h ago", "2d ago".
+export function timeAgo(value) {
+  if (!value) return ''
+  const then = new Date(value).getTime()
+  if (Number.isNaN(then)) return ''
+  const mins = Math.floor((Date.now() - then) / 60000)
+  if (mins < 1) return 'just now'
+  if (mins < 60) return `${mins}m ago`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return `${hrs}h ago`
+  const days = Math.floor(hrs / 24)
+  if (days < 30) return `${days}d ago`
+  const months = Math.floor(days / 30)
+  return `${months}mo ago`
+}
+
 // Two-letter initials from a name: "Acme Corp" -> "AC", "Nova" -> "NO".
 export function initials(name) {
   const trimmed = String(name || '').trim()
