@@ -2,6 +2,12 @@
 
 All notable changes to DueWatch, by session.
 
+## Session 4 — Status ladder & fixes
+- **Status ladder update**: renamed the 15–30 day tier from **Firm** to **Critical**, and added a new **Due Soon** tier (due within 7 days, not yet overdue; soft-blue pill). Full ladder: Sent → Due Soon → Overdue → Critical → Final Notice → Paid.
+- **Invoice List**: added a **Due Soon** filter tab; updated pill colors.
+- **Fix**: newly created invoices now show the correct derived status immediately (past-due invoices no longer show "Sent" until refresh).
+- **Morning Brief**: "Draft Reminder" buttons open the detail panel for that invoice.
+
 ## Session 3 — Invoice management
 - **Invoice List** (`/invoices`): table (Client / Invoice # / Amount / Due Date / Days Overdue / Status), sorted most-overdue first, with search (client name or `inv_num`) and filter tabs (All / Overdue / Sent / Paid).
 - **Add Invoice modal**: client name (autofills from existing clients), `inv_num`, `inv_date`, `due_date` with Net 15/30/60 quick-picks, amount, notes. Reuses an existing client by name or creates a new one, then inserts the invoice.
@@ -11,7 +17,7 @@ All notable changes to DueWatch, by session.
 
 ## Session 2 — Morning Brief & design system
 - **Morning Brief** (`/`): greeting, date/summary subline, four KPI cards (Outstanding, Expected This Week, Need Attention, Reminders Sent), Needs Attention and Due in 7 Days lists with clean empty/zero states.
-- **Design system**: light + terracotta (`#DA7756`) system with light sidebar (`#F7F7F5`), Inter, custom CSS tokens — replacing the initial dark/cyan look. Status pills (Sent / Overdue / Firm / Final Notice / Paid).
+- **Design system**: light + terracotta (`#DA7756`) system with light sidebar (`#F7F7F5`), Inter, custom CSS tokens — replacing the initial dark/cyan look. Status pills (Sent / Overdue / Critical / Final Notice / Paid; "Critical" and "Due Soon" introduced in Session 4).
 - **Invoice detail panel**: slide-in from the right with line items, totals (amount / amount paid / balance due), and reminder history timeline.
 - **Schema extensions**: `amount_paid`, `last_reminder`, and a `reminders` events table (with RLS).
 

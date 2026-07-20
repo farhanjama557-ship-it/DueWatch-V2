@@ -9,6 +9,7 @@ import { SearchIcon, PlusIcon } from '../components/icons'
 
 const TABS = [
   { key: 'all', label: 'All' },
+  { key: 'due_soon', label: 'Due Soon' },
   { key: 'overdue', label: 'Overdue' },
   { key: 'sent', label: 'Sent' },
   { key: 'paid', label: 'Paid' },
@@ -16,9 +17,12 @@ const TABS = [
 
 function matchesTab(inv, tab) {
   if (tab === 'all') return true
-  if (tab === 'paid') return inv.paid === true
-  if (tab === 'sent') return isOutstanding(inv) && daysOverdue(inv.due_date) <= 0
-  if (tab === 'overdue') return isOutstanding(inv) && daysOverdue(inv.due_date) > 0
+  const s = effectiveStatus(inv)
+  if (tab === 'paid') return s === 'paid'
+  if (tab === 'sent') return s === 'sent'
+  if (tab === 'due_soon') return s === 'due_soon'
+  // "Overdue" tab groups every past-due tier.
+  if (tab === 'overdue') return s === 'overdue' || s === 'critical' || s === 'final_notice'
   return true
 }
 

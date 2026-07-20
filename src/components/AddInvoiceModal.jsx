@@ -20,7 +20,7 @@ function addDays(isoDate, n) {
 
 export default function AddInvoiceModal({ open, onClose }) {
   const { user } = useAuth()
-  const { clients, refresh } = useData()
+  const { clients, refresh, addInvoiceLocal } = useData()
 
   const [clientName, setClientName] = useState('')
   const [invNum, setInvNum] = useState('')
@@ -103,7 +103,7 @@ export default function AddInvoiceModal({ open, onClose }) {
         paid: false,
         notes: notes.trim() || null,
       })
-      .select('id')
+      .select('*')
       .single()
 
     if (iErr) {
@@ -111,6 +111,12 @@ export default function AddInvoiceModal({ open, onClose }) {
       return setError(`Could not create invoice: ${iErr.message}`)
     }
 
+    // Add the normalized invoice to state immediately so its derived status
+    // (e.g. Overdue when the due date is in the past) is correct without a
+    // refresh; then reconcile with a full refetch.
+    if (newInvoice) {
+      addInvoiceLocal({ ...newInvoice, clients: { name } })
+    }
     logEvent('invoice_created', { userId: user.id, invoiceId: newInvoice?.id ?? null })
     await refresh()
     setSaving(false)
