@@ -3,18 +3,22 @@ import { useData, isOutstanding, balanceOf, effectiveStatus } from '../context/D
 import Avatar from '../components/Avatar'
 import StatusPill from '../components/StatusPill'
 import InvoiceDetailPanel from '../components/InvoiceDetailPanel'
+import { recommendFor } from '../lib/recommend'
 import {
   formatMoney,
   formatLongDate,
   formatShortDate,
   daysOverdue,
   daysUntil,
+  timeAgo,
 } from '../lib/format'
 import {
   OutstandingIcon,
   ExpectedIcon,
   AttentionIcon,
   RemindersIcon,
+  SparkleIcon,
+  CheckIcon,
 } from '../components/icons'
 
 function KpiCard({ Icon, label, value, valueColor, support }) {
@@ -32,9 +36,13 @@ function KpiCard({ Icon, label, value, valueColor, support }) {
   )
 }
 
-function InvoiceRow({ invoice, secondary, onClick, onDraft }) {
+function InvoiceRow({ invoice, secondary, onClick, onDraft, recommendation }) {
   return (
-    <li className="invoice-row" onClick={onClick} role="button" tabIndex={0}
+    <li
+      className={recommendation ? 'invoice-row invoice-row-col' : 'invoice-row'}
+      onClick={onClick}
+      role="button"
+      tabIndex={0}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault()
@@ -42,32 +50,108 @@ function InvoiceRow({ invoice, secondary, onClick, onDraft }) {
         }
       }}
     >
-      <Avatar name={invoice.clients?.name} size={36} />
-      <div className="invoice-main">
-        <span className="invoice-client">
-          {invoice.clients?.name || 'No client'}
-        </span>
-        <span className="invoice-secondary">{secondary}</span>
+      <div className="invoice-row-line">
+        <Avatar name={invoice.clients?.name} size={36} />
+        <div className="invoice-main">
+          <span className="invoice-client">{invoice.clients?.name || 'No client'}</span>
+          <span className="invoice-secondary">{secondary}</span>
+        </div>
+        <StatusPill status={effectiveStatus(invoice)} />
+        <span className="invoice-amount">{formatMoney(balanceOf(invoice))}</span>
+        {onDraft && (
+          <button
+            className="row-action"
+            onClick={(e) => {
+              e.stopPropagation()
+              onDraft()
+            }}
+          >
+            Draft Reminder
+          </button>
+        )}
       </div>
-      <StatusPill status={effectiveStatus(invoice)} />
-      <span className="invoice-amount">{formatMoney(balanceOf(invoice))}</span>
-      {onDraft && (
-        <button
-          className="row-action"
-          onClick={(e) => {
-            e.stopPropagation()
-            onDraft()
-          }}
-        >
-          Draft Reminder
-        </button>
+
+      {recommendation && (
+        <div className="invoice-reco">
+          <SparkleIcon className="reco-icon" width={16} height={16} />
+          <div className="reco-text">
+            <span className="reco-action">{recommendation.action}</span>
+            <span className="reco-explanation">{recommendation.explanation}</span>
+          </div>
+          {recommendation.badge && (
+            <span className={`reco-badge tone-${recommendation.tone}`}>{recommendation.badge}</span>
+          )}
+        </div>
       )}
     </li>
   )
 }
 
+const HANDLED_LABELS = {
+  reminder_sent: 'Reminder sent',
+  payment_recorded: 'Payment recorded',
+  invoice_marked_paid: 'Invoice marked paid',
+}
+
+function WatchingCard({ count, outstandingTotal, remindersSent }) {
+  return (
+    <section className="watching-card">
+      <span className="watching-dot" aria-hidden="true" />
+      <div className="watching-body">
+        <div className="watching-title">
+          Watching {count} {count === 1 ? 'invoice' : 'invoices'}
+        </div>
+        <div className="watching-sub">
+          Monitoring {formatMoney(outstandingTotal)} outstanding
+          {' · '}
+          {remindersSent} {remindersSent === 1 ? 'reminder' : 'reminders'} sent this week
+          {' · '}
+          next check tomorrow morning
+        </div>
+      </div>
+      <span className="watching-badge">Active</span>
+    </section>
+  )
+}
+
+function HandledForYou({ events }) {
+  const handled = events.filter((e) => HANDLED_LABELS[e.event_type])
+  return (
+    <section className="brief-card">
+      <div className="section-head">
+        <h2 className="section-title">Handled for you</h2>
+      </div>
+      {handled.length === 0 ? (
+        <p className="brief-empty">Nothing has been handled yet.</p>
+      ) : (
+        <ul className="handled-list">
+          {handled.map((e) => {
+            const client = e.invoices?.clients?.name || 'a client'
+            const num = e.invoices?.inv_num
+            return (
+              <li key={e.id} className="handled-item">
+                <span className="handled-check">
+                  <CheckIcon width={13} height={13} />
+                </span>
+                <div className="handled-text">
+                  <span className="handled-action">{HANDLED_LABELS[e.event_type]}</span>
+                  <span className="handled-context">
+                    {client}
+                    {num ? ` · ${num}` : ''}
+                  </span>
+                </div>
+                <span className="handled-time">{timeAgo(e.created_at)}</span>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </section>
+  )
+}
+
 export default function Dashboard() {
-  const { invoices, name, loading, error, refresh } = useData()
+  const { invoices, events, name, loading, error, refresh } = useData()
   const [selected, setSelected] = useState(null)
 
   const derived = useMemo(() => {
@@ -138,6 +222,12 @@ export default function Dashboard() {
         {formatLongDate()} &nbsp;·&nbsp; {summary}
       </p>
 
+      <WatchingCard
+        count={derived.outstandingCount}
+        outstandingTotal={derived.outstandingTotal}
+        remindersSent={derived.remindersSent}
+      />
+
       {/* KPI cards */}
       <section className="kpi-grid">
         <KpiCard
@@ -174,13 +264,11 @@ export default function Dashboard() {
         </section>
       ) : (
         <>
-          {/* Needs Attention */}
+          {/* Needs Attention — with rule-based recommendations */}
           <section className="brief-card">
             <div className="section-head">
               <h2 className="section-title">Needs attention</h2>
-              {attentionCount > 0 && (
-                <span className="section-count">{attentionCount}</span>
-              )}
+              {attentionCount > 0 && <span className="section-count">{attentionCount}</span>}
             </div>
             {attentionCount === 0 ? (
               <p className="brief-empty">No overdue invoices. You&apos;re all caught up.</p>
@@ -195,12 +283,16 @@ export default function Dashboard() {
                       secondary={`${od} ${od === 1 ? 'day' : 'days'} overdue · ${inv.invoice_number || 'No number'}`}
                       onClick={() => setSelected(inv)}
                       onDraft={() => setSelected(inv)}
+                      recommendation={recommendFor(inv)}
                     />
                   )
                 })}
               </ul>
             )}
           </section>
+
+          {/* Handled for you */}
+          <HandledForYou events={events} />
 
           {/* Due Soon */}
           <section className="brief-card">
