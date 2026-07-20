@@ -73,10 +73,12 @@ export default function Dashboard() {
   const derived = useMemo(() => {
     const outstanding = invoices.filter(isOutstanding)
 
+    const DUE_SOON_DAYS = 14
+
     let outstandingTotal = 0
-    let expectedThisWeek = 0
+    let expectedSoon = 0
     const needsAttention = []
-    const dueIn7Days = []
+    const dueSoon = []
 
     const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000
     let remindersSent = 0
@@ -94,20 +96,20 @@ export default function Dashboard() {
 
       if (overdueBy > 0) {
         needsAttention.push(inv)
-      } else if (until !== null && until >= 0 && until <= 7) {
-        expectedThisWeek += bal
-        dueIn7Days.push(inv)
+      } else if (until !== null && until >= 0 && until <= DUE_SOON_DAYS) {
+        expectedSoon += bal
+        dueSoon.push(inv)
       }
     }
 
     needsAttention.sort((a, b) => daysOverdue(b.due_date) - daysOverdue(a.due_date))
-    dueIn7Days.sort((a, b) => daysUntil(a.due_date) - daysUntil(b.due_date))
+    dueSoon.sort((a, b) => daysUntil(a.due_date) - daysUntil(b.due_date))
 
     return {
       outstandingTotal,
-      expectedThisWeek,
+      expectedSoon,
       needsAttention,
-      dueIn7Days,
+      dueSoon,
       remindersSent,
       outstandingCount: outstanding.length,
     }
@@ -146,10 +148,10 @@ export default function Dashboard() {
         />
         <KpiCard
           Icon={ExpectedIcon}
-          label="Expected This Week"
-          value={formatMoney(derived.expectedThisWeek)}
+          label="Expected Soon"
+          value={formatMoney(derived.expectedSoon)}
           valueColor="var(--primary)"
-          support="due within 7 days"
+          support="due within 14 days"
         />
         <KpiCard
           Icon={AttentionIcon}
@@ -200,16 +202,16 @@ export default function Dashboard() {
             )}
           </section>
 
-          {/* Due in 7 Days */}
+          {/* Due Soon */}
           <section className="brief-card">
             <div className="section-head">
-              <h2 className="section-title">Due in 7 days</h2>
+              <h2 className="section-title">Due Soon</h2>
             </div>
-            {derived.dueIn7Days.length === 0 ? (
-              <p className="brief-empty">Nothing due in the next 7 days.</p>
+            {derived.dueSoon.length === 0 ? (
+              <p className="brief-empty">Nothing due in the next 14 days.</p>
             ) : (
               <ul className="invoice-list">
-                {derived.dueIn7Days.map((inv) => (
+                {derived.dueSoon.map((inv) => (
                   <InvoiceRow
                     key={inv.id}
                     invoice={inv}
