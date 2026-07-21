@@ -98,7 +98,7 @@ function WatchingCard({ count, outstandingTotal }) {
     <section className="watching-card">
       <span className="watching-dot" aria-hidden="true" />
       <div className="watching-body">
-        <div className="watching-title">Everything is under control.</div>
+        <div className="watching-title">Everything else is handled.</div>
         <div className="watching-sub">
           {count} {count === 1 ? 'invoice' : 'invoices'} active
           {' · '}
