@@ -177,3 +177,66 @@ alter table public.events enable row level security;
 drop policy if exists "events_all_own" on public.events;
 create policy "events_all_own" on public.events
   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- ============================================================
+-- Session 7 — Making Autopilot Real
+-- ============================================================
+
+-- Awaiting Signature: reminders Autopilot has drafted but not sent,
+-- queued for the founder to approve, edit, or skip.
+create table if not exists public.awaiting_signature (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users (id) on delete cascade,
+  invoice_id uuid not null references public.invoices (id) on delete cascade,
+  action_type text not null default 'send_reminder',
+  recommended_tone text not null,
+  draft_content text not null,
+  ai_reason text not null,
+  ai_context jsonb default '{}',
+  status text not null default 'pending', -- pending | approved | rejected | skipped | expired
+  founder_note text,
+  created_at timestamptz not null default now(),
+  resolved_at timestamptz,
+  unique (user_id, invoice_id, status)
+);
+
+create index if not exists awaiting_signature_user_status_idx on public.awaiting_signature (user_id, status);
+create index if not exists awaiting_signature_created_idx on public.awaiting_signature (created_at desc);
+
+alter table public.awaiting_signature enable row level security;
+
+drop policy if exists "awaiting_signature_own" on public.awaiting_signature;
+create policy "awaiting_signature_own" on public.awaiting_signature
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- Autopilot run log: one row per scheduler cycle, including no-op runs.
+-- This is what makes "Last checked X ago" trustworthy rather than decorative.
+create table if not exists public.autopilot_runs (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users (id) on delete cascade,
+  status text not null default 'running', -- running | completed | error
+  invoices_checked integer not null default 0,
+  reminders_drafted integer not null default 0,
+  reminders_skipped integer not null default 0,
+  errors integer not null default 0,
+  started_at timestamptz not null default now(),
+  completed_at timestamptz
+);
+
+create index if not exists autopilot_runs_user_idx on public.autopilot_runs (user_id, started_at desc);
+
+alter table public.autopilot_runs enable row level security;
+
+drop policy if exists "autopilot_runs_own" on public.autopilot_runs;
+create policy "autopilot_runs_own" on public.autopilot_runs
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- Lifecycle tracking on the existing events table (the engineering spec's
+-- `activity_log` was named `events` in this project from Session 5 onward —
+-- these alterations apply to the table that actually exists here).
+alter table public.events add column if not exists lifecycle_stage text;
+alter table public.events add column if not exists lifecycle_state text; -- completed | current | future | skipped | error | pending
+alter table public.events add column if not exists previous_action_id uuid references public.events (id);
+alter table public.events add column if not exists evidence jsonb default '{}';
+
+create index if not exists events_lifecycle_idx on public.events (lifecycle_stage, lifecycle_state);
