@@ -9,6 +9,7 @@ import Invoices from './pages/Invoices'
 import Clients from './pages/Clients'
 import CashFlow from './pages/CashFlow'
 import Activity from './pages/Activity'
+import Autopilot from './pages/Autopilot'
 import Settings from './pages/Settings'
 
 // Redirect authenticated users away from auth screens.
@@ -51,6 +52,7 @@ export default function App() {
         <Route path="/clients" element={<Clients />} />
         <Route path="/cash-flow" element={<CashFlow />} />
         <Route path="/activity" element={<Activity />} />
+        <Route path="/autopilot" element={<Autopilot />} />
         <Route path="/settings" element={<Settings />} />
       </Route>
 

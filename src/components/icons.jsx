@@ -149,6 +149,23 @@ export function CheckIcon(props) {
   )
 }
 
+export function ChevronDownIcon(props) {
+  return (
+    <svg {...base} {...props}>
+      <polyline points="6 9 12 15 18 9" />
+    </svg>
+  )
+}
+
+export function ArrowRightIcon(props) {
+  return (
+    <svg {...base} {...props}>
+      <line x1="5" y1="12" x2="19" y2="12" />
+      <polyline points="12 5 19 12 12 19" />
+    </svg>
+  )
+}
+
 export function CloseIcon(props) {
   return (
     <svg {...base} {...props}>

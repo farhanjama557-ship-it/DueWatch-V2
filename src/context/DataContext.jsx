@@ -84,6 +84,8 @@ export function DataProvider({ children }) {
   const [error, setError] = useState(null)
   const [clients, setClients] = useState([])
   const [events, setEvents] = useState([])
+  const [autopilotEnabled, setAutopilotEnabled] = useState(false)
+  const [autopilotApprovalRequired, setAutopilotApprovalRequired] = useState(true)
 
   const load = useCallback(async () => {
     if (!user) return
@@ -115,8 +117,17 @@ export function DataProvider({ children }) {
       .order('created_at', { ascending: false })
       .limit(20)
 
-    const [{ data: profile }, { data: inv, error: invErr }, { data: cli }, { data: ev }] =
-      await Promise.all([profilePromise, invoicesPromise, clientsPromise, eventsPromise])
+    // Tolerates the table/row not existing yet — resolves to null.
+    const autopilotPromise = supabase
+      .from('autopilot_settings')
+      .select('enabled, approval_required')
+      .eq('user_id', user.id)
+      .maybeSingle()
+      .then((r) => r.data)
+      .catch(() => null)
+
+    const [{ data: profile }, { data: inv, error: invErr }, { data: cli }, { data: ev }, autopilot] =
+      await Promise.all([profilePromise, invoicesPromise, clientsPromise, eventsPromise, autopilotPromise])
 
     if (invErr) {
       setError(invErr.message)
@@ -128,6 +139,8 @@ export function DataProvider({ children }) {
     setInvoices(dedupeInvoices((inv || []).map(normalizeInvoice)))
     setClients(cli || [])
     setEvents(ev || [])
+    setAutopilotEnabled(autopilot?.enabled === true)
+    setAutopilotApprovalRequired(autopilot?.approval_required !== false)
     setLoading(false)
   }, [user])
 
@@ -155,6 +168,9 @@ export function DataProvider({ children }) {
     overdueCount,
     refresh: load,
     addInvoiceLocal,
+    autopilotEnabled,
+    autopilotApprovalRequired,
+    setAutopilotEnabledLocal: setAutopilotEnabled,
   }
 
   return <DataContext.Provider value={value}>{children}</DataContext.Provider>
