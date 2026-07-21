@@ -1,16 +1,18 @@
 import { useState, useMemo } from 'react'
+import { Link } from 'react-router-dom'
 import { useData, isOutstanding, balanceOf, effectiveStatus } from '../context/DataContext'
 import Avatar from '../components/Avatar'
 import StatusPill from '../components/StatusPill'
 import InvoiceDetailPanel from '../components/InvoiceDetailPanel'
 import { recommendFor } from '../lib/recommend'
+import { activityMeta, activityDescription, isPaymentEvent } from '../lib/activity'
 import {
   formatMoney,
   formatLongDate,
   formatShortDate,
+  formatEventDate,
   daysOverdue,
   daysUntil,
-  timeAgo,
 } from '../lib/format'
 import {
   OutstandingIcon,
@@ -18,8 +20,12 @@ import {
   AttentionIcon,
   RemindersIcon,
   SparkleIcon,
-  CheckIcon,
+  ChevronDownIcon,
+  ArrowRightIcon,
 } from '../components/icons'
+
+const NUDGE_DISMISS_KEY = 'duewatch_autopilot_nudge_dismissed_at'
+const NUDGE_DISMISS_DAYS = 7
 
 function KpiCard({ Icon, label, value, valueColor, support }) {
   return (
@@ -87,26 +93,18 @@ function InvoiceRow({ invoice, secondary, onClick, onDraft, recommendation }) {
   )
 }
 
-const HANDLED_LABELS = {
-  reminder_sent: 'Reminder sent',
-  payment_recorded: 'Payment recorded',
-  invoice_marked_paid: 'Invoice marked paid',
-}
-
-function WatchingCard({ count, outstandingTotal, remindersSent }) {
+function WatchingCard({ count, outstandingTotal }) {
   return (
     <section className="watching-card">
       <span className="watching-dot" aria-hidden="true" />
       <div className="watching-body">
-        <div className="watching-title">
-          Watching {count} {count === 1 ? 'invoice' : 'invoices'}
-        </div>
+        <div className="watching-title">Everything is under control.</div>
         <div className="watching-sub">
-          Monitoring {formatMoney(outstandingTotal)} outstanding
+          {count} {count === 1 ? 'invoice' : 'invoices'} active
           {' · '}
-          {remindersSent} {remindersSent === 1 ? 'reminder' : 'reminders'} sent this week
+          {formatMoney(outstandingTotal)} outstanding
           {' · '}
-          next check tomorrow morning
+          Next check: Tomorrow morning
         </div>
       </div>
       <span className="watching-badge">Active</span>
@@ -114,45 +112,110 @@ function WatchingCard({ count, outstandingTotal, remindersSent }) {
   )
 }
 
-function HandledForYou({ events }) {
-  const handled = events.filter((e) => HANDLED_LABELS[e.event_type])
+// Last 5 events, newest first, with payment events bubbled to the top of
+// that recent window (still newest-first within each group).
+function pickRecentActivity(events) {
+  const recent = events.slice(0, 8)
+  const payments = recent.filter(isPaymentEvent)
+  const rest = recent.filter((e) => !isPaymentEvent(e))
+  return [...payments, ...rest].slice(0, 5)
+}
+
+function RecentActivity({ events }) {
+  const [expanded, setExpanded] = useState(false)
+
+  if (events.length === 0) {
+    return (
+      <section className="brief-card">
+        <div className="section-head">
+          <h2 className="section-title">Recent Activity</h2>
+        </div>
+        <p className="brief-empty">Everything is handled. Nothing needs your attention today.</p>
+      </section>
+    )
+  }
+
+  const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000
+  const thisWeek = events.filter((e) => new Date(e.created_at).getTime() >= weekAgo)
+  const reminderCount = thisWeek.filter((e) => e.event_type === 'reminder_sent').length
+  const paymentCount = thisWeek.filter(isPaymentEvent).length
+
+  const items = pickRecentActivity(events)
+
   return (
     <section className="brief-card">
-      <div className="section-head">
-        <h2 className="section-title">Handled for you</h2>
-      </div>
-      {handled.length === 0 ? (
-        <p className="brief-empty">Nothing has been handled yet.</p>
-      ) : (
-        <ul className="handled-list">
-          {handled.map((e) => {
-            const client = e.invoices?.clients?.name || 'a client'
-            const num = e.invoices?.inv_num
-            return (
-              <li key={e.id} className="handled-item">
-                <span className="handled-check">
-                  <CheckIcon width={13} height={13} />
-                </span>
-                <div className="handled-text">
-                  <span className="handled-action">{HANDLED_LABELS[e.event_type]}</span>
-                  <span className="handled-context">
-                    {client}
-                    {num ? ` · ${num}` : ''}
+      <button
+        type="button"
+        className="recent-activity-toggle"
+        onClick={() => setExpanded((v) => !v)}
+        aria-expanded={expanded}
+      >
+        <span className="activity-summary">
+          Duewatch drafted {reminderCount} {reminderCount === 1 ? 'reminder' : 'reminders'} and
+          tracked {paymentCount} {paymentCount === 1 ? 'payment' : 'payments'} this week
+        </span>
+        <ChevronDownIcon className={expanded ? 'chevron chevron-open' : 'chevron'} width={18} height={18} />
+      </button>
+
+      {expanded && (
+        <>
+          <ul className="handled-list">
+            {items.map((e) => {
+              const meta = activityMeta(e.event_type)
+              const desc = activityDescription(e)
+              return (
+                <li key={e.id} className="handled-item">
+                  <span className={`handled-check tone-${meta.tone}`}>
+                    <SparkleIcon width={12} height={12} />
                   </span>
-                </div>
-                <span className="handled-time">{timeAgo(e.created_at)}</span>
-              </li>
-            )
-          })}
-        </ul>
+                  <div className="handled-text">
+                    <span className="handled-action">{meta.title}</span>
+                    <span className="handled-context">{desc}</span>
+                  </div>
+                  <span className="handled-time">{formatEventDate(e.created_at)}</span>
+                </li>
+              )
+            })}
+          </ul>
+          <Link to="/activity" className="see-all-link">
+            See all activity <ArrowRightIcon width={14} height={14} />
+          </Link>
+        </>
       )}
     </section>
   )
 }
 
+function AutopilotNudge({ visible, onDismiss }) {
+  if (!visible) return null
+  return (
+    <section className="autopilot-nudge">
+      <span className="autopilot-nudge-icon">
+        <SparkleIcon width={18} height={18} />
+      </span>
+      <div className="autopilot-nudge-text">
+        <span className="autopilot-nudge-title">Duewatch can send reminders automatically</span>
+      </div>
+      <div className="autopilot-nudge-actions">
+        <Link to="/autopilot" className="btn-terracotta btn-inline">
+          Set up Autopilot
+        </Link>
+        <button type="button" className="nudge-dismiss" onClick={onDismiss}>
+          Maybe later
+        </button>
+      </div>
+    </section>
+  )
+}
+
 export default function Dashboard() {
-  const { invoices, events, name, loading, error, refresh } = useData()
+  const { invoices, events, name, loading, error, refresh, autopilotEnabled } = useData()
   const [selected, setSelected] = useState(null)
+  const [nudgeDismissed, setNudgeDismissed] = useState(() => {
+    const at = Number(localStorage.getItem(NUDGE_DISMISS_KEY))
+    if (!at) return false
+    return Date.now() - at < NUDGE_DISMISS_DAYS * 24 * 60 * 60 * 1000
+  })
 
   const derived = useMemo(() => {
     const outstanding = invoices.filter(isOutstanding)
@@ -210,10 +273,19 @@ export default function Dashboard() {
   const attentionCount = derived.needsAttention.length
   const summary =
     attentionCount === 0
-      ? 'Everything is handled — nothing needs a decision.'
-      : `${attentionCount} ${attentionCount === 1 ? 'invoice needs' : 'invoices need'} a decision — everything else is handled.`
+      ? 'Everything is handled. No follow-ups needed today.'
+      : `${attentionCount} ${attentionCount === 1 ? 'invoice needs' : 'invoices need'} your attention. Everything else is handled.`
 
   const hasAnyInvoices = invoices.length > 0
+
+  const remindersSentAllTime = events.filter((e) => e.event_type === 'reminder_sent').length
+  const showNudge =
+    !autopilotEnabled && !nudgeDismissed && invoices.length >= 3 && remindersSentAllTime >= 2
+
+  function dismissNudge() {
+    localStorage.setItem(NUDGE_DISMISS_KEY, String(Date.now()))
+    setNudgeDismissed(true)
+  }
 
   return (
     <div className="brief">
@@ -222,11 +294,7 @@ export default function Dashboard() {
         {formatLongDate()} &nbsp;·&nbsp; {summary}
       </p>
 
-      <WatchingCard
-        count={derived.outstandingCount}
-        outstandingTotal={derived.outstandingTotal}
-        remindersSent={derived.remindersSent}
-      />
+      <WatchingCard count={derived.outstandingCount} outstandingTotal={derived.outstandingTotal} />
 
       {/* KPI cards */}
       <section className="kpi-grid">
@@ -291,8 +359,10 @@ export default function Dashboard() {
             )}
           </section>
 
-          {/* Handled for you */}
-          <HandledForYou events={events} />
+          <AutopilotNudge visible={showNudge} onDismiss={dismissNudge} />
+
+          {/* Recent Activity */}
+          <RecentActivity events={events} />
 
           {/* Due Soon */}
           <section className="brief-card">

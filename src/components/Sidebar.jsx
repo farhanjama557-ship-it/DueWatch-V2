@@ -1,6 +1,6 @@
-import { NavLink } from 'react-router-dom'
+import { NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { useData } from '../context/DataContext'
+import { useData, isOutstanding } from '../context/DataContext'
 import { initials } from '../lib/format'
 import {
   MorningBriefIcon,
@@ -42,12 +42,45 @@ function NavItem({ to, label, Icon, end, badge, overdueCount }) {
   )
 }
 
+function AutopilotIndicator({ invoiceCount, watchingCount, enabled }) {
+  const navigate = useNavigate()
+
+  let dotClass = 'autopilot-dot off'
+  let title = 'Autopilot off'
+  let sub = 'Click to set up'
+
+  if (invoiceCount === 0) {
+    dotClass = 'autopilot-dot off'
+    title = 'Autopilot ready'
+    sub = 'Add invoices to start'
+  } else if (enabled) {
+    dotClass = 'autopilot-dot on'
+    title = 'Autopilot on'
+    sub = `Watching ${watchingCount} ${watchingCount === 1 ? 'invoice' : 'invoices'}`
+  }
+
+  return (
+    <button
+      type="button"
+      className="sidebar-autopilot"
+      onClick={() => navigate('/autopilot')}
+    >
+      <span className={dotClass} aria-hidden="true" />
+      <div className="sidebar-autopilot-text">
+        <span className="sidebar-autopilot-title">{title}</span>
+        <span className="sidebar-autopilot-sub">{sub}</span>
+      </div>
+    </button>
+  )
+}
+
 export default function Sidebar() {
   const { user } = useAuth()
-  const { name, overdueCount } = useData()
+  const { name, overdueCount, invoices, autopilotEnabled } = useData()
 
   const email = user?.email ?? ''
   const displayName = name || email.split('@')[0] || 'Account'
+  const watchingCount = invoices.filter(isOutstanding).length
 
   return (
     <aside className="sidebar">
@@ -67,6 +100,12 @@ export default function Sidebar() {
           <NavItem key={item.to} {...item} overdueCount={overdueCount} />
         ))}
       </nav>
+
+      <AutopilotIndicator
+        invoiceCount={invoices.length}
+        watchingCount={watchingCount}
+        enabled={autopilotEnabled}
+      />
 
       <div className="sidebar-profile">
         <span className="profile-avatar">{initials(displayName)}</span>
