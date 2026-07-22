@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Bot, CheckCircle, Loader2 } from 'lucide-react'
 import Avatar from './Avatar'
+import JourneyBar from './JourneyBar'
 import { formatMoney, daysOverdue } from '../lib/format'
 import { balanceOf } from '../context/DataContext'
 
@@ -103,6 +104,10 @@ export default function SignatureCard({ item, onApprove, onSkip, onEdit, onResol
           </button>
         )}
       </div>
+
+      {invoice && (
+        <JourneyBar invoice={invoice} isPendingSignature hasAutopilotRun />
+      )}
 
       {error && <div className="auth-error signature-error">{error}</div>}
 

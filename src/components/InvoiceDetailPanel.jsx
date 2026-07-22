@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import { useData } from '../context/DataContext'
 import StatusPill from './StatusPill'
+import JourneyBar from './JourneyBar'
 import { CloseIcon, CheckIcon } from './icons'
 import {
   formatMoney,
@@ -86,7 +87,7 @@ export default function InvoiceDetailPanel({
   onSignatureResolved,
 }) {
   const { user } = useAuth()
-  const { autopilotEnabled, awaitingSignature } = useData()
+  const { autopilotEnabled, awaitingSignature, hasCompletedAutopilotRun } = useData()
   const [render, setRender] = useState(Boolean(invoice))
   const [shown, setShown] = useState(false)
   const [data, setData] = useState(invoice)
@@ -392,6 +393,12 @@ export default function InvoiceDetailPanel({
 
         {/* Scrollable body */}
         <div className="detail-body">
+          <JourneyBar
+            invoice={data}
+            isPendingSignature={hasPendingSignature}
+            hasAutopilotRun={hasCompletedAutopilotRun}
+          />
+
           {autopilotEnabled && (
             <div className={invoicePaused ? 'invoice-autopilot-block paused' : 'invoice-autopilot-block'}>
               {invoicePaused ? (

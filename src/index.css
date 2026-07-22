@@ -2410,6 +2410,130 @@ table {
 }
 
 /* ============================================================
+   JourneyBar — per-invoice lifecycle tracker (Session 7.5 §2)
+   ============================================================ */
+.journey-bar {
+  display: flex;
+  width: 100%;
+  list-style: none;
+  margin: 14px 0;
+  padding: 0;
+}
+
+.journey-step {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 0;
+}
+
+.journey-dot-row {
+  position: relative;
+  width: 100%;
+  height: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.journey-connector {
+  position: absolute;
+  top: 50%;
+  left: -50%;
+  width: 100%;
+  height: 2px;
+  transform: translateY(-50%);
+  background: #E7DFD1;
+  z-index: 0;
+}
+
+.journey-connector-completed {
+  background: #22A565;
+}
+
+.journey-connector-flowing {
+  background: #E7DFD1;
+  overflow: hidden;
+}
+
+.journey-connector-flowing::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--primary);
+  transform: scaleX(0);
+  transform-origin: left;
+  animation: journey-flow 1.6s ease forwards;
+}
+
+@keyframes journey-flow {
+  to { transform: scaleX(1); }
+}
+
+.journey-dot {
+  position: relative;
+  z-index: 1;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  box-sizing: border-box;
+  background: transparent;
+  border: 1.5px solid #D3D1C7;
+}
+
+.journey-dot-completed {
+  background: #22A565;
+  border-color: #22A565;
+}
+
+.journey-dot-current {
+  background: var(--primary);
+  border-color: var(--primary);
+}
+
+.journey-dot-breathing {
+  animation: journey-breathe 1.8s ease-in-out infinite;
+}
+
+@keyframes journey-breathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.3); }
+}
+
+.journey-dot-needs-you::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 2px solid var(--primary);
+  animation: journey-ring-pulse 1.8s ease-out infinite;
+}
+
+@keyframes journey-ring-pulse {
+  0% { transform: scale(1); opacity: 0.6; }
+  100% { transform: scale(2.2); opacity: 0; }
+}
+
+.journey-label {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.journey-label-current {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .journey-dot-breathing { animation: none; }
+  .journey-dot-needs-you::after { animation: none; opacity: 0; }
+  .journey-connector-flowing::after { animation: none; transform: scaleX(1); }
+}
+
+/* ============================================================
    Responsive
    ============================================================ */
 @media (max-width: 860px) {

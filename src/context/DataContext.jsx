@@ -87,10 +87,13 @@ export function DataProvider({ children }) {
   const [autopilotEnabled, setAutopilotEnabled] = useState(false)
   const [autopilotApprovalRequired, setAutopilotApprovalRequired] = useState(true)
   const [awaitingSignature, setAwaitingSignature] = useState([])
+  const [lastAutopilotRun, setLastAutopilotRun] = useState(null)
 
-  const load = useCallback(async () => {
+  // `silent` skips the global loading flag — used for the background poll so
+  // the UI doesn't flicker to a loading state every refresh.
+  const load = useCallback(async (opts = {}) => {
     if (!user) return
-    setLoading(true)
+    if (!opts.silent) setLoading(true)
     setError(null)
 
     const profilePromise = supabase
@@ -153,6 +156,24 @@ export function DataProvider({ children }) {
         return null
       })
 
+    // Most recent scheduler cycle, for the JourneyBar's "Checked" stage —
+    // whether Autopilot has ever actually run for this user.
+    const lastRunPromise = supabase
+      .from('autopilot_runs')
+      .select('id, status, started_at, completed_at')
+      .eq('user_id', user.id)
+      .order('started_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+      .then((r) => {
+        if (r.error) console.warn('autopilot_runs query failed:', r.error.message)
+        return r.data
+      })
+      .catch((err) => {
+        console.warn('autopilot_runs query threw:', err.message)
+        return null
+      })
+
     const [
       { data: profile },
       { data: inv, error: invErr },
@@ -160,6 +181,7 @@ export function DataProvider({ children }) {
       { data: ev },
       autopilot,
       awaiting,
+      lastRun,
     ] = await Promise.all([
       profilePromise,
       invoicesPromise,
@@ -167,6 +189,7 @@ export function DataProvider({ children }) {
       eventsPromise,
       autopilotPromise,
       awaitingPromise,
+      lastRunPromise,
     ])
 
     if (invErr) {
@@ -187,12 +210,21 @@ export function DataProvider({ children }) {
         invoice: row.invoices ? normalizeInvoice(row.invoices) : null,
       }))
     )
+    setLastAutopilotRun(lastRun || null)
     setLoading(false)
   }, [user])
 
   useEffect(() => {
     load()
   }, [load])
+
+  // Keep JourneyBar / the global Autopilot indicator reasonably live without
+  // a hard reload, without flickering the whole app into a loading state.
+  useEffect(() => {
+    if (!user) return
+    const id = setInterval(() => load({ silent: true }), 30000)
+    return () => clearInterval(id)
+  }, [user, load])
 
   // Optimistically add a just-created invoice, normalized so its derived
   // status (Overdue/Critical/etc.) is correct immediately, before the refetch.
@@ -225,6 +257,8 @@ export function DataProvider({ children }) {
     setAutopilotEnabledLocal: setAutopilotEnabled,
     awaitingSignature,
     resolveSignatureLocal,
+    lastAutopilotRun,
+    hasCompletedAutopilotRun: lastAutopilotRun?.status === 'completed',
   }
 
   return <DataContext.Provider value={value}>{children}</DataContext.Provider>
