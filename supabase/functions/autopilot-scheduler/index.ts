@@ -99,11 +99,15 @@ async function runForUser(settings, today) {
         .eq('user_id', userId)
         .eq('enabled', true)
         .order('sort_order', { ascending: true }),
+      // autopilot_paused invoices are excluded entirely — the per-invoice
+      // toggle (Session 7.5 #7) must actually stop Autopilot from acting,
+      // not just look paused in the UI.
       admin
         .from('invoices')
         .select('*, clients(name, email)')
         .eq('user_id', userId)
-        .eq('paid', false),
+        .eq('paid', false)
+        .eq('autopilot_paused', false),
       admin.from('awaiting_signature').select('invoice_id, status, ai_context').eq('user_id', userId),
     ])
 
