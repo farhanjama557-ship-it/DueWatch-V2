@@ -1,4 +1,5 @@
 import { NavLink, useNavigate } from 'react-router-dom'
+import { PenSquare } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import { useData, isOutstanding } from '../context/DataContext'
 import { initials } from '../lib/format'
@@ -74,9 +75,32 @@ function AutopilotIndicator({ invoiceCount, watchingCount, enabled }) {
   )
 }
 
+function SignatureIndicator({ count }) {
+  const navigate = useNavigate()
+
+  return (
+    <button
+      type="button"
+      className="sidebar-autopilot sidebar-signature"
+      onClick={() => navigate('/', { state: { scrollToSignature: true } })}
+    >
+      <span
+        className={count > 0 ? 'signature-dot amber' : 'signature-dot green'}
+        aria-hidden="true"
+      />
+      <div className="sidebar-autopilot-text">
+        <span className="sidebar-autopilot-title">
+          <PenSquare size={13} className="signature-icon" />{' '}
+          {count > 0 ? `Awaiting your signature (${count})` : 'No signatures needed'}
+        </span>
+      </div>
+    </button>
+  )
+}
+
 export default function Sidebar() {
   const { user } = useAuth()
-  const { name, overdueCount, invoices, autopilotEnabled } = useData()
+  const { name, overdueCount, invoices, autopilotEnabled, awaitingSignature } = useData()
 
   const email = user?.email ?? ''
   const displayName = name || email.split('@')[0] || 'Account'
@@ -100,6 +124,8 @@ export default function Sidebar() {
           <NavItem key={item.to} {...item} overdueCount={overdueCount} />
         ))}
       </nav>
+
+      <SignatureIndicator count={awaitingSignature.length} />
 
       <AutopilotIndicator
         invoiceCount={invoices.length}
