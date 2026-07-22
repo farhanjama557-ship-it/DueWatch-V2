@@ -597,8 +597,8 @@ table {
   width: 24px;
   height: 24px;
   border-radius: 50%;
-  background: #EAFAF0;
-  color: #15803D;
+  background: var(--bg);
+  border: 0.5px solid var(--border);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1565,9 +1565,6 @@ table {
   color: var(--primary-hover);
 }
 
-.handled-check.tone-blue { background: #EBF2FE; color: #3B82F6; }
-.handled-check.tone-green { background: #EAFAF0; color: #15803D; }
-
 /* ============================================================
    Autopilot nudge — Morning Brief
    ============================================================ */
@@ -1710,7 +1707,7 @@ table {
 
 .activity-item {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 12px;
   padding: 13px 20px;
   border-bottom: 0.5px solid var(--border);
@@ -1720,21 +1717,25 @@ table {
   border-bottom: none;
 }
 
-.activity-icon {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
+.activity-icon-wrap {
   flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--bg);
+  border: 0.5px solid var(--border);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 1px;
 }
-
-.activity-icon.tone-blue { background: var(--blue); }
-.activity-icon.tone-green { background: var(--green); }
 
 .activity-main {
   display: flex;
   flex-direction: column;
   flex: 1;
   min-width: 0;
+  gap: 1px;
 }
 
 .activity-title {
@@ -1748,8 +1749,22 @@ table {
   color: var(--text-muted);
 }
 
+.activity-why {
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+.activity-approved {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
 .activity-actor {
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: 12px;
   font-weight: 600;
   color: var(--text-secondary);
@@ -2016,10 +2031,274 @@ table {
 }
 
 /* ============================================================
+   Signature Card + Signature Section (Session 7 — Awaiting Your Signature)
+   ============================================================ */
+.signature-section {
+  margin-bottom: 16px;
+}
+
+.signature-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.signature-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--primary);
+  border-radius: 10px;
+  padding: 18px 20px;
+  box-shadow: 0 1px 2px rgba(15, 17, 23, 0.04);
+  transition: border-color 200ms ease, box-shadow 200ms ease, transform 200ms ease;
+}
+
+.signature-card:hover {
+  border-color: rgba(218, 119, 86, 0.4);
+  box-shadow: 0 2px 8px rgba(218, 119, 86, 0.06);
+  transform: translateY(-1px);
+}
+
+.signature-card.exiting {
+  transform: translateX(-120%);
+  opacity: 0;
+  transition: transform 300ms ease-in, opacity 300ms ease-in, max-height 250ms ease 300ms,
+    margin 250ms ease 300ms, padding 250ms ease 300ms;
+  max-height: 0;
+  margin: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  overflow: hidden;
+}
+
+.signature-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.signature-header-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.signature-client {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.signature-meta {
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+.signature-reco {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.signature-reco-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--primary);
+}
+
+.tone-pill {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 999px;
+}
+
+.signature-reason {
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.signature-preview {
+  margin-top: 12px;
+  background: var(--bg);
+  border: 0.5px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+
+.signature-preview pre {
+  margin: 0;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.signature-preview-toggle {
+  margin-top: 8px;
+  border: none;
+  background: transparent;
+  color: var(--primary);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.signature-preview-toggle:hover {
+  color: var(--primary-hover);
+}
+
+.signature-error {
+  margin-top: 12px;
+}
+
+.signature-skip-form {
+  margin-top: 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.signature-skip-form select {
+  flex: 1;
+  min-width: 180px;
+  height: 36px;
+  padding: 0 10px;
+  font-size: 13px;
+  color: var(--text-primary);
+  background: var(--surface);
+  border: 0.5px solid var(--border);
+  border-radius: 8px;
+}
+
+.signature-skip-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.signature-sent-state {
+  margin-top: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #15803D;
+}
+
+.signature-actions {
+  margin-top: 14px;
+  display: flex;
+  gap: 10px;
+}
+
+.signature-actions .btn-terracotta,
+.signature-actions .btn-outline {
+  flex: 1;
+  width: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.btn-ghost {
+  flex: 0 0 auto;
+  width: auto;
+  height: 42px;
+  padding: 0 14px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: 600;
+  border-radius: 9px;
+}
+
+.btn-ghost:hover {
+  background: var(--bg);
+  color: var(--text-primary);
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.signature-toast {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  background: var(--text-primary);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 12px 18px;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(15, 17, 23, 0.2);
+  z-index: 60;
+  animation: toast-in 300ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes toast-in {
+  from {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .signature-card,
+  .signature-card.exiting,
+  .signature-toast,
+  .spin {
+    animation: none !important;
+    transition: opacity 150ms ease !important;
+    transform: none !important;
+  }
+}
+
+/* Edit-First label inside the invoice detail panel's reminder compose form */
+.autopilot-draft-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--primary);
+  background: var(--primary-tint);
+  padding: 8px 10px;
+  border-radius: 7px;
+  margin-bottom: 2px;
+}
+
+/* ============================================================
    Responsive
    ============================================================ */
 @media (max-width: 860px) {
   .kpi-grid {
     grid-template-columns: repeat(2, 1fr);
+  }
+
+  .signature-actions {
+    flex-direction: column;
   }
 }
