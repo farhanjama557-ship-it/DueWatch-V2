@@ -1,5 +1,5 @@
-import { useState, useMemo } from 'react'
-import { Link } from 'react-router-dom'
+import { useState, useMemo, useEffect, useRef } from 'react'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useData, isOutstanding, balanceOf, effectiveStatus } from '../context/DataContext'
 import Avatar from '../components/Avatar'
 import StatusPill from '../components/StatusPill'
@@ -238,6 +238,19 @@ export default function Dashboard() {
     return Date.now() - at < NUDGE_DISMISS_DAYS * 24 * 60 * 60 * 1000
   })
 
+  // Sidebar "Awaiting your signature" indicator navigates here and asks to
+  // scroll to the Signature section. Clear the state after handling it so
+  // navigating away and back doesn't re-trigger the scroll.
+  const signatureSectionRef = useRef(null)
+  const location = useLocation()
+  const navigate = useNavigate()
+  useEffect(() => {
+    if (location.state?.scrollToSignature && signatureSectionRef.current) {
+      signatureSectionRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      navigate(location.pathname, { replace: true, state: {} })
+    }
+  }, [location, navigate])
+
   const derived = useMemo(() => {
     const outstanding = invoices.filter(isOutstanding)
 
@@ -364,12 +377,16 @@ export default function Dashboard() {
         />
       </section>
 
-      {/* 1. Awaiting Your Signature — always first, hidden if empty */}
-      <SignatureSection
-        items={awaitingSignature}
-        onResolved={resolveSignatureLocal}
-        onEdit={openEditFirst}
-      />
+      {/* 1. Awaiting Your Signature — always first, hidden if empty. The
+          wrapper (not SignatureSection itself, which renders null when
+          empty) is the scroll target for the sidebar indicator. */}
+      <div ref={signatureSectionRef}>
+        <SignatureSection
+          items={awaitingSignature}
+          onResolved={resolveSignatureLocal}
+          onEdit={openEditFirst}
+        />
+      </div>
 
       {!hasAnyInvoices ? (
         <section className="brief-card">

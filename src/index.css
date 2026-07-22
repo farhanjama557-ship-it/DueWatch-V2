@@ -1510,6 +1510,46 @@ table {
   animation: watching-pulse 2s ease-out infinite;
 }
 
+/* Sidebar "Awaiting your signature" indicator */
+.signature-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  position: relative;
+}
+
+.signature-dot.green {
+  background: var(--green);
+}
+
+.signature-dot.amber {
+  background: var(--amber);
+  animation: signature-pulse 3s ease-in-out infinite;
+}
+
+@keyframes signature-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.signature-icon {
+  display: inline;
+  vertical-align: -2px;
+  color: var(--text-secondary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .signature-dot.amber {
+    animation: none;
+  }
+}
+
 .sidebar-autopilot-text {
   display: flex;
   flex-direction: column;
