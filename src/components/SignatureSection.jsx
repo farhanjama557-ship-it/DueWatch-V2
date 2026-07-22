@@ -37,6 +37,8 @@ export default function SignatureSection({ items, onResolved, onEdit }) {
         reason: item.ai_reason,
         trigger: 'Autopilot recommendation',
         approved_by: 'You',
+        resend_id: result.resendId || null,
+        delivery_status: 'sent',
       },
     })
     showToast(`Reminder sent to ${item.invoice?.clients?.name || 'client'}`)

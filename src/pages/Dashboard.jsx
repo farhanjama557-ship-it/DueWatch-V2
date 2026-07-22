@@ -112,6 +112,11 @@ function WatchingCard({ count, outstandingTotal }) {
         </div>
       </div>
       <span className="watching-badge">Active</span>
+      {/* Safety rail: the pause/kill switch must be reachable from here at
+          all times — links to the management view with "Turn off Autopilot". */}
+      <Link to="/autopilot" className="watching-manage-link">
+        Manage
+      </Link>
     </section>
   )
 }

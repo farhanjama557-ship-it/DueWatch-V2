@@ -245,6 +245,19 @@ export default function InvoiceDetailPanel({
     if (!draft.trim()) return setActionError('The reminder message is empty.')
     setBusy(true)
     setActionError('')
+
+    // The only place RESEND_API_KEY is used is server-side, in this Edge
+    // Function — nothing here holds the key. Bail out without writing
+    // anything if the send itself fails, so the founder can retry.
+    const { data: sendResult, error: sendErr } = await supabase.functions.invoke(
+      'send-reminder-email',
+      { body: { invoiceId: data.id, body: draft.trim() } }
+    )
+    if (sendErr || sendResult?.error) {
+      setBusy(false)
+      return setActionError(sendResult?.error || sendErr.message)
+    }
+
     const nowIso = new Date().toISOString()
     const { error: remErr } = await supabase.from('reminders').insert({
       invoice_id: data.id,
@@ -272,11 +285,19 @@ export default function InvoiceDetailPanel({
           reason: signatureContext.ai_reason,
           trigger: 'Autopilot recommendation (edited)',
           approved_by: 'You',
+          resend_id: sendResult?.id || null,
+          delivery_status: 'sent',
         },
       })
       onSignatureResolved?.(signatureContext.id)
     } else {
-      logEvent('reminder_sent', { userId: user.id, invoiceId: data.id })
+      logEvent('reminder_sent', {
+        userId: user.id,
+        invoiceId: data.id,
+        lifecycleStage: 'sent',
+        lifecycleState: 'completed',
+        evidence: { resend_id: sendResult?.id || null, delivery_status: 'sent' },
+      })
     }
 
     setBusy(false)
