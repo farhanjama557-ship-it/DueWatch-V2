@@ -11,8 +11,15 @@
 // invoice belongs to the caller before sending anything.
 import { createClient } from 'npm:@supabase/supabase-js@2'
 import { sendEmail } from '../_shared/resend.js'
+import { corsHeaders } from '../_shared/cors.js'
 
 Deno.serve(async (req) => {
+  // Browser preflight — must return the CORS headers with no auth check,
+  // or the actual POST never gets sent by the browser at all.
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { headers: corsHeaders })
+  }
+
   try {
     if (req.method !== 'POST') {
       return json({ error: 'Method not allowed' }, 405)
@@ -84,6 +91,6 @@ Deno.serve(async (req) => {
 function json(payload, status = 200) {
   return new Response(JSON.stringify(payload), {
     status,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...corsHeaders },
   })
 }
