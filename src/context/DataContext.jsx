@@ -118,14 +118,24 @@ export function DataProvider({ children }) {
       .order('created_at', { ascending: false })
       .limit(20)
 
-    // Tolerates the table/row not existing yet — resolves to null.
+    // Tolerates the table/row not existing yet. Supabase resolves
+    // successfully even on a query-level error (bad RLS, bad join, etc.) —
+    // it doesn't throw — so `.catch()` alone would never see that error.
+    // Check `r.error` explicitly and log it, or a real failure here goes
+    // completely silent and just looks like "nothing pending."
     const autopilotPromise = supabase
       .from('autopilot_settings')
       .select('enabled, approval_required')
       .eq('user_id', user.id)
       .maybeSingle()
-      .then((r) => r.data)
-      .catch(() => null)
+      .then((r) => {
+        if (r.error) console.warn('autopilot_settings query failed:', r.error.message)
+        return r.data
+      })
+      .catch((err) => {
+        console.warn('autopilot_settings query threw:', err.message)
+        return null
+      })
 
     // Reminders Autopilot has drafted but not sent — queued for approval.
     const awaitingPromise = supabase
@@ -134,8 +144,14 @@ export function DataProvider({ children }) {
       .eq('user_id', user.id)
       .eq('status', 'pending')
       .order('created_at', { ascending: true })
-      .then((r) => r.data)
-      .catch(() => null)
+      .then((r) => {
+        if (r.error) console.warn('awaiting_signature query failed:', r.error.message)
+        return r.data
+      })
+      .catch((err) => {
+        console.warn('awaiting_signature query threw:', err.message)
+        return null
+      })
 
     const [
       { data: profile },
