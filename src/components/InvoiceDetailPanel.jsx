@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
-import { Bot } from 'lucide-react'
+import { Bot, PauseCircle } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
+import { useData } from '../context/DataContext'
 import StatusPill from './StatusPill'
 import { CloseIcon, CheckIcon } from './icons'
 import {
@@ -12,6 +13,8 @@ import {
 } from '../lib/format'
 import { balanceOf, effectiveStatus } from '../context/DataContext'
 import { logEvent } from '../lib/events'
+import { fetchAutopilotRules } from '../lib/autopilot'
+import { nextScheduledAction } from '../lib/ruleSchedule'
 
 // line_items is a pre-existing table — tolerate common column-name variants.
 const pick = (obj, ...keys) => {
@@ -83,11 +86,14 @@ export default function InvoiceDetailPanel({
   onSignatureResolved,
 }) {
   const { user } = useAuth()
+  const { autopilotEnabled, awaitingSignature } = useData()
   const [render, setRender] = useState(Boolean(invoice))
   const [shown, setShown] = useState(false)
   const [data, setData] = useState(invoice)
   const [lineItems, setLineItems] = useState([])
   const [reminders, setReminders] = useState([])
+  const [autopilotRules, setAutopilotRules] = useState([])
+  const [pauseBusy, setPauseBusy] = useState(false)
   const [loading, setLoading] = useState(false)
 
   // Action UI state.
@@ -154,6 +160,19 @@ export default function InvoiceDetailPanel({
     }
   }, [invoice?.id])
 
+  // Autopilot rules, for "next scheduled action" — only needed when
+  // Autopilot is on and the panel is open for some invoice.
+  useEffect(() => {
+    if (!invoice?.id || !autopilotEnabled || !user) return
+    let cancelled = false
+    fetchAutopilotRules(user.id).then((rules) => {
+      if (!cancelled) setAutopilotRules(rules)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [invoice?.id, autopilotEnabled, user])
+
   if (!render || !data) return null
 
   const clientName = data.clients?.name || 'No client'
@@ -164,7 +183,29 @@ export default function InvoiceDetailPanel({
   const paid = Number(data.amount_paid) || 0
   const balance = balanceOf(data)
 
+  const invoicePaused = data.autopilot_paused === true
+  const hasPendingSignature = awaitingSignature.some((s) => s.invoice_id === data.id)
+  const upcoming = !invoicePaused ? nextScheduledAction(autopilotRules, data) : null
+
   // ---- Actions ----
+  async function toggleInvoiceAutopilot() {
+    const next = !invoicePaused
+    setPauseBusy(true)
+    // Optimistic — pausing/resuming one invoice never touches any other.
+    setData((d) => ({ ...d, autopilot_paused: next }))
+    const { error } = await supabase
+      .from('invoices')
+      .update({ autopilot_paused: next })
+      .eq('id', data.id)
+    setPauseBusy(false)
+    if (error) {
+      setData((d) => ({ ...d, autopilot_paused: !next }))
+      setActionError(error.message)
+      return
+    }
+    onMutated?.()
+  }
+
   async function markPaid() {
     setBusy(true)
     setActionError('')
@@ -351,6 +392,49 @@ export default function InvoiceDetailPanel({
 
         {/* Scrollable body */}
         <div className="detail-body">
+          {autopilotEnabled && (
+            <div className={invoicePaused ? 'invoice-autopilot-block paused' : 'invoice-autopilot-block'}>
+              {invoicePaused ? (
+                <>
+                  <div className="invoice-autopilot-status">
+                    <PauseCircle size={14} color="var(--text-muted)" /> Autopilot paused for this invoice.
+                  </div>
+                  <button
+                    type="button"
+                    className="invoice-autopilot-toggle"
+                    onClick={toggleInvoiceAutopilot}
+                    disabled={pauseBusy}
+                  >
+                    {pauseBusy ? 'Turning on…' : 'Turn on'}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <div className="invoice-autopilot-status">
+                    <Bot size={14} color="var(--primary)" /> Autopilot is handling future reminders.
+                  </div>
+                  {hasPendingSignature ? (
+                    <p className="invoice-autopilot-next">A reminder is waiting for your signature.</p>
+                  ) : upcoming ? (
+                    <p className="invoice-autopilot-next">
+                      {upcoming.eligible
+                        ? `Next check will send a ${upcoming.rule.name.toLowerCase()}.`
+                        : `Next: ${upcoming.rule.name} in ${upcoming.daysAway} ${upcoming.daysAway === 1 ? 'day' : 'days'}.`}
+                    </p>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="invoice-autopilot-toggle"
+                    onClick={toggleInvoiceAutopilot}
+                    disabled={pauseBusy}
+                  >
+                    {pauseBusy ? 'Pausing…' : 'Pause for this invoice'}
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+
           <table className="line-items">
             <thead>
               <tr>
