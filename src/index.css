@@ -441,6 +441,24 @@ table {
   color: #fff;
 }
 
+.reco-toggle {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 32px;
+  padding: 0 8px;
+  border: none;
+  background: transparent;
+  color: var(--primary);
+  border-radius: 8px;
+  transition: background 0.12s ease;
+}
+
+.reco-toggle:hover {
+  background: var(--primary-tint);
+}
+
 /* ============================================================
    Watching indicator card
    ============================================================ */

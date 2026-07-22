@@ -44,6 +44,10 @@ function KpiCard({ Icon, label, value, valueColor, support }) {
 }
 
 function InvoiceRow({ invoice, secondary, onClick, onDraft, recommendation }) {
+  // Collapsed by default — with several overdue invoices, an always-expanded
+  // recommendation under every row made the section take up the whole page.
+  const [expanded, setExpanded] = useState(false)
+
   return (
     <li
       className={recommendation ? 'invoice-row invoice-row-col' : 'invoice-row'}
@@ -65,6 +69,25 @@ function InvoiceRow({ invoice, secondary, onClick, onDraft, recommendation }) {
         </div>
         <StatusPill status={effectiveStatus(invoice)} />
         <span className="invoice-amount">{formatMoney(balanceOf(invoice))}</span>
+        {recommendation && (
+          <button
+            type="button"
+            className="reco-toggle"
+            onClick={(e) => {
+              e.stopPropagation()
+              setExpanded((v) => !v)
+            }}
+            aria-expanded={expanded}
+            aria-label={expanded ? 'Hide recommendation' : 'Show recommendation'}
+          >
+            <SparkleIcon width={14} height={14} />
+            <ChevronDownIcon
+              className={expanded ? 'chevron chevron-open' : 'chevron'}
+              width={13}
+              height={13}
+            />
+          </button>
+        )}
         {onDraft && (
           <button
             className="row-action"
@@ -78,7 +101,7 @@ function InvoiceRow({ invoice, secondary, onClick, onDraft, recommendation }) {
         )}
       </div>
 
-      {recommendation && (
+      {recommendation && expanded && (
         <div className="invoice-reco">
           <SparkleIcon className="reco-icon" width={16} height={16} />
           <div className="reco-text">
