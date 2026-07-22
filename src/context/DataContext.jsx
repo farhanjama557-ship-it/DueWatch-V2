@@ -86,6 +86,7 @@ export function DataProvider({ children }) {
   const [events, setEvents] = useState([])
   const [autopilotEnabled, setAutopilotEnabled] = useState(false)
   const [autopilotApprovalRequired, setAutopilotApprovalRequired] = useState(true)
+  const [awaitingSignature, setAwaitingSignature] = useState([])
 
   const load = useCallback(async () => {
     if (!user) return
@@ -126,8 +127,31 @@ export function DataProvider({ children }) {
       .then((r) => r.data)
       .catch(() => null)
 
-    const [{ data: profile }, { data: inv, error: invErr }, { data: cli }, { data: ev }, autopilot] =
-      await Promise.all([profilePromise, invoicesPromise, clientsPromise, eventsPromise, autopilotPromise])
+    // Reminders Autopilot has drafted but not sent — queued for approval.
+    const awaitingPromise = supabase
+      .from('awaiting_signature')
+      .select('*, invoices(*, clients(name))')
+      .eq('user_id', user.id)
+      .eq('status', 'pending')
+      .order('created_at', { ascending: true })
+      .then((r) => r.data)
+      .catch(() => null)
+
+    const [
+      { data: profile },
+      { data: inv, error: invErr },
+      { data: cli },
+      { data: ev },
+      autopilot,
+      awaiting,
+    ] = await Promise.all([
+      profilePromise,
+      invoicesPromise,
+      clientsPromise,
+      eventsPromise,
+      autopilotPromise,
+      awaitingPromise,
+    ])
 
     if (invErr) {
       setError(invErr.message)
@@ -141,6 +165,12 @@ export function DataProvider({ children }) {
     setEvents(ev || [])
     setAutopilotEnabled(autopilot?.enabled === true)
     setAutopilotApprovalRequired(autopilot?.approval_required !== false)
+    setAwaitingSignature(
+      (awaiting || []).map((row) => ({
+        ...row,
+        invoice: row.invoices ? normalizeInvoice(row.invoices) : null,
+      }))
+    )
     setLoading(false)
   }, [user])
 
@@ -152,6 +182,12 @@ export function DataProvider({ children }) {
   // status (Overdue/Critical/etc.) is correct immediately, before the refetch.
   const addInvoiceLocal = useCallback((row) => {
     setInvoices((cur) => dedupeInvoices([normalizeInvoice(row), ...cur]))
+  }, [])
+
+  // Remove a resolved (approved/skipped) signature request immediately,
+  // without waiting for a full refetch.
+  const resolveSignatureLocal = useCallback((id) => {
+    setAwaitingSignature((cur) => cur.filter((i) => i.id !== id))
   }, [])
 
   const overdueCount = invoices.filter(
@@ -171,6 +207,8 @@ export function DataProvider({ children }) {
     autopilotEnabled,
     autopilotApprovalRequired,
     setAutopilotEnabledLocal: setAutopilotEnabled,
+    awaitingSignature,
+    resolveSignatureLocal,
   }
 
   return <DataContext.Provider value={value}>{children}</DataContext.Provider>

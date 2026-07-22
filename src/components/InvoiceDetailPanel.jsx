@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Bot } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import StatusPill from './StatusPill'
@@ -69,8 +70,18 @@ function reminderDraft(tone, { clientName, invoiceNumber, balance, dueDate }) {
  * Slide-in invoice detail panel (320px, right side, overlay behind).
  * `invoice` non-null opens it; `onClose` closes it. `onMutated` refreshes the
  * parent list after a write. Esc / overlay click close.
+ *
+ * `signatureContext` (optional): the awaiting_signature row when opened via
+ * "Edit First" — pre-fills the recommended tone/draft and, on send, resolves
+ * that signature request too (calls `onSignatureResolved`).
  */
-export default function InvoiceDetailPanel({ invoice, onClose, onMutated }) {
+export default function InvoiceDetailPanel({
+  invoice,
+  onClose,
+  onMutated,
+  signatureContext = null,
+  onSignatureResolved,
+}) {
   const { user } = useAuth()
   const [render, setRender] = useState(Boolean(invoice))
   const [shown, setShown] = useState(false)
@@ -93,16 +104,22 @@ export default function InvoiceDetailPanel({ invoice, onClose, onMutated }) {
     if (invoice) {
       setData(invoice)
       setRender(true)
-      setMode('none')
       setActionError('')
       setPaymentConfirmation('')
+      if (signatureContext) {
+        setTone(signatureContext.recommended_tone || 'friendly')
+        setDraft(signatureContext.draft_content || '')
+        setMode('reminder')
+      } else {
+        setMode('none')
+      }
       const raf = requestAnimationFrame(() => setShown(true))
       return () => cancelAnimationFrame(raf)
     }
     setShown(false)
     const t = setTimeout(() => setRender(false), 250)
     return () => clearTimeout(t)
-  }, [invoice])
+  }, [invoice, signatureContext])
 
   // Esc to close.
   useEffect(() => {
@@ -194,15 +211,20 @@ export default function InvoiceDetailPanel({ invoice, onClose, onMutated }) {
 
   function openReminderDraft() {
     setActionError('')
-    setTone('friendly')
-    setDraft(
-      reminderDraft('friendly', {
-        clientName,
-        invoiceNumber: data.invoice_number,
-        balance: formatMoney(balance),
-        dueDate: formatShortDate(data.due_date),
-      })
-    )
+    if (signatureContext) {
+      setTone(signatureContext.recommended_tone || 'friendly')
+      setDraft(signatureContext.draft_content || '')
+    } else {
+      setTone('friendly')
+      setDraft(
+        reminderDraft('friendly', {
+          clientName,
+          invoiceNumber: data.invoice_number,
+          balance: formatMoney(balance),
+          dueDate: formatShortDate(data.due_date),
+        })
+      )
+    }
     logEvent('reminder_opened', { userId: user.id, invoiceId: data.id })
     setMode('reminder')
   }
@@ -223,6 +245,19 @@ export default function InvoiceDetailPanel({ invoice, onClose, onMutated }) {
     if (!draft.trim()) return setActionError('The reminder message is empty.')
     setBusy(true)
     setActionError('')
+
+    // The only place RESEND_API_KEY is used is server-side, in this Edge
+    // Function — nothing here holds the key. Bail out without writing
+    // anything if the send itself fails, so the founder can retry.
+    const { data: sendResult, error: sendErr } = await supabase.functions.invoke(
+      'send-reminder-email',
+      { body: { invoiceId: data.id, body: draft.trim() } }
+    )
+    if (sendErr || sendResult?.error) {
+      setBusy(false)
+      return setActionError(sendResult?.error || sendErr.message)
+    }
+
     const nowIso = new Date().toISOString()
     const { error: remErr } = await supabase.from('reminders').insert({
       invoice_id: data.id,
@@ -235,7 +270,36 @@ export default function InvoiceDetailPanel({ invoice, onClose, onMutated }) {
       return setActionError(remErr.message)
     }
     await supabase.from('invoices').update({ last_reminder: nowIso }).eq('id', data.id)
-    logEvent('reminder_sent', { userId: user.id, invoiceId: data.id })
+
+    if (signatureContext) {
+      await supabase
+        .from('awaiting_signature')
+        .update({ status: 'approved', resolved_at: nowIso })
+        .eq('id', signatureContext.id)
+      logEvent('reminder_sent', {
+        userId: user.id,
+        invoiceId: data.id,
+        lifecycleStage: 'sent',
+        lifecycleState: 'completed',
+        evidence: {
+          reason: signatureContext.ai_reason,
+          trigger: 'Autopilot recommendation (edited)',
+          approved_by: 'You',
+          resend_id: sendResult?.id || null,
+          delivery_status: 'sent',
+        },
+      })
+      onSignatureResolved?.(signatureContext.id)
+    } else {
+      logEvent('reminder_sent', {
+        userId: user.id,
+        invoiceId: data.id,
+        lifecycleStage: 'sent',
+        lifecycleState: 'completed',
+        evidence: { resend_id: sendResult?.id || null, delivery_status: 'sent' },
+      })
+    }
+
     setBusy(false)
     setReminders((r) =>
       dedupeReminders([
@@ -399,6 +463,11 @@ export default function InvoiceDetailPanel({ invoice, onClose, onMutated }) {
 
           {mode === 'reminder' && (
             <div className="action-form">
+              {signatureContext && (
+                <div className="autopilot-draft-label">
+                  <Bot size={14} color="var(--primary)" /> Autopilot&apos;s draft — edit anything.
+                </div>
+              )}
               <div className="tone-buttons">
                 {TONES.map((t) => (
                   <button

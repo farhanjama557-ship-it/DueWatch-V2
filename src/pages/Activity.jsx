@@ -1,9 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
+import { Bot } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import { supabase } from '../lib/supabase'
 import { SearchIcon } from '../components/icons'
 import { formatEventDate } from '../lib/format'
-import { activityMeta, activityDescription } from '../lib/activity'
+import {
+  activityMeta,
+  activityDescription,
+  activityIcon,
+  activityWhy,
+  activityApprovedBy,
+} from '../lib/activity'
 
 const TABS = [
   { key: 'all', label: 'All' },
@@ -98,14 +105,25 @@ export default function Activity() {
             {rows.map((e) => {
               const meta = activityMeta(e.event_type)
               const desc = activityDescription(e)
+              const why = activityWhy(e)
+              const approvedBy = activityApprovedBy(e)
+              const { Icon, size, color } = activityIcon(e)
               return (
                 <li key={e.id} className="activity-item">
-                  <span className={`activity-icon tone-${meta.tone}`} aria-hidden="true" />
+                  <span className="activity-icon-wrap" aria-hidden="true">
+                    <Icon size={size} color={color} />
+                  </span>
                   <div className="activity-main">
                     <span className="activity-title">{meta.title}</span>
                     {desc && <span className="activity-desc">{desc}</span>}
+                    {why && <span className="activity-why">{why}</span>}
+                    {approvedBy && (
+                      <span className="activity-approved">Approved by: {approvedBy}</span>
+                    )}
                   </div>
-                  <span className="activity-actor">{meta.actor}</span>
+                  <span className="activity-actor">
+                    {meta.actor === 'Duewatch' && <Bot size={12} />} {meta.actor}
+                  </span>
                   <span className="activity-time">{formatEventDate(e.created_at)}</span>
                 </li>
               )

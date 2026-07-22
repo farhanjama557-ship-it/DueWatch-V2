@@ -4,8 +4,9 @@ import { useData, isOutstanding, balanceOf, effectiveStatus } from '../context/D
 import Avatar from '../components/Avatar'
 import StatusPill from '../components/StatusPill'
 import InvoiceDetailPanel from '../components/InvoiceDetailPanel'
+import SignatureSection from '../components/SignatureSection'
 import { recommendFor } from '../lib/recommend'
-import { activityMeta, activityDescription, isPaymentEvent } from '../lib/activity'
+import { activityMeta, activityDescription, activityIcon, isPaymentEvent } from '../lib/activity'
 import {
   formatMoney,
   formatLongDate,
@@ -93,12 +94,15 @@ function InvoiceRow({ invoice, secondary, onClick, onDraft, recommendation }) {
   )
 }
 
+// Autopilot Status card — ambient reassurance (Section 7 of the Session 7
+// spec upgrades this with live scheduler data; that's a later build-order
+// item, so this keeps its existing Session 6 content for now).
 function WatchingCard({ count, outstandingTotal }) {
   return (
     <section className="watching-card">
       <span className="watching-dot" aria-hidden="true" />
       <div className="watching-body">
-        <div className="watching-title">Everything is under control.</div>
+        <div className="watching-title">Everything else is handled.</div>
         <div className="watching-sub">
           {count} {count === 1 ? 'invoice' : 'invoices'} active
           {' · '}
@@ -108,6 +112,11 @@ function WatchingCard({ count, outstandingTotal }) {
         </div>
       </div>
       <span className="watching-badge">Active</span>
+      {/* Safety rail: the pause/kill switch must be reachable from here at
+          all times — links to the management view with "Turn off Autopilot". */}
+      <Link to="/autopilot" className="watching-manage-link">
+        Manage
+      </Link>
     </section>
   )
 }
@@ -163,10 +172,11 @@ function RecentActivity({ events }) {
             {items.map((e) => {
               const meta = activityMeta(e.event_type)
               const desc = activityDescription(e)
+              const { Icon, size, color } = activityIcon(e)
               return (
                 <li key={e.id} className="handled-item">
-                  <span className={`handled-check tone-${meta.tone}`}>
-                    <SparkleIcon width={12} height={12} />
+                  <span className="handled-check">
+                    <Icon size={size} color={color} />
                   </span>
                   <div className="handled-text">
                     <span className="handled-action">{meta.title}</span>
@@ -209,8 +219,19 @@ function AutopilotNudge({ visible, onDismiss }) {
 }
 
 export default function Dashboard() {
-  const { invoices, events, name, loading, error, refresh, autopilotEnabled } = useData()
+  const {
+    invoices,
+    events,
+    name,
+    loading,
+    error,
+    refresh,
+    autopilotEnabled,
+    awaitingSignature,
+    resolveSignatureLocal,
+  } = useData()
   const [selected, setSelected] = useState(null)
+  const [signatureContext, setSignatureContext] = useState(null)
   const [nudgeDismissed, setNudgeDismissed] = useState(() => {
     const at = Number(localStorage.getItem(NUDGE_DISMISS_KEY))
     if (!at) return false
@@ -271,10 +292,19 @@ export default function Dashboard() {
   }
 
   const attentionCount = derived.needsAttention.length
-  const summary =
-    attentionCount === 0
-      ? 'Everything is handled. No follow-ups needed today.'
-      : `${attentionCount} ${attentionCount === 1 ? 'invoice needs' : 'invoices need'} your attention. Everything else is handled.`
+  const awaitingCount = awaitingSignature.length
+
+  // Locked subline hierarchy (Session 7 §2): Autopilot copy takes priority
+  // whenever there's something awaiting signature; otherwise falls back to
+  // the Session 6 needs-attention / all-handled copy.
+  let summary
+  if (awaitingCount > 0) {
+    summary = `Autopilot is handling ${derived.outstandingCount} ${derived.outstandingCount === 1 ? 'invoice' : 'invoices'}. ${awaitingCount} need${awaitingCount === 1 ? 's' : ''} your signature.`
+  } else if (attentionCount > 0) {
+    summary = `${attentionCount} ${attentionCount === 1 ? 'invoice needs' : 'invoices need'} your attention. Everything else is handled.`
+  } else {
+    summary = 'Everything is handled. No follow-ups needed today.'
+  }
 
   const hasAnyInvoices = invoices.length > 0
 
@@ -287,14 +317,22 @@ export default function Dashboard() {
     setNudgeDismissed(true)
   }
 
+  function openEditFirst(item) {
+    setSignatureContext(item)
+    setSelected(item.invoice)
+  }
+
+  function closeDetailPanel() {
+    setSelected(null)
+    setSignatureContext(null)
+  }
+
   return (
     <div className="brief">
       <h1 className="brief-greeting">Good morning, {name}.</h1>
       <p className="brief-subline">
         {formatLongDate()} &nbsp;·&nbsp; {summary}
       </p>
-
-      <WatchingCard count={derived.outstandingCount} outstandingTotal={derived.outstandingTotal} />
 
       {/* KPI cards */}
       <section className="kpi-grid">
@@ -326,13 +364,20 @@ export default function Dashboard() {
         />
       </section>
 
+      {/* 1. Awaiting Your Signature — always first, hidden if empty */}
+      <SignatureSection
+        items={awaitingSignature}
+        onResolved={resolveSignatureLocal}
+        onEdit={openEditFirst}
+      />
+
       {!hasAnyInvoices ? (
         <section className="brief-card">
           <p className="brief-empty">No invoices yet.</p>
         </section>
       ) : (
         <>
-          {/* Needs Attention — with rule-based recommendations */}
+          {/* 2. Needs Attention — manual/non-Autopilot items, with recommendations */}
           <section className="brief-card">
             <div className="section-head">
               <h2 className="section-title">Needs attention</h2>
@@ -361,10 +406,13 @@ export default function Dashboard() {
 
           <AutopilotNudge visible={showNudge} onDismiss={dismissNudge} />
 
-          {/* Recent Activity */}
+          {/* 3. Autopilot Status card — ambient reassurance */}
+          <WatchingCard count={derived.outstandingCount} outstandingTotal={derived.outstandingTotal} />
+
+          {/* 4. Recent Activity — collapsible, last 5 */}
           <RecentActivity events={events} />
 
-          {/* Due Soon */}
+          {/* Due Soon (pre-Session-7, kept as-is) */}
           <section className="brief-card">
             <div className="section-head">
               <h2 className="section-title">Due Soon</h2>
@@ -387,7 +435,13 @@ export default function Dashboard() {
         </>
       )}
 
-      <InvoiceDetailPanel invoice={selected} onClose={() => setSelected(null)} onMutated={refresh} />
+      <InvoiceDetailPanel
+        invoice={selected}
+        onClose={closeDetailPanel}
+        onMutated={refresh}
+        signatureContext={signatureContext}
+        onSignatureResolved={resolveSignatureLocal}
+      />
     </div>
   )
 }
