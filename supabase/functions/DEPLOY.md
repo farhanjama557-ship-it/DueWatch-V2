@@ -56,14 +56,15 @@ select cron.schedule(
 );
 ```
 
-## 4. Required: verify a sending domain in Resend
+## 4. Before going live: verify a sending domain in Resend
 
 `supabase/functions/_shared/resend.js` currently sends `from: 'Duewatch
-<reminders@duewatch.app>'`. **Resend will reject this** until that domain is
-verified in your Resend account (Resend dashboard → Domains → Add Domain →
-add the DNS records they give you). Until it's verified, change the `from`
-in `_shared/resend.js` to Resend's sandbox address (`onboarding@resend.dev`)
-so you can test end-to-end, then switch to your real domain once verified.
+<onboarding@resend.dev>'` — Resend's shared sandbox address, which works
+without any domain setup so you can test end-to-end right away. Before
+sending to real clients, verify your own domain (Resend dashboard →
+Domains → Add Domain → add the DNS records they give you) and change
+`DEFAULT_FROM` in `_shared/resend.js` to an address on it (e.g.
+`reminders@duewatch.app`), then redeploy both functions.
 
 ## 5. One assumption to confirm
 

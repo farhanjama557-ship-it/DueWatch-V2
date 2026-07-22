@@ -3,10 +3,10 @@
 // never be sent to or read by the browser.
 const RESEND_API_URL = 'https://api.resend.com/emails'
 
-// TODO: replace with a sender address on a domain verified in the Resend
-// account (Resend rejects unverified From domains). Until then, sends will
-// fail with a clear Resend error naming the problem — see the deploy notes.
-const DEFAULT_FROM = 'Duewatch <reminders@duewatch.app>'
+// Resend's shared sandbox address — works without a verified domain, for
+// end-to-end testing. Swap to a verified domain (e.g. reminders@duewatch.app)
+// before going live; see DEPLOY.md §4.
+const DEFAULT_FROM = 'Duewatch <onboarding@resend.dev>'
 
 export async function sendEmail({ to, subject, text, from }) {
   const apiKey = Deno.env.get('RESEND_API_KEY')
