@@ -1,7 +1,7 @@
-import { NavLink, useNavigate } from 'react-router-dom'
-import { PenSquare } from 'lucide-react'
+import { NavLink } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { useData, isOutstanding } from '../context/DataContext'
+import { useData } from '../context/DataContext'
+import GlobalAutopilotIndicator from './GlobalAutopilotIndicator'
 import { initials } from '../lib/format'
 import {
   MorningBriefIcon,
@@ -43,68 +43,12 @@ function NavItem({ to, label, Icon, end, badge, overdueCount }) {
   )
 }
 
-function AutopilotIndicator({ invoiceCount, watchingCount, enabled }) {
-  const navigate = useNavigate()
-
-  let dotClass = 'autopilot-dot off'
-  let title = 'Autopilot off'
-  let sub = 'Click to set up'
-
-  if (invoiceCount === 0) {
-    dotClass = 'autopilot-dot off'
-    title = 'Autopilot ready'
-    sub = 'Add invoices to start'
-  } else if (enabled) {
-    dotClass = 'autopilot-dot on'
-    title = 'Autopilot on'
-    sub = `Watching ${watchingCount} ${watchingCount === 1 ? 'invoice' : 'invoices'}`
-  }
-
-  return (
-    <button
-      type="button"
-      className="sidebar-autopilot"
-      onClick={() => navigate('/autopilot')}
-    >
-      <span className={dotClass} aria-hidden="true" />
-      <div className="sidebar-autopilot-text">
-        <span className="sidebar-autopilot-title">{title}</span>
-        <span className="sidebar-autopilot-sub">{sub}</span>
-      </div>
-    </button>
-  )
-}
-
-function SignatureIndicator({ count }) {
-  const navigate = useNavigate()
-
-  return (
-    <button
-      type="button"
-      className="sidebar-autopilot sidebar-signature"
-      onClick={() => navigate('/', { state: { scrollToSignature: true } })}
-    >
-      <span
-        className={count > 0 ? 'signature-dot amber' : 'signature-dot green'}
-        aria-hidden="true"
-      />
-      <div className="sidebar-autopilot-text">
-        <span className="sidebar-autopilot-title">
-          <PenSquare size={13} className="signature-icon" />{' '}
-          {count > 0 ? `Awaiting your signature (${count})` : 'No signatures needed'}
-        </span>
-      </div>
-    </button>
-  )
-}
-
 export default function Sidebar() {
   const { user } = useAuth()
-  const { name, overdueCount, invoices, autopilotEnabled, awaitingSignature } = useData()
+  const { name, overdueCount } = useData()
 
   const email = user?.email ?? ''
   const displayName = name || email.split('@')[0] || 'Account'
-  const watchingCount = invoices.filter(isOutstanding).length
 
   return (
     <aside className="sidebar">
@@ -125,13 +69,7 @@ export default function Sidebar() {
         ))}
       </nav>
 
-      <SignatureIndicator count={awaitingSignature.length} />
-
-      <AutopilotIndicator
-        invoiceCount={invoices.length}
-        watchingCount={watchingCount}
-        enabled={autopilotEnabled}
-      />
+      <GlobalAutopilotIndicator />
 
       <div className="sidebar-profile">
         <span className="profile-avatar">{initials(displayName)}</span>
