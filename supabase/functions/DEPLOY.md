@@ -69,8 +69,8 @@ so you can test end-to-end, then switch to your real domain once verified.
 
 Both functions read the recipient address as `invoice.clients.email`. If
 your `clients` table's real email column has a different name, update the
-`.select(...)` calls in `send-reminder-email/index.js` and
-`autopilot-scheduler/index.js` (two spots each) — everything else is
+`.select(...)` calls in `send-reminder-email/index.ts` and
+`autopilot-scheduler/index.ts` (two spots each) — everything else is
 unaffected. If it errors, the error message will say exactly this
 ("column clients.email does not exist" or similar).
 
