@@ -240,3 +240,8 @@ alter table public.events add column if not exists previous_action_id uuid refer
 alter table public.events add column if not exists evidence jsonb default '{}';
 
 create index if not exists events_lifecycle_idx on public.events (lifecycle_stage, lifecycle_state);
+
+-- Session 7.5 build order #7 — per-invoice Autopilot toggle. Pausing a
+-- single invoice must not affect any other invoice, so this lives on the
+-- invoice row itself rather than in autopilot_settings/autopilot_rules.
+alter table public.invoices add column if not exists autopilot_paused boolean not null default false;
