@@ -173,6 +173,10 @@
   height: 8px;
   border-radius: 50%;
   background: var(--p-brand);
+  /* Centering must survive reduced-motion disabling the animation below —
+     it lived only in the keyframe before, which left the dot uncentered
+     when the animation was turned off. */
+  transform: translate(-50%, -50%);
   animation: thinkCore 2s ease-in-out infinite;
 }
 
@@ -214,13 +218,6 @@
   0%, 100% { transform: scale(1); opacity: 0.5; }
   50% { transform: scale(1.5); opacity: 0; }
 }
-@keyframes activeShake {
-  0%, 100% { transform: translateX(0); }
-  20% { transform: translateX(-2px); }
-  40% { transform: translateX(2px); }
-  60% { transform: translateX(-2px); }
-  80% { transform: translateX(2px); }
-}
 .presence-active .status-dot {
   background: var(--p-amber);
   animation: activePulse 1s ease-in-out infinite;
@@ -235,9 +232,6 @@
   animation: activeGlow 1s ease-in-out infinite;
   z-index: -1;
 }
-.presence-active .presence-header {
-  animation: activeShake 0.4s ease-out;
-}
 .presence-active.presence-card {
   border-color: rgba(224, 147, 12, 0.4);
 }
@@ -246,13 +240,18 @@
 }
 
 /* ---------- 5. Error ---------- */
+/* v1.2: an entry moment, then settle. A loop that never stops until a
+   human intervenes becomes background noise (car-alarm effect) — the
+   state stays Error (solid red dot, red border tint) for as long as the
+   problem is real, but the motion itself only plays once, ~2.4s
+   (3 cycles at 0.8s), then holds its final frame via forwards. */
 @keyframes errorBorderPulse {
   0%, 100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.1); }
   50% { box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.06); }
 }
 .presence-error .status-dot {
   background: var(--p-red);
-  animation: activePulse 0.8s ease-in-out infinite;
+  animation: activePulse 0.8s ease-in-out 3 forwards;
   will-change: opacity;
 }
 .presence-error .status-dot::after {
@@ -261,15 +260,12 @@
   inset: -3px;
   border-radius: 50%;
   background: var(--p-red);
-  animation: activeGlow 0.8s ease-in-out infinite;
+  animation: activeGlow 0.8s ease-in-out 3 forwards;
   z-index: -1;
-}
-.presence-error .presence-header {
-  animation: activeShake 0.4s ease-out;
 }
 .presence-error.presence-card {
   border-color: rgba(220, 38, 38, 0.35);
-  animation: errorBorderPulse 2s ease-in-out infinite;
+  animation: errorBorderPulse 0.8s ease-in-out 3 forwards;
 }
 .presence-error .presence-mission {
   border-left-color: var(--p-red);
