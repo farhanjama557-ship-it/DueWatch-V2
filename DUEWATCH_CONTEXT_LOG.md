@@ -56,7 +56,7 @@
 - Emoji policy: Lucide icons only in production UI. No emoji except rare one-time celebratory moments.
 - Design system: terracotta `#DA7756`, Inter font, warm off-white sidebar `#F7F7F5`.
 - Product positioning: AI accounts receivable employee, not invoicing software. "You do the work. Duewatch makes sure you get paid."
-- Landing page section list (not yet built): Duewatch Presence System (interactive demo), Philosophy/Source of Truth (the Bridge, Principles, Our Promise), Duewatch Around the World (global framing, accessible pricing not geography-based discounts).
+- Landing page: built in this same repo (approved decision — no separate Next.js project), at `src/landing/`, mounted at `/` for logged-out visitors only (logged-in `/` is still the Dashboard, unchanged). Phase 1 (static structure, PR #20) covers all 11 sections; motion/cinematic sequences/globe geometry/early-access wiring are later phases — see the 2026-07-23 log entry below.
 
 ---
 
@@ -136,6 +136,12 @@ alter table public.invoices add column if not exists autopilot_paused boolean no
 **Status:** PR open, not merged, bundled into the still-open #19 — https://github.com/farhanjama557-ship-it/DueWatch-V2/pull/19
 **Affects:** Dashboard, InvoiceDetailPanel, PresenceIndicator (now uses the extracted DuewatchBotMark)
 **Open question:** Two spec requirements deliberately not implemented, flagged rather than faked: global Presence isn't forced into Contextual while this modal is in review, and JourneyBar doesn't gain a transient Drafted/Signature stage for it — neither has a real backing signal (no `awaiting_signature` row exists for a founder-initiated draft) without a schema change. Per explicit instruction, the full unit/component/integration/accessibility/E2E test suite (spec §26) is held back until the founder confirms it feels right live — this is a build-and-manually-verify pass only.
+
+### 2026-07-23 — Claude Code — PR #20: Landing page Phase 1 (static structure, in this repo)
+**Did:** Built Phase 1 of the Duewatch landing page — content, design tokens, all 11 static/responsive sections, and the routing change to serve it — after founder decisions on repo strategy (keep this repo, no separate Next.js/TS project, plain JS/JSX, CSS Modules under `src/landing/` for isolation, reuse the existing Supabase project for early access later). `/` is now auth-aware: logged-out visitors get the new `LandingPage`, logged-in users get the exact same Dashboard shell as before (verified live with a temporarily-forced session, then reverted — empty diff on `AuthContext.jsx`). No motion, no Meet Duewatch cinematic sequence, no globe geometry, no early-access form wiring yet — those are later phases per the agreed build order. Files: `src/landing/content/{duewatchContent,demoData,productTruthLedger}.js`, `src/landing/tokens/tokens.css`, `src/landing/sections/*` (11 components + CSS Modules), `src/landing/ui/{SkipLink,ProductWindow,icons}`, plus edits to `src/App.jsx` and `src/components/Layout.jsx`. Two real bugs found and fixed during review before shipping: Hero's headline was column-overlapping the demo card (wrong grid span), and the Bridge's opening statement had `max-width: 9ch` (nine characters, not "9 words"), producing a near-vertical wall of text.
+**Status:** PR open, not merged — https://github.com/farhanjama557-ship-it/DueWatch-V2/pull/20
+**Affects:** `src/App.jsx`, `src/components/Layout.jsx` (routing only — no other authenticated-app behavior touched), new `src/landing/` tree, `index.html` (Newsreader font link added)
+**Open question:** Two copy conflicts flagged, not fully resolved, tracked in `src/landing/content/productTruthLedger.js`: (1) JourneyBar shows "Signature" here per all landing-page sources, while the live product app shows "Awaiting signature" since PR #19's rename — these are independent illustrative datasets, not a literal app mirror, but worth the founder's eyes; (2) the Global Vision globe was built toward (accessible content + placeholder only so far) on the theory that the later "final" Visual Spec v2 supersedes the Unified Spec's earlier "no globe" line — flagging in case that reading is wrong.
 
 ---
 
