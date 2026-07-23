@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext'
 import { useData } from '../context/DataContext'
 import StatusPill from './StatusPill'
 import JourneyBar from './JourneyBar'
+import CognitiveCompose from '../features/reminders/CognitiveCompose'
 import { CloseIcon, CheckIcon } from './icons'
 import {
   formatMoney,
@@ -17,6 +18,7 @@ import { balanceOf, effectiveStatus } from '../context/DataContext'
 import { logEvent } from '../lib/events'
 import { fetchAutopilotRules } from '../lib/autopilot'
 import { nextScheduledAction } from '../lib/ruleSchedule'
+import { TONES, reminderDraft, sendReminderNow } from '../lib/reminders'
 
 // line_items is a pre-existing table — tolerate common column-name variants.
 const pick = (obj, ...keys) => {
@@ -41,34 +43,6 @@ function dedupeReminders(rows) {
     out.push(r)
   }
   return out
-}
-
-const TONES = ['friendly', 'professional', 'firm']
-
-function reminderDraft(tone, { clientName, invoiceNumber, balance, dueDate }) {
-  const num = invoiceNumber || 'your invoice'
-  if (tone === 'professional') {
-    return (
-      `Dear ${clientName},\n\n` +
-      `I hope this finds you well. Our records show invoice ${num} for ${balance}, due ${dueDate}, ` +
-      `remains outstanding.\n\n` +
-      `Please let us know if you have any questions, or if payment has already been sent.\n\nBest regards.`
-    )
-  }
-  if (tone === 'firm') {
-    return (
-      `Hi ${clientName},\n\n` +
-      `Invoice ${num} for ${balance} was due ${dueDate} and remains unpaid. Please arrange payment ` +
-      `as soon as possible.\n\n` +
-      `If you believe this is an error, please reach out right away.`
-    )
-  }
-  // friendly (default)
-  return (
-    `Hi ${clientName},\n\n` +
-    `This is a friendly reminder that invoice ${num} for ${balance} was due ${dueDate}.\n\n` +
-    `Please let us know if payment is already on its way.\n\nThank you.`
-  )
 }
 
 /**
@@ -113,6 +87,10 @@ export default function InvoiceDetailPanel({
   const [busy, setBusy] = useState(false)
   const [actionError, setActionError] = useState('')
   const [paymentConfirmation, setPaymentConfirmation] = useState('')
+  // A founder-initiated draft (no signatureContext) opens CognitiveCompose;
+  // editing an Autopilot recommendation (signatureContext, "Edit First")
+  // keeps using this panel's existing inline reminder mode below.
+  const [showCompose, setShowCompose] = useState(false)
 
   // Mount / open / close transition management.
   useEffect(() => {
@@ -278,19 +256,13 @@ export default function InvoiceDetailPanel({
     if (signatureContext) {
       setTone(signatureContext.recommended_tone || 'friendly')
       setDraft(signatureContext.draft_content || '')
-    } else {
-      setTone('friendly')
-      setDraft(
-        reminderDraft('friendly', {
-          clientName,
-          invoiceNumber: data.invoice_number,
-          balance: formatMoney(balance),
-          dueDate: formatShortDate(data.due_date),
-        })
-      )
+      logEvent('reminder_opened', { userId: user.id, invoiceId: data.id })
+      setMode('reminder')
+      return
     }
-    logEvent('reminder_opened', { userId: user.id, invoiceId: data.id })
-    setMode('reminder')
+    // A fresh, founder-initiated draft — CognitiveCompose owns this
+    // experience end to end (work-status, reveal, review, send).
+    setShowCompose(true)
   }
 
   function pickTone(t) {
@@ -313,71 +285,30 @@ export default function InvoiceDetailPanel({
     // fabricated "thinking" state.
     startCognitive(`Drafting reminder for ${clientName}`)
 
-    // The only place RESEND_API_KEY is used is server-side, in this Edge
-    // Function — nothing here holds the key. Bail out without writing
-    // anything if the send itself fails, so the founder can retry.
-    const { data: sendResult, error: sendErr } = await supabase.functions.invoke(
-      'send-reminder-email',
-      { body: { invoiceId: data.id, body: draft.trim() } }
-    )
-    // The real async work (the network send) is done — Cognitive shouldn't
-    // keep animating through the follow-up DB writes below.
-    stopCognitive()
-    if (sendErr || sendResult?.error) {
-      setBusy(false)
-      return setActionError(sendResult?.error || sendErr.message)
-    }
-
-    const nowIso = new Date().toISOString()
-    const { error: remErr } = await supabase.from('reminders').insert({
-      invoice_id: data.id,
-      user_id: user.id,
-      title: 'Reminder sent',
-      detail: draft.trim(),
+    const result = await sendReminderNow({
+      userId: user.id,
+      invoice: data,
+      draft,
+      signatureContext,
     })
-    if (remErr) {
+    // The real async work (the network send) is done — Cognitive shouldn't
+    // keep animating through the follow-up DB writes above.
+    stopCognitive()
+    if (result.error) {
       setBusy(false)
-      return setActionError(remErr.message)
+      return setActionError(result.error)
     }
-    await supabase.from('invoices').update({ last_reminder: nowIso }).eq('id', data.id)
 
-    if (signatureContext) {
-      await supabase
-        .from('awaiting_signature')
-        .update({ status: 'approved', resolved_at: nowIso })
-        .eq('id', signatureContext.id)
-      logEvent('reminder_sent', {
-        userId: user.id,
-        invoiceId: data.id,
-        lifecycleStage: 'sent',
-        lifecycleState: 'completed',
-        evidence: {
-          reason: signatureContext.ai_reason,
-          trigger: 'Autopilot recommendation (edited)',
-          approved_by: 'You',
-          resend_id: sendResult?.id || null,
-          delivery_status: 'sent',
-        },
-      })
-      onSignatureResolved?.(signatureContext.id)
-    } else {
-      logEvent('reminder_sent', {
-        userId: user.id,
-        invoiceId: data.id,
-        lifecycleStage: 'sent',
-        lifecycleState: 'completed',
-        evidence: { resend_id: sendResult?.id || null, delivery_status: 'sent' },
-      })
-    }
+    if (signatureContext) onSignatureResolved?.(signatureContext.id)
 
     setBusy(false)
     setReminders((r) =>
       dedupeReminders([
-        { id: `local-${Date.now()}`, title: 'Reminder sent', detail: draft.trim(), created_at: nowIso },
+        { id: `local-${Date.now()}`, title: 'Reminder sent', detail: result.draft, created_at: result.nowIso },
         ...r,
       ])
     )
-    setData((d) => ({ ...d, last_reminder: nowIso }))
+    setData((d) => ({ ...d, last_reminder: result.nowIso }))
     onMutated?.()
     setMode('sent')
     setTimeout(() => onClose(), 1400)
@@ -640,6 +571,14 @@ export default function InvoiceDetailPanel({
           )}
         </div>
       </aside>
+
+      {showCompose && (
+        <CognitiveCompose
+          invoice={data}
+          onClose={() => setShowCompose(false)}
+          onSent={() => onMutated?.()}
+        />
+      )}
     </>
   )
 }
