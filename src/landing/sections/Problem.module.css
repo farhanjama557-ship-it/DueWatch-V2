@@ -1,0 +1,94 @@
+.problem {
+  max-width: var(--land-max-width);
+  margin: 0 auto;
+  padding: var(--land-section-padding) var(--land-gutter);
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 24px;
+}
+
+.anchor {
+  grid-column: 1 / 3;
+}
+
+.label {
+  font-family: var(--land-font-body);
+  font-size: var(--land-size-label);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--land-terracotta);
+  margin: 0;
+  position: sticky;
+  top: 100px;
+}
+
+.stage {
+  grid-column: 4 / 12;
+  display: flex;
+  flex-direction: column;
+  gap: 64px;
+}
+
+.thoughts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 56px;
+}
+
+.thoughts li {
+  font-family: var(--land-font-display);
+  font-weight: 400;
+  font-size: var(--land-size-section-headline);
+  line-height: 1.05;
+  color: var(--land-warm-white);
+  max-width: 16ch;
+}
+
+.resolution {
+  font-family: var(--land-font-display);
+  font-weight: 400;
+  font-size: var(--land-size-section-statement);
+  line-height: 1.02;
+  color: var(--land-terracotta);
+  margin: 0;
+}
+
+.resolution span {
+  display: block;
+}
+
+@media (max-width: 1279px) and (min-width: 768px) {
+  .problem {
+    grid-template-columns: repeat(8, 1fr);
+    padding: var(--land-section-padding-tablet) var(--land-gutter-tablet);
+  }
+  .anchor {
+    grid-column: 1 / 3;
+  }
+  .stage {
+    grid-column: 3 / 9;
+  }
+}
+
+@media (max-width: 767px) {
+  .problem {
+    display: flex;
+    flex-direction: column;
+    padding: var(--land-section-padding-mobile) var(--land-gutter-mobile);
+    gap: 32px;
+  }
+  .label {
+    position: static;
+  }
+  .thoughts {
+    gap: 36px;
+  }
+  .thoughts li {
+    font-size: 1.75rem;
+    max-width: none;
+  }
+}

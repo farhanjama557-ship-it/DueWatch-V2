@@ -11,6 +11,7 @@ import CashFlow from './pages/CashFlow'
 import Activity from './pages/Activity'
 import Autopilot from './pages/Autopilot'
 import Settings from './pages/Settings'
+import LandingPage from './landing'
 
 // Redirect authenticated users away from auth screens.
 function PublicOnly({ children }) {
@@ -20,9 +21,26 @@ function PublicOnly({ children }) {
   return children
 }
 
+// `/` is auth-aware rather than gated: logged-out visitors see the public
+// marketing page, logged-in users see exactly what they saw before this
+// change (Dashboard, inside the same app shell). No other route's behavior
+// changes — everything else still goes through ProtectedRoute as before.
+function RootRoute() {
+  const { session, loading } = useAuth()
+  if (loading) return <div className="app-loading">Loading…</div>
+  if (!session) return <LandingPage />
+  return (
+    <Layout>
+      <Dashboard />
+    </Layout>
+  )
+}
+
 export default function App() {
   return (
     <Routes>
+      <Route path="/" element={<RootRoute />} />
+
       <Route
         path="/login"
         element={
@@ -47,7 +65,6 @@ export default function App() {
           </ProtectedRoute>
         }
       >
-        <Route path="/" element={<Dashboard />} />
         <Route path="/invoices" element={<Invoices />} />
         <Route path="/clients" element={<Clients />} />
         <Route path="/cash-flow" element={<CashFlow />} />
