@@ -1,0 +1,88 @@
+.section {
+  max-width: var(--land-max-width);
+  margin: 0 auto;
+  padding: var(--land-section-padding) var(--land-gutter);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 16px;
+}
+
+.headline {
+  font-family: var(--land-font-display);
+  font-weight: 400;
+  font-size: var(--land-size-section-statement);
+  margin: 0;
+}
+
+.supporting {
+  font-family: var(--land-font-body);
+  font-size: var(--land-size-body-lg);
+  color: var(--land-muted-text);
+  max-width: 46ch;
+  margin: 0;
+}
+
+.form {
+  width: 100%;
+  max-width: 480px;
+  margin-top: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.label {
+  text-align: left;
+  font-family: var(--land-font-body);
+  font-size: var(--land-size-ui-meta);
+  font-weight: 600;
+  color: var(--land-muted-text);
+}
+
+.fieldRow {
+  display: flex;
+  gap: 10px;
+}
+
+.input {
+  flex: 1;
+  min-height: 44px;
+  padding: 0 16px;
+  border-radius: 8px;
+  border: 1px solid var(--land-warm-border);
+  background: var(--land-charcoal);
+  color: var(--land-warm-white);
+  font-family: var(--land-font-body);
+  font-size: var(--land-size-body);
+}
+
+.button {
+  min-height: 44px;
+  padding: 0 22px;
+  border-radius: 8px;
+  border: none;
+  background: var(--land-terracotta);
+  color: var(--land-near-black);
+  font-family: var(--land-font-body);
+  font-weight: 600;
+  font-size: var(--land-size-body);
+  white-space: nowrap;
+}
+
+.privacyLine {
+  font-family: var(--land-font-body);
+  font-size: 0.8125rem;
+  color: var(--land-dark-muted);
+  margin: 4px 0 0;
+}
+
+@media (max-width: 767px) {
+  .section {
+    padding: var(--land-section-padding-mobile) var(--land-gutter-mobile);
+  }
+  .fieldRow {
+    flex-direction: column;
+  }
+}

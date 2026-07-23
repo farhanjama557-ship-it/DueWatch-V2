@@ -1,0 +1,141 @@
+.section {
+  max-width: var(--land-max-width);
+  margin: 0 auto;
+  padding: var(--land-section-padding) var(--land-gutter);
+  background: var(--land-raised-charcoal);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 12px;
+}
+
+.label {
+  font-family: var(--land-font-body);
+  font-size: var(--land-size-label);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--land-terracotta);
+  margin: 0;
+}
+
+.headline {
+  font-family: var(--land-font-display);
+  font-weight: 400;
+  font-size: var(--land-size-section-headline);
+  margin: 0;
+}
+
+.supporting {
+  font-family: var(--land-font-body);
+  font-size: var(--land-size-body-lg);
+  color: var(--land-muted-text);
+  max-width: 46ch;
+  margin: 0;
+}
+
+.plans {
+  width: 100%;
+  max-width: 880px;
+  margin-top: 48px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+
+.plan {
+  text-align: left;
+  padding: 32px;
+  border: 1px solid var(--land-warm-border);
+  border-radius: var(--land-radius);
+  background: var(--land-charcoal);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.plan h3 {
+  font-family: var(--land-font-display);
+  font-size: 1.75rem;
+  font-weight: 400;
+  margin: 0;
+  color: var(--land-warm-white);
+}
+
+.planLabel {
+  font-family: var(--land-font-body);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--land-dark-muted);
+}
+
+.planBody {
+  font-family: var(--land-font-body);
+  font-size: var(--land-size-body);
+  color: var(--land-muted-text);
+  margin: 0;
+}
+
+.planDetail {
+  font-family: var(--land-font-body);
+  font-size: var(--land-size-ui-meta);
+  color: var(--land-dark-muted);
+  margin: 0;
+}
+
+.featureList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.featureList li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--land-font-body);
+  font-size: var(--land-size-ui-meta);
+  color: var(--land-muted-text);
+}
+
+.featureList svg {
+  color: var(--land-green);
+  flex-shrink: 0;
+}
+
+.planCta {
+  margin-top: auto;
+  align-self: flex-start;
+  font-family: var(--land-font-body);
+  font-weight: 600;
+  font-size: var(--land-size-ui-meta);
+  color: var(--land-near-black);
+  background: var(--land-terracotta);
+  border-radius: 8px;
+  padding: 12px 20px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+}
+
+.trialLine {
+  font-family: var(--land-font-body);
+  font-size: var(--land-size-ui-meta);
+  color: var(--land-dark-muted);
+  margin-top: 24px;
+}
+
+@media (max-width: 767px) {
+  .section {
+    padding: var(--land-section-padding-mobile) var(--land-gutter-mobile);
+  }
+  .plans {
+    grid-template-columns: 1fr;
+  }
+}

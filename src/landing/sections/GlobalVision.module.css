@@ -1,0 +1,136 @@
+.section {
+  max-width: var(--land-max-width);
+  margin: 0 auto;
+  padding: var(--land-section-padding) var(--land-gutter);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 12px;
+}
+
+.label {
+  font-family: var(--land-font-body);
+  font-size: var(--land-size-label);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--land-terracotta);
+  margin: 0;
+}
+
+.opening {
+  font-family: var(--land-font-body);
+  font-size: var(--land-size-body-lg);
+  color: var(--land-muted-text);
+  margin: 0;
+}
+
+.opening span {
+  display: block;
+}
+
+.lockedLine {
+  font-family: var(--land-font-display);
+  font-weight: 400;
+  font-size: var(--land-size-section-statement);
+  line-height: 1.05;
+  margin: 24px 0 0;
+}
+
+.lockedLine span {
+  display: block;
+}
+
+.lockedLineAccent {
+  color: var(--land-terracotta);
+}
+
+.vision {
+  font-family: var(--land-font-body);
+  font-size: var(--land-size-body-lg);
+  color: var(--land-warm-white);
+  max-width: 44ch;
+  margin: 16px 0 0;
+}
+
+.truthLabel {
+  font-family: var(--land-font-body);
+  font-size: var(--land-size-ui-meta);
+  color: var(--land-dark-muted);
+  margin: 8px 0 0;
+}
+
+.globePlaceholder {
+  width: 100%;
+  max-width: 640px;
+  aspect-ratio: 16 / 10;
+  margin-top: 40px;
+  border: 1px dashed var(--land-warm-border);
+  border-radius: var(--land-radius);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--land-dark-muted);
+  font-family: var(--land-font-body);
+  font-size: var(--land-size-ui-meta);
+}
+
+.momentsList,
+.currencyList {
+  list-style: none;
+  margin: 40px 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  width: 100%;
+  max-width: 880px;
+  text-align: left;
+}
+
+.momentsList li {
+  padding: 14px 16px;
+  border: 1px solid var(--land-warm-border);
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.momentLocation {
+  font-family: var(--land-font-body);
+  font-weight: 600;
+  font-size: var(--land-size-ui-meta);
+}
+
+.momentDetail {
+  font-family: var(--land-font-body);
+  font-size: 0.8125rem;
+  color: var(--land-dark-muted);
+}
+
+.currencyList {
+  grid-template-columns: repeat(4, 1fr);
+  margin-top: 16px;
+}
+
+.currencyList li {
+  font-family: var(--land-font-body);
+  font-size: 0.8125rem;
+  color: var(--land-muted-text);
+  text-align: center;
+  padding: 8px;
+  border: 1px solid var(--land-warm-border);
+  border-radius: 8px;
+}
+
+@media (max-width: 767px) {
+  .section {
+    padding: var(--land-section-padding-mobile) var(--land-gutter-mobile);
+  }
+  .momentsList,
+  .currencyList {
+    grid-template-columns: 1fr;
+  }
+}
