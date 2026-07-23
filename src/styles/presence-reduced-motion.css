@@ -1,0 +1,34 @@
+/* Duewatch Presence System — reduced motion overrides (spec §9).
+   Disables every transform/loop animation; every state stays fully
+   distinguishable by color and fill alone. */
+@media (prefers-reduced-motion: reduce) {
+  .presence-resting .status-dot,
+  .cognitive-ring,
+  .cognitive-ring .ring-outer,
+  .cognitive-ring .ring-inner,
+  .cognitive-ring .ring-core,
+  .presence-contextual .status-dot,
+  .presence-contextual .status-dot::after,
+  .presence-active .status-dot,
+  .presence-active .status-dot::after,
+  .presence-active .presence-header,
+  .presence-error .status-dot,
+  .presence-error .status-dot::after,
+  .presence-error .presence-header,
+  .presence-error.presence-card,
+  .presence-celebratory .status-dot {
+    animation: none !important;
+  }
+
+  .presence-resting .status-dot { opacity: 1; }
+  .presence-cognitive .status-dot { opacity: 0.8; }
+  .presence-contextual .status-dot { opacity: 0.9; }
+  .presence-active .status-dot { opacity: 1; }
+  .presence-error .status-dot { opacity: 1; }
+  .presence-celebratory .status-dot { opacity: 1; }
+  .presence-off .status-dot { opacity: 0.4; }
+
+  .presence-card {
+    box-shadow: 0 1px 3px rgba(35, 31, 27, 0.04) !important;
+  }
+}

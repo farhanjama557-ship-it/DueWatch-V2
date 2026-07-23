@@ -89,6 +89,15 @@ export function DataProvider({ children }) {
   const [awaitingSignature, setAwaitingSignature] = useState([])
   const [lastAutopilotRun, setLastAutopilotRun] = useState(null)
 
+  // Presence System (Merged Spec v1.1) signals that aren't fetched from the
+  // DB — they're set directly by the real action that's happening in this
+  // session. Cognitive fires only while a real async send/sign is in
+  // flight; Celebratory fires only right after a real payment write
+  // succeeds. Neither is inferred from historical rows, so neither replays
+  // on page load.
+  const [cognitiveActivity, setCognitiveActivity] = useState(null) // { label } | null
+  const [celebration, setCelebration] = useState(null) // { clientName, amount, daysEarly } | null
+
   // `silent` skips the global loading flag — used for the background poll so
   // the UI doesn't flicker to a loading state every refresh.
   const load = useCallback(async (opts = {}) => {
@@ -242,6 +251,23 @@ export function DataProvider({ children }) {
     (i) => isOutstanding(i) && daysOverdue(i.due_date) > 0
   ).length
 
+  // Severely overdue (matches the existing "critical"/"final_notice"
+  // thresholds in effectiveStatus) — the real signal behind the Presence
+  // System's "Active" state. There is no signal in this codebase yet for
+  // "Autopilot was unexpectedly paused" (no such distinction is tracked),
+  // so that half of Active's trigger condition stays unimplemented rather
+  // than faked.
+  const criticalOverdueCount = invoices.filter(
+    (i) => isOutstanding(i) && daysOverdue(i.due_date) >= 15
+  ).length
+
+  const autopilotErrorCount = events.filter((e) => e.lifecycle_state === 'error').length
+
+  const startCognitive = useCallback((label) => setCognitiveActivity({ label }), [])
+  const stopCognitive = useCallback(() => setCognitiveActivity(null), [])
+  const celebrate = useCallback((payload) => setCelebration(payload), [])
+  const dismissCelebration = useCallback(() => setCelebration(null), [])
+
   const value = {
     invoices,
     clients,
@@ -259,6 +285,14 @@ export function DataProvider({ children }) {
     resolveSignatureLocal,
     lastAutopilotRun,
     hasCompletedAutopilotRun: lastAutopilotRun?.status === 'completed',
+    criticalOverdueCount,
+    autopilotErrorCount,
+    cognitiveActivity,
+    startCognitive,
+    stopCognitive,
+    celebration,
+    celebrate,
+    dismissCelebration,
   }
 
   return <DataContext.Provider value={value}>{children}</DataContext.Provider>

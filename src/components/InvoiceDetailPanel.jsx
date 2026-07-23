@@ -11,6 +11,7 @@ import {
   formatShortDate,
   formatEventDate,
   daysOverdue,
+  daysUntil,
 } from '../lib/format'
 import { balanceOf, effectiveStatus } from '../context/DataContext'
 import { logEvent } from '../lib/events'
@@ -87,7 +88,14 @@ export default function InvoiceDetailPanel({
   onSignatureResolved,
 }) {
   const { user } = useAuth()
-  const { autopilotEnabled, awaitingSignature, hasCompletedAutopilotRun } = useData()
+  const {
+    autopilotEnabled,
+    awaitingSignature,
+    hasCompletedAutopilotRun,
+    startCognitive,
+    stopCognitive,
+    celebrate,
+  } = useData()
   const [render, setRender] = useState(Boolean(invoice))
   const [shown, setShown] = useState(false)
   const [data, setData] = useState(invoice)
@@ -218,6 +226,11 @@ export default function InvoiceDetailPanel({
     if (error) return setActionError(error.message)
     setData((d) => ({ ...d, paid: true }))
     logEvent('invoice_marked_paid', { userId: user.id, invoiceId: data.id })
+    celebrate({
+      clientName,
+      amount: formatMoney(balance),
+      daysEarly: Math.max(daysUntil(data.due_date) ?? 0, 0),
+    })
     onMutated?.()
   }
 
@@ -247,7 +260,16 @@ export default function InvoiceDetailPanel({
       return
     }
     logEvent('payment_recorded', { userId: user.id, invoiceId: data.id })
-    if (willBePaid) logEvent('invoice_marked_paid', { userId: user.id, invoiceId: data.id })
+    if (willBePaid) {
+      logEvent('invoice_marked_paid', { userId: user.id, invoiceId: data.id })
+      // Celebratory only on the payment that actually closes the invoice —
+      // a partial payment isn't the "we did it" milestone the spec means.
+      celebrate({
+        clientName,
+        amount: formatMoney(amt),
+        daysEarly: Math.max(daysUntil(data.due_date) ?? 0, 0),
+      })
+    }
     onMutated?.()
   }
 
@@ -287,6 +309,9 @@ export default function InvoiceDetailPanel({
     if (!draft.trim()) return setActionError('The reminder message is empty.')
     setBusy(true)
     setActionError('')
+    // Real Cognitive signal — an actual in-flight network call, not a
+    // fabricated "thinking" state.
+    startCognitive(`Drafting reminder for ${clientName}`)
 
     // The only place RESEND_API_KEY is used is server-side, in this Edge
     // Function — nothing here holds the key. Bail out without writing
@@ -295,6 +320,9 @@ export default function InvoiceDetailPanel({
       'send-reminder-email',
       { body: { invoiceId: data.id, body: draft.trim() } }
     )
+    // The real async work (the network send) is done — Cognitive shouldn't
+    // keep animating through the follow-up DB writes below.
+    stopCognitive()
     if (sendErr || sendResult?.error) {
       setBusy(false)
       return setActionError(sendResult?.error || sendErr.message)
