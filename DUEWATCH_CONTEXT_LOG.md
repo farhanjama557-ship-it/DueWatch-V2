@@ -36,7 +36,7 @@
 - Bug fix: Supabase query errors no longer silently swallowed (PR #14)
 
 **Known bugs, not yet fixed:**
-- `autopilot_paused` column referenced by #7 (per-invoice toggle) is missing from the live `invoices` table — migration never applied. Toggle is currently non-functional.
+- `autopilot_paused` column referenced by #7 (per-invoice toggle) is missing from the live `invoices` table — migration exists in `supabase/schema.sql` (added in PR #13) but was never manually run against the live DB. Toggle is currently non-functional. See the 2026-07-23 log entry below for the exact SQL to run.
 - Global Autopilot indicator's `Bot` icon renders as a blank square in production, not the intended icon. Animations may not be firing correctly as a result — needs verification in a real browser, not just Playwright screenshots.
 
 **Not started:**
@@ -109,6 +109,15 @@
 **Status:** decision only, not built (landing page not started)
 **Affects:** future landing page Philosophy and Pricing sections
 **Open question:** none — direction accepted
+
+### 2026-07-23 — Claude Code — Investigated missing `autopilot_paused` column
+**Did:** Checked whether PR #15 skipped writing a migration for `autopilot_paused`. It didn't — the column was added to `supabase/schema.sql` earlier, in the PR #13 commit ("Session 7.5 build order #7: per-invoice Autopilot toggle", `54f8d19`): `alter table public.invoices add column if not exists autopilot_paused boolean not null default false;`. PR #15 only added the scheduler-side code that filters on this column, correctly assuming it already existed in schema.sql. This sandbox has no Supabase CLI/network access, so `schema.sql` is never auto-applied — the founder has to run new lines manually, same as every prior migration (`awaiting_signature`, the `events` lifecycle columns, etc). The column is in the repo; it just hasn't been run against the live DB yet. Manual SQL to run in the Supabase SQL editor:
+```sql
+alter table public.invoices add column if not exists autopilot_paused boolean not null default false;
+```
+**Status:** bug found, not fixed — root cause identified (deployment gap, not a code gap); fix is a one-line manual SQL run, not a code change
+**Affects:** #7 per-invoice toggle, `autopilot-scheduler` Edge Function
+**Open question:** none for this item. Icon bug (blank `Bot` square) is still open — needs a real browser screenshot, Playwright's static mirror already missed it once.
 
 ---
 
