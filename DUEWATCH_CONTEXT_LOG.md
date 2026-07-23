@@ -125,6 +125,12 @@ alter table public.invoices add column if not exists autopilot_paused boolean no
 **Affects:** Sidebar (PresenceIndicator replaces GlobalAutopilotIndicator), SignatureCard, InvoiceDetailPanel, DataContext
 **Open question:** `CognitiveCompose.jsx` needs an actual interaction spec before it can be built. Icon-rendering-blank bug from the old indicator is unverified against this new component — still needs a real browser look, not just Playwright.
 
+### 2026-07-23 — Claude Code — PR #19: Presence System v1.2 motion reconciliation
+**Did:** Applied the 3 changes from the landing page motion reconciliation: (1) removed `activeShake` entirely from Active and Error — no jitter anywhere, attention comes from color/pulse only; (2) Error no longer pulses forever — one entry sequence (~2.4s, 3 cycles at 0.8s via `animation-iteration-count: 3 forwards`), then settles to a static solid-red dot + red border tint until the real problem resolves; (3) renamed JourneyBar's "Signature" stage label to "Awaiting signature" (display only, `src/lib/journey.js` — internal stage id/count unchanged, no stages added). Also fixed two real bugs found while editing, not spec'd: `.cognitive-ring .ring-core` centering lived only in its keyframe (would break under reduced motion — added a static base transform), and the Contextual/Active/Error `::after` ripple/glow elements had no non-animated opacity (reduced motion was leaving a permanent halo — now explicitly hidden). Re-verified the `Bot` icon by bundling the real `lucide-react` import through this project's actual Vite pipeline in a throwaway harness (deleted, not committed) — rendered correctly. Added `Duewatch_Presence_System_Merged_Spec_v1.2.md` to the repo since v1.1 never actually lived here (only pasted each time, which is how spec and code drifted in the first place).
+**Status:** PR open, not merged — https://github.com/farhanjama557-ship-it/DueWatch-V2/pull/19
+**Affects:** `src/styles/presence.css`, `src/styles/presence-reduced-motion.css`, `src/lib/journey.js`
+**Open question:** Icon bug still unverified against the actual production deployment — the real-bundle test here rendered fine, but this sandbox has no network access to the live site, so an environment-specific issue there can't be ruled out. If it's still blank live, it's not the import/component code as it exists in this repo.
+
 ---
 
 *Next entry goes below this line. Read everything above first.*
