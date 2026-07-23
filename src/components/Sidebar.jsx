@@ -1,7 +1,7 @@
 import { NavLink } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { useData } from '../context/DataContext'
-import GlobalAutopilotIndicator from './GlobalAutopilotIndicator'
+import PresenceIndicator from '../features/PresenceIndicator'
 import { initials } from '../lib/format'
 import {
   MorningBriefIcon,
@@ -69,7 +69,7 @@ export default function Sidebar() {
         ))}
       </nav>
 
-      <GlobalAutopilotIndicator />
+      <PresenceIndicator />
 
       <div className="sidebar-profile">
         <span className="profile-avatar">{initials(displayName)}</span>

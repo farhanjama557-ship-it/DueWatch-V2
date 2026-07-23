@@ -3,7 +3,7 @@ import { Bot, CheckCircle, Loader2 } from 'lucide-react'
 import Avatar from './Avatar'
 import JourneyBar from './JourneyBar'
 import { formatMoney, daysOverdue } from '../lib/format'
-import { balanceOf } from '../context/DataContext'
+import { balanceOf, useData } from '../context/DataContext'
 
 const TONE_STYLE = {
   friendly: { label: 'Friendly', color: '#3B82F6', bg: '#EBF2FE' },
@@ -18,6 +18,7 @@ const SKIP_REASONS = ['Client already paid', "I'll handle manually", 'Wrong timi
  * idle -> signing -> sent -> (exit) | idle -> skip-reason -> skipping -> (exit)
  */
 export default function SignatureCard({ item, onApprove, onSkip, onEdit, onResolved }) {
+  const { startCognitive, stopCognitive } = useData()
   const [stage, setStage] = useState('idle')
   const [showFullDraft, setShowFullDraft] = useState(false)
   const [skipReason, setSkipReason] = useState(SKIP_REASONS[0])
@@ -40,9 +41,13 @@ export default function SignatureCard({ item, onApprove, onSkip, onEdit, onResol
   async function handleApprove() {
     setError('')
     setStage('signing')
+    // Real Cognitive signal (Presence System) — this is an actual in-flight
+    // send, not a fabricated "thinking" state.
+    startCognitive(`Sending reminder to ${clientName}`)
     // Intentional processing feel — not an instant toggle.
     const delay = new Promise((r) => setTimeout(r, 800 + Math.random() * 400))
     const [result] = await Promise.all([onApprove(item), delay])
+    stopCognitive()
     if (result?.error) {
       setError(result.error.message)
       setStage('idle')
