@@ -5,6 +5,7 @@ import Avatar from '../components/Avatar'
 import StatusPill from '../components/StatusPill'
 import InvoiceDetailPanel from '../components/InvoiceDetailPanel'
 import SignatureSection from '../components/SignatureSection'
+import CognitiveCompose from '../features/reminders/CognitiveCompose'
 import { recommendFor } from '../lib/recommend'
 import { activityMeta, activityDescription, activityIcon, isPaymentEvent } from '../lib/activity'
 import {
@@ -255,6 +256,7 @@ export default function Dashboard() {
   } = useData()
   const [selected, setSelected] = useState(null)
   const [signatureContext, setSignatureContext] = useState(null)
+  const [composeInvoice, setComposeInvoice] = useState(null)
   const [nudgeDismissed, setNudgeDismissed] = useState(() => {
     const at = Number(localStorage.getItem(NUDGE_DISMISS_KEY))
     if (!at) return false
@@ -435,7 +437,7 @@ export default function Dashboard() {
                       invoice={inv}
                       secondary={`${od} ${od === 1 ? 'day' : 'days'} overdue · ${inv.invoice_number || 'No number'}`}
                       onClick={() => setSelected(inv)}
-                      onDraft={() => setSelected(inv)}
+                      onDraft={() => setComposeInvoice(inv)}
                       recommendation={recommendFor(inv)}
                     />
                   )
@@ -482,6 +484,14 @@ export default function Dashboard() {
         signatureContext={signatureContext}
         onSignatureResolved={resolveSignatureLocal}
       />
+
+      {composeInvoice && (
+        <CognitiveCompose
+          invoice={composeInvoice}
+          onClose={() => setComposeInvoice(null)}
+          onSent={() => refresh()}
+        />
+      )}
     </div>
   )
 }

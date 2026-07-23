@@ -1,9 +1,9 @@
 import { useNavigate } from 'react-router-dom'
-import { Bot } from 'lucide-react'
 import { usePresenceContext } from './PresenceSystem'
 import { useData } from '../context/DataContext'
 import { activityMeta, activityDescription } from '../lib/activity'
 import { timeAgo } from '../lib/format'
+import DuewatchBotMark from '../components/presence/DuewatchBotMark'
 import '../styles/presence.css'
 import '../styles/presence-reduced-motion.css'
 
@@ -41,16 +41,7 @@ export default function PresenceIndicator() {
       onClick={handleClick}
     >
       <div className="presence-header">
-        <span className="presence-mark" aria-hidden="true">
-          {state === 'cognitive' && (
-            <span className="cognitive-ring">
-              <span className="ring-outer" />
-              <span className="ring-inner" />
-              <span className="ring-core" />
-            </span>
-          )}
-          <Bot size={16} />
-        </span>
+        <DuewatchBotMark cognitive={state === 'cognitive'} />
         <div className="presence-text">
           <span className="presence-title">{copy.title}</span>
           <span className="presence-subtitle">{copy.subtitle}</span>

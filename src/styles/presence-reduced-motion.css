@@ -11,10 +11,8 @@
   .presence-contextual .status-dot::after,
   .presence-active .status-dot,
   .presence-active .status-dot::after,
-  .presence-active .presence-header,
   .presence-error .status-dot,
   .presence-error .status-dot::after,
-  .presence-error .presence-header,
   .presence-error.presence-card,
   .presence-celebratory .status-dot {
     animation: none !important;
@@ -27,6 +25,16 @@
   .presence-error .status-dot { opacity: 1; }
   .presence-celebratory .status-dot { opacity: 1; }
   .presence-off .status-dot { opacity: 0.4; }
+
+  /* These ::after pseudo-elements only ever carry a ripple/glow via their
+     keyframe — with the animation off they'd otherwise sit at the CSS
+     initial opacity (1), showing as a permanent static halo/ring nobody
+     designed. Hide them; the solid dot color already reads the state. */
+  .presence-contextual .status-dot::after,
+  .presence-active .status-dot::after,
+  .presence-error .status-dot::after {
+    opacity: 0;
+  }
 
   .presence-card {
     box-shadow: 0 1px 3px rgba(35, 31, 27, 0.04) !important;

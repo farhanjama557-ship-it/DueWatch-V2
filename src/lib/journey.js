@@ -3,10 +3,15 @@
 //   checked -> drafted -> signature -> sent -> paid
 export const JOURNEY_STAGES = ['checked', 'drafted', 'signature', 'sent', 'paid']
 
+// v1.2: "Signature" renamed to "Awaiting signature" to match the app's own
+// locked language everywhere else (the awaiting_signature table, the
+// "Awaiting Your Signature" section header) — same stage, display-only
+// rename. The internal stage id ('signature', used throughout journey.js
+// and JourneyBar.jsx) is unchanged.
 export const JOURNEY_LABEL = {
   checked: 'Checked',
   drafted: 'Drafted',
-  signature: 'Signature',
+  signature: 'Awaiting signature',
   sent: 'Sent',
   paid: 'Paid',
 }
