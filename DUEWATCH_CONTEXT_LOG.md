@@ -119,6 +119,12 @@ alter table public.invoices add column if not exists autopilot_paused boolean no
 **Affects:** #7 per-invoice toggle, `autopilot-scheduler` Edge Function
 **Open question:** none for this item. Icon bug (blank `Bot` square) is still open — needs a real browser screenshot, Playwright's static mirror already missed it once.
 
+### 2026-07-23 — Claude Code — PR #18: Presence System core (Merged Spec v1.1)
+**Did:** Built the 7-state Presence System from Kimi's Merged Engineering Spec v1.1, replacing PR #15's 5-state `GlobalAutopilotIndicator` (deleted). Precedence: Celebratory > Error > Active > Contextual > Cognitive > Resting > Off. Every trigger wired to a real app signal — none fabricated (see PR body for the full mapping). Files actually created: `src/lib/presence.js`, `src/hooks/usePresence.js`, `src/features/PresenceSystem.jsx`, `src/features/PresenceIndicator.jsx`, `src/styles/presence.css`, `src/styles/presence-reduced-motion.css` — plus edits to `DataContext.jsx` (new `cognitiveActivity`/`celebration` signals), `SignatureCard.jsx`, `InvoiceDetailPanel.jsx`, `Sidebar.jsx`, `Layout.jsx`, `index.css` (old `.global-autopilot*` block removed). `CognitiveCompose.jsx` was **not** built — the spec names it but gives no interaction detail, so building it would mean inventing UX rather than following a spec. JourneyBar was left untouched — PR #15's existing "advancing" transition already satisfies §5.
+**Status:** PR open, not merged — https://github.com/farhanjama557-ship-it/DueWatch-V2/pull/18. (Earlier same-day handoff draft claimed "Built and merged" with 8 files before any of this existed; that draft was never accurate and was corrected before being acted on — see Farhan's message upthread.)
+**Affects:** Sidebar (PresenceIndicator replaces GlobalAutopilotIndicator), SignatureCard, InvoiceDetailPanel, DataContext
+**Open question:** `CognitiveCompose.jsx` needs an actual interaction spec before it can be built. Icon-rendering-blank bug from the old indicator is unverified against this new component — still needs a real browser look, not just Playwright.
+
 ---
 
 *Next entry goes below this line. Read everything above first.*
