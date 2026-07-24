@@ -2,6 +2,7 @@ import { NavLink } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { useData } from '../context/DataContext'
 import PresenceIndicator from '../features/PresenceIndicator'
+import { usePresenceContext } from '../features/PresenceSystem'
 import { initials } from '../lib/format'
 import {
   MorningBriefIcon,
@@ -46,6 +47,7 @@ function NavItem({ to, label, Icon, end, badge, overdueCount }) {
 export default function Sidebar() {
   const { user } = useAuth()
   const { name, overdueCount } = useData()
+  const { state, srText } = usePresenceContext()
 
   const email = user?.email ?? ''
   const displayName = name || email.split('@')[0] || 'Account'
@@ -55,6 +57,8 @@ export default function Sidebar() {
       <div className="sidebar-brand">
         <LogoMark />
         <span className="sidebar-brand-name">Duewatch</span>
+        <span className={`sidebar-status-dot status-${state}`} aria-hidden="true" />
+        <span className="sr-only">{srText}</span>
       </div>
 
       <nav className="sidebar-nav">

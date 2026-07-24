@@ -245,3 +245,12 @@ create index if not exists events_lifecycle_idx on public.events (lifecycle_stag
 -- single invoice must not affect any other invoice, so this lives on the
 -- invoice row itself rather than in autopilot_settings/autopilot_rules.
 alter table public.invoices add column if not exists autopilot_paused boolean not null default false;
+
+-- ============================================================
+-- Session 8 — Morning Brief / Pulse redesign
+-- ============================================================
+
+-- Last time the founder actually loaded the dashboard — the real baseline
+-- "Since your last visit" diffs against (autopilot_runs.invoices_checked,
+-- awaiting_signature.created_at) since the previous session.
+alter table public.profiles add column if not exists last_seen_at timestamptz;

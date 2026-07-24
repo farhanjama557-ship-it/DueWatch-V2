@@ -116,6 +116,51 @@ table {
   font-size: 16px;
   font-weight: 700;
   color: var(--text-primary);
+  flex: 1;
+}
+
+/* Small identity status indicator — same real Presence state the sidebar's
+   PresenceIndicator card already shows, just glanceable at the top too.
+   Colors intentionally duplicated from styles/presence.css rather than
+   shared, matching that file's own scoping convention. */
+.sidebar-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: #6B6B6B;
+}
+
+.sidebar-status-dot.status-resting,
+.sidebar-status-dot.status-celebratory {
+  background: #22A565;
+}
+
+.sidebar-status-dot.status-contextual,
+.sidebar-status-dot.status-active {
+  background: #E0930C;
+  animation: sidebar-dot-pulse 1.4s ease-in-out infinite;
+}
+
+.sidebar-status-dot.status-error {
+  background: #DC2626;
+}
+
+.sidebar-status-dot.status-off {
+  background: #9AA1AC;
+}
+
+.sidebar-status-dot.status-cognitive {
+  background: #DA7756;
+}
+
+@keyframes sidebar-dot-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-status-dot { animation: none; }
 }
 
 .sidebar-nav {
@@ -234,7 +279,7 @@ table {
    Morning Brief
    ============================================================ */
 .brief {
-  max-width: 1080px;
+  max-width: 1360px;
 }
 
 .brief-greeting {
@@ -271,10 +316,256 @@ table {
   font-size: 14px;
 }
 
+/* ============================================================
+   Pulse shell — white/dark split (Session 8 Morning Brief redesign).
+   White = the business, dark = Duewatch itself.
+   ============================================================ */
+.brief-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 24px;
+  align-items: start;
+  margin-top: 20px;
+}
+
+.brief-main {
+  min-width: 0;
+}
+
+.brief-main .kpi-grid {
+  margin-top: 0;
+}
+
+.pulse-rail {
+  /* Dark-scoped token overrides — everything nested inside (brief-card,
+     signature-*, invoice-row, handled-list, etc.) already reads these same
+     custom properties, so this alone re-themes the reused components
+     without forking their CSS. */
+  --surface: #2A2621;
+  --border: #3D3833;
+  --bg: #211D1A;
+  --text-primary: #F4EFE7;
+  --text-secondary: #C4BBAD;
+  --text-muted: #8F8677;
+  --primary-tint: rgba(218, 119, 86, 0.18);
+
+  background: #17140F;
+  border-radius: 16px;
+  padding: 20px;
+  color: var(--text-primary);
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  position: sticky;
+  top: 24px;
+}
+
+@media (max-width: 1180px) {
+  .brief-shell {
+    grid-template-columns: 1fr;
+  }
+  .pulse-rail {
+    position: static;
+  }
+}
+
+.rail-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.rail-status-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: #8F8677;
+}
+
+.rail-status-dot.active {
+  background: #22A565;
+}
+
+.rail-status-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.rail-status-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.rail-status-sub {
+  margin-top: 2px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+.rail-status-link {
+  flex-shrink: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.rail-status-link:hover {
+  color: var(--primary);
+}
+
+.rail-section {
+  border-top: 0.5px solid var(--border);
+  padding-top: 16px;
+}
+
+.rail-status + .rail-section {
+  border-top: none;
+  padding-top: 0;
+}
+
+.rail-section-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 10px;
+}
+
+.rail-section-line {
+  font-size: 13.5px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.rail-empty {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.rail-upcoming-list,
+.rail-activity-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.rail-upcoming-item {
+  padding: 9px 0;
+  border-top: 0.5px solid var(--border);
+}
+
+.rail-upcoming-item:first-child {
+  border-top: none;
+}
+
+.rail-upcoming-client {
+  display: block;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.rail-upcoming-detail {
+  display: block;
+  margin-top: 1px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.rail-activity-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 0;
+  border-top: 0.5px solid var(--border);
+}
+
+.rail-activity-item:first-child {
+  border-top: none;
+}
+
+.rail-activity-icon {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--bg);
+  border: 0.5px solid var(--border);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.rail-activity-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.rail-activity-action {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.rail-activity-context {
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.rail-activity-time {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.rail-see-all {
+  margin-top: 10px;
+}
+
+/* Journey bar's connector/dot colors are hardcoded warm-light hex (not
+   token-driven) — needs explicit dark overrides to stay legible in the rail. */
+.pulse-rail .journey-connector {
+  background: #4A443C;
+}
+
+.pulse-rail .journey-connector-completed {
+  background: #22A565;
+}
+
+.pulse-rail .journey-dot {
+  border-color: #4A443C;
+}
+
+.pulse-rail .journey-dot-completed {
+  background: #22A565;
+  border-color: #22A565;
+}
+
+/* Avatar initials use a hardcoded light background — needs a dark
+   equivalent so the (also-overridden, lighter) text stays legible. */
+.pulse-rail .avatar-initials {
+  background: #3D3833;
+}
+
 /* --- KPI cards --- */
+/* Outstanding is the dominant number (spec: it's what actually matters most
+   at a glance); the rest are secondary context, not equal-weight siblings. */
 .kpi-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: 1.6fr 1fr 1fr 1fr;
   gap: 16px;
   margin: 20px 0 24px;
 }
@@ -284,6 +575,20 @@ table {
   border: 0.5px solid var(--border);
   border-radius: 10px;
   padding: 16px;
+}
+
+.kpi-dominant {
+  padding: 20px;
+  background: var(--primary-tint);
+  border-color: rgba(218, 119, 86, 0.25);
+}
+
+.kpi-dominant .kpi-value {
+  font-size: 36px;
+}
+
+.kpi-dominant .kpi-label {
+  color: var(--primary);
 }
 
 .kpi-top {
@@ -441,105 +746,9 @@ table {
   color: #fff;
 }
 
-.reco-toggle {
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  height: 32px;
-  padding: 0 8px;
-  border: none;
-  background: transparent;
-  color: var(--primary);
-  border-radius: 8px;
-  transition: background 0.12s ease;
-}
-
-.reco-toggle:hover {
-  background: var(--primary-tint);
-}
 
 /* ============================================================
-   Watching indicator card
-   ============================================================ */
-.watching-card {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  background: var(--surface);
-  border: 0.5px solid var(--border);
-  border-radius: 10px;
-  padding: 14px 16px;
-  margin-top: 18px;
-}
-
-.watching-dot {
-  position: relative;
-  width: 9px;
-  height: 9px;
-  flex-shrink: 0;
-  border-radius: 50%;
-  background: var(--green);
-}
-
-.watching-dot::after {
-  content: '';
-  position: absolute;
-  inset: -5px;
-  border-radius: 50%;
-  border: 2px solid var(--green);
-  opacity: 0.5;
-  animation: watching-pulse 2s ease-out infinite;
-}
-
-@keyframes watching-pulse {
-  0% { transform: scale(0.6); opacity: 0.6; }
-  100% { transform: scale(1.5); opacity: 0; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .watching-dot::after { animation: none; }
-}
-
-.watching-body {
-  min-width: 0;
-}
-
-.watching-title {
-  font-size: 14px;
-  font-weight: 700;
-  color: var(--text-primary);
-}
-
-.watching-sub {
-  font-size: 12.5px;
-  color: var(--text-secondary);
-}
-
-.watching-badge {
-  margin-left: auto;
-  flex-shrink: 0;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--primary);
-  background: var(--primary-tint);
-  padding: 3px 10px;
-  border-radius: 999px;
-}
-
-.watching-manage-link {
-  flex-shrink: 0;
-  font-size: 12.5px;
-  font-weight: 600;
-  color: var(--text-secondary);
-}
-
-.watching-manage-link:hover {
-  color: var(--primary);
-}
-
-/* ============================================================
-   Needs Attention — inline recommendation
+   Needs Attention — denser status + reason + action rows
    ============================================================ */
 .invoice-row-col {
   flex-direction: column;
@@ -553,109 +762,12 @@ table {
   gap: 12px;
 }
 
-.invoice-reco {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-left: 48px;
-  padding: 8px 12px;
-  background: var(--primary-tint);
-  border-radius: 8px;
-}
-
-.reco-icon {
-  color: var(--primary);
-  flex-shrink: 0;
-}
-
-.reco-text {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-width: 0;
-}
-
-.reco-action {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.reco-explanation {
-  font-size: 12.5px;
-  color: var(--text-secondary);
-}
-
-.reco-badge {
-  flex-shrink: 0;
-  font-size: 11px;
-  font-weight: 600;
-  padding: 2px 9px;
-  border-radius: 999px;
-  white-space: nowrap;
-}
-
-.reco-badge.tone-red { color: #C22B2B; background: #FDECEC; }
-.reco-badge.tone-orange { color: #C2540A; background: #FEF0E6; }
-.reco-badge.tone-amber { color: #B45309; background: #FEF5E7; }
-.reco-badge.tone-blue { color: #3B82F6; background: #EBF2FE; }
-
-/* ============================================================
-   Handled for you
-   ============================================================ */
-.handled-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.handled-item {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 11px 0;
-  border-top: 0.5px solid var(--border);
-}
-
-.handled-item:first-child {
-  border-top: none;
-}
-
-.handled-check {
-  flex-shrink: 0;
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  background: var(--bg);
-  border: 0.5px solid var(--border);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.handled-text {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-width: 0;
-}
-
-.handled-action {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.handled-context {
-  font-size: 12.5px;
-  color: var(--text-muted);
-}
-
-.handled-time {
-  flex-shrink: 0;
+/* Real reason text (recommendFor / Autopilot rule match), shown inline
+   under the client name rather than behind a click-to-reveal toggle. */
+.invoice-reason-inline {
   font-size: 12px;
   color: var(--text-muted);
-  white-space: nowrap;
+  margin-top: 1px;
 }
 
 /* ============================================================
@@ -1485,38 +1597,6 @@ table {
    + src/styles/presence.css) — see Merged Engineering Spec v1.1.
    ============================================================ */
 
-/* ============================================================
-   Recent Activity (collapsible) — Morning Brief
-   ============================================================ */
-.recent-activity-toggle {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  width: 100%;
-  padding: 14px 0;
-  border: none;
-  background: transparent;
-  text-align: left;
-  cursor: pointer;
-}
-
-.activity-summary {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.chevron {
-  color: var(--text-muted);
-  flex-shrink: 0;
-  transition: transform 0.18s ease;
-}
-
-.chevron-open {
-  transform: rotate(180deg);
-}
-
 .see-all-link {
   display: inline-flex;
   align-items: center;
@@ -2209,7 +2289,10 @@ table {
   position: fixed;
   bottom: 24px;
   right: 24px;
-  background: var(--text-primary);
+  /* Fixed color, not var(--text-primary) — this can render nested inside
+     the dark rail's token overrides, and a toast must stay legible either
+     way, independent of ancestor theming. */
+  background: #171310;
   color: #fff;
   font-size: 13px;
   font-weight: 600;
