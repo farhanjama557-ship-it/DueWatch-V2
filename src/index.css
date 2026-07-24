@@ -20,8 +20,12 @@
   --red: #EF4444;
   --green: #22C55E;
 
-  --sidebar-w: 240px;
-  --rail-w: 340px;
+  /* Scaled up (2026-07-24 proportion pass) so the app reads at the
+     north-star mockup's density on a normal desktop viewport instead of a
+     narrower "widget" scale — the rail in particular should occupy roughly
+     30% of viewport width, not a fixed 340px regardless of screen size. */
+  --sidebar-w: clamp(260px, 17vw, 300px);
+  --rail-w: clamp(380px, 30vw, 480px);
 
   /* Shared dark-charcoal palette — the "Duewatch itself" zones (nav sidebar
      + right rail per the north-star mockup). Applied by re-pointing the
@@ -109,7 +113,7 @@ table {
   border-right: 1px solid var(--dw-charcoal-border);
   display: flex;
   flex-direction: column;
-  padding: 20px 14px;
+  padding: 28px 20px;
   position: fixed;
   top: 0;
   left: 0;
@@ -121,8 +125,8 @@ table {
 .sidebar-brand {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
-  padding: 4px 8px 24px;
+  gap: 12px;
+  padding: 4px 4px 32px;
 }
 
 .sidebar-brand-text {
@@ -130,19 +134,21 @@ table {
   flex-direction: column;
   min-width: 0;
   flex: 1;
+  padding-top: 2px;
 }
 
 .sidebar-brand-name {
-  font-size: 16px;
+  font-size: 19px;
   font-weight: 700;
   color: var(--dw-charcoal-text);
   line-height: 1.2;
 }
 
 .sidebar-brand-subtitle {
-  font-size: 11px;
+  font-size: 12.5px;
   color: var(--dw-charcoal-text-muted);
   line-height: 1.3;
+  margin-top: 1px;
 }
 
 /* Small identity status indicator — same real Presence state the sidebar's
@@ -192,18 +198,18 @@ table {
 .sidebar-nav {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
   flex: 1;
 }
 
 .nav-item {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 9px 10px;
-  border-radius: 8px;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 9px;
   color: var(--dw-charcoal-text-secondary);
-  font-size: 14px;
+  font-size: 14.5px;
   font-weight: 500;
   transition: background 0.12s ease, color 0.12s ease;
 }
@@ -254,17 +260,17 @@ table {
   background: var(--dw-charcoal-surface);
   border: 1px solid var(--dw-charcoal-border);
   border-radius: 12px;
-  padding: 14px;
-  margin-top: 10px;
+  padding: 16px;
+  margin-top: 14px;
 }
 
 .sidebar-card-title {
-  font-size: 11px;
+  font-size: 11.5px;
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--dw-charcoal-text-muted);
-  margin-bottom: 10px;
+  margin-bottom: 12px;
 }
 
 .sidebar-card-status {
@@ -325,15 +331,15 @@ table {
 .sidebar-profile {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 12px 8px 4px;
-  margin-top: 12px;
+  gap: 12px;
+  padding: 16px 6px 4px;
+  margin-top: 16px;
   border-top: 1px solid var(--dw-charcoal-border);
 }
 
 .profile-avatar {
-  width: 32px;
-  height: 32px;
+  width: 38px;
+  height: 38px;
   border-radius: 50%;
   background: var(--dw-charcoal-surface);
   border: 1px solid var(--dw-charcoal-border);
@@ -341,7 +347,7 @@ table {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 700;
   flex-shrink: 0;
   overflow: hidden;
@@ -361,7 +367,7 @@ table {
 }
 
 .profile-name {
-  font-size: 13px;
+  font-size: 13.5px;
   font-weight: 600;
   color: var(--dw-charcoal-text);
   overflow: hidden;
@@ -370,7 +376,7 @@ table {
 }
 
 .profile-tier {
-  font-size: 11px;
+  font-size: 11.5px;
   color: var(--dw-charcoal-text-muted);
 }
 
@@ -379,15 +385,15 @@ table {
   flex: 1;
   margin-left: var(--sidebar-w);
   background: var(--bg);
-  padding: 24px;
+  padding: 36px 40px;
   min-width: 0;
 }
 
 /* ============================================================
-   Morning Brief
+   Pulse (Morning Brief)
    ============================================================ */
 .brief {
-  max-width: 1360px;
+  max-width: 1720px;
 }
 
 .brief-topbar {
@@ -398,7 +404,7 @@ table {
 }
 
 .brief-greeting {
-  font-size: 28px;
+  font-size: 34px;
   font-weight: 700;
   color: var(--text-primary);
   letter-spacing: -0.01em;
@@ -407,22 +413,22 @@ table {
 .brief-topbar-controls {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   flex-shrink: 0;
-  margin-top: 2px;
+  margin-top: 6px;
 }
 
 .topbar-search {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 8px;
-  width: 260px;
-  height: 38px;
-  padding: 0 10px 0 12px;
+  gap: 9px;
+  width: 320px;
+  height: 44px;
+  padding: 0 12px 0 14px;
   background: var(--surface);
   border: 0.5px solid var(--border);
-  border-radius: 10px;
+  border-radius: 11px;
 }
 
 .topbar-search-icon {
@@ -436,7 +442,7 @@ table {
   border: none;
   outline: none;
   background: transparent;
-  font-size: 13.5px;
+  font-size: 14px;
   color: var(--text-primary);
 }
 
@@ -499,14 +505,14 @@ table {
 
 .topbar-icon-btn {
   position: relative;
-  width: 38px;
-  height: 38px;
+  width: 44px;
+  height: 44px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   background: var(--surface);
   border: 0.5px solid var(--border);
-  border-radius: 10px;
+  border-radius: 11px;
   color: var(--text-secondary);
   flex-shrink: 0;
 }
@@ -538,27 +544,28 @@ table {
   align-items: flex-end;
   justify-content: space-between;
   gap: 24px;
-  margin-top: 6px;
+  margin-top: 10px;
 }
 
 .brief-subline {
-  font-size: 14px;
+  font-size: 15.5px;
   color: var(--text-secondary);
-  max-width: 62ch;
+  max-width: 66ch;
+  line-height: 1.5;
 }
 
 .brief-date-range {
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  font-size: 12.5px;
+  gap: 8px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--text-secondary);
   background: var(--surface);
   border: 0.5px solid var(--border);
-  border-radius: 8px;
-  padding: 7px 12px;
+  border-radius: 9px;
+  padding: 9px 14px;
   white-space: nowrap;
 }
 
@@ -588,21 +595,25 @@ table {
    White = the business, dark = Duewatch itself.
    ============================================================ */
 .brief-shell {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) var(--rail-w);
-  gap: 24px;
-  align-items: start;
-  margin-top: 20px;
+  margin-top: 24px;
 }
 
+/* The rail is fixed (see .pulse-rail below) and out of normal flow, so
+   .brief-main reserves the matching width via padding rather than a grid
+   column — it's the only in-flow child here. */
 .brief-main {
   min-width: 0;
+  padding-right: calc(var(--rail-w) + 28px);
 }
 
 .brief-main .kpi-grid {
   margin-top: 0;
 }
 
+/* Full-height architectural panel — same treatment as .sidebar (fixed,
+   edge-to-edge, its own scroll), not a floating card inset within the
+   page's padding. This is what makes it read as a ~30%-of-viewport region
+   rather than a widget. */
 .pulse-rail {
   /* Dark-scoped token overrides — everything nested inside (brief-card,
      signature-*, invoice-row, handled-list, etc.) already reads these same
@@ -616,24 +627,32 @@ table {
   --text-muted: var(--dw-charcoal-text-muted);
   --primary-tint: rgba(218, 119, 86, 0.18);
 
+  width: var(--rail-w);
   background: var(--dw-charcoal);
-  border-radius: 16px;
-  padding: 20px;
+  border-left: 1px solid var(--dw-charcoal-border);
+  padding: 32px 28px;
   color: var(--text-primary);
-  min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 20px;
-  position: sticky;
-  top: 24px;
+  gap: 26px;
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  overflow-y: auto;
+  z-index: 15;
 }
 
 @media (max-width: 1180px) {
-  .brief-shell {
-    grid-template-columns: 1fr;
+  .brief-main {
+    padding-right: 0;
   }
   .pulse-rail {
     position: static;
+    width: auto;
+    border-left: none;
+    border-top: 1px solid var(--dw-charcoal-border);
+    margin-top: 24px;
   }
 }
 
@@ -651,29 +670,29 @@ table {
 .rail-section-head {
   display: flex;
   align-items: center;
-  gap: 7px;
-  font-size: 12.5px;
+  gap: 8px;
+  font-size: 13px;
   font-weight: 600;
   letter-spacing: 0.02em;
   text-transform: uppercase;
   color: var(--text-muted);
-  margin-bottom: 10px;
+  margin-bottom: 14px;
 }
 
 .rail-section-line {
-  font-size: 13.5px;
+  font-size: 14.5px;
   color: var(--text-secondary);
-  line-height: 1.5;
+  line-height: 1.55;
 }
 
 .rail-empty {
-  font-size: 13px;
+  font-size: 14px;
   color: var(--text-muted);
 }
 
 .rail-tile-row {
   display: flex;
-  gap: 10px;
+  gap: 12px;
 }
 
 .rail-tile {
@@ -682,11 +701,11 @@ table {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 4px;
+  gap: 6px;
   background: var(--bg);
   border: 0.5px solid var(--border);
-  border-radius: 10px;
-  padding: 10px 12px;
+  border-radius: 11px;
+  padding: 14px 16px;
 }
 
 .rail-tile-icon {
@@ -694,12 +713,12 @@ table {
 }
 
 .rail-tile-label {
-  font-size: 11px;
+  font-size: 11.5px;
   color: var(--text-muted);
 }
 
 .rail-tile-value {
-  font-size: 13px;
+  font-size: 14.5px;
   font-weight: 700;
   color: var(--text-primary);
 }
@@ -710,14 +729,14 @@ table {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 13px;
 }
 
 .rail-work-list li {
   display: flex;
   align-items: center;
-  gap: 9px;
-  font-size: 13px;
+  gap: 10px;
+  font-size: 14px;
   color: var(--text-secondary);
 }
 
@@ -734,7 +753,7 @@ table {
 }
 
 .rail-upcoming-item {
-  padding: 9px 0;
+  padding: 13px 0;
   border-top: 0.5px solid var(--border);
 }
 
@@ -744,23 +763,23 @@ table {
 
 .rail-upcoming-client {
   display: block;
-  font-size: 13.5px;
+  font-size: 14.5px;
   font-weight: 600;
   color: var(--text-primary);
 }
 
 .rail-upcoming-detail {
   display: block;
-  margin-top: 1px;
-  font-size: 12px;
+  margin-top: 2px;
+  font-size: 12.5px;
   color: var(--text-muted);
 }
 
 .rail-activity-item {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 9px 0;
+  gap: 12px;
+  padding: 13px 0;
   border-top: 0.5px solid var(--border);
 }
 
@@ -770,8 +789,8 @@ table {
 
 .rail-activity-icon {
   flex-shrink: 0;
-  width: 22px;
-  height: 22px;
+  width: 26px;
+  height: 26px;
   border-radius: 50%;
   background: var(--bg);
   border: 0.5px solid var(--border);
@@ -788,19 +807,19 @@ table {
 }
 
 .rail-activity-action {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--text-primary);
 }
 
 .rail-activity-context {
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--text-muted);
 }
 
 .rail-activity-time {
   flex-shrink: 0;
-  font-size: 11px;
+  font-size: 11.5px;
   color: var(--text-muted);
   white-space: nowrap;
 }
@@ -839,39 +858,39 @@ table {
 .kpi-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 16px;
-  margin: 20px 0 24px;
+  gap: 20px;
+  margin: 28px 0 32px;
 }
 
 .kpi-card {
   background: var(--surface);
   border: 0.5px solid var(--border);
-  border-radius: 10px;
-  padding: 16px;
+  border-radius: 12px;
+  padding: 22px;
 }
 
 .kpi-top {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   color: var(--text-secondary);
 }
 
 .kpi-icon {
-  width: 15px;
-  height: 15px;
+  width: 16px;
+  height: 16px;
   color: var(--text-muted);
 }
 
 .kpi-label {
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 500;
   color: var(--text-secondary);
 }
 
 .kpi-value {
-  margin-top: 10px;
-  font-size: 26px;
+  margin-top: 14px;
+  font-size: 32px;
   font-weight: 700;
   color: var(--text-primary);
   line-height: 1.1;
@@ -879,8 +898,8 @@ table {
 }
 
 .kpi-support {
-  margin-top: 4px;
-  font-size: 12.5px;
+  margin-top: 6px;
+  font-size: 13px;
   color: var(--text-muted);
 }
 
@@ -888,8 +907,8 @@ table {
    timestamped events) — see Dashboard.jsx's collectedTrend comment for why
    the other three cards don't get one. */
 .kpi-trend {
-  margin-top: 4px;
-  font-size: 12.5px;
+  margin-top: 6px;
+  font-size: 13px;
   font-weight: 600;
 }
 
@@ -905,32 +924,32 @@ table {
 .brief-card {
   background: var(--surface);
   border: 0.5px solid var(--border);
-  border-radius: 10px;
-  padding: 8px 20px;
-  margin-bottom: 16px;
+  border-radius: 12px;
+  padding: 12px 26px;
+  margin-bottom: 22px;
 }
 
 .section-head {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 14px 0 6px;
+  gap: 10px;
+  padding: 18px 0 10px;
 }
 
 .section-title {
-  font-size: 15px;
+  font-size: 16.5px;
   font-weight: 600;
   color: var(--text-primary);
 }
 
 .section-count {
-  min-width: 20px;
-  height: 20px;
-  padding: 0 6px;
-  border-radius: 10px;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: 11px;
   background: var(--primary-tint);
   color: var(--primary);
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 700;
   display: inline-flex;
   align-items: center;
@@ -938,7 +957,7 @@ table {
 }
 
 .brief-card > .brief-empty {
-  padding: 6px 0 16px;
+  padding: 8px 0 20px;
 }
 
 /* --- Invoice rows --- */
@@ -951,8 +970,8 @@ table {
 .invoice-row {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px 0;
+  gap: 14px;
+  padding: 16px 0;
   border-top: 0.5px solid var(--border);
   cursor: pointer;
   transition: background 0.1s ease;
@@ -985,18 +1004,18 @@ table {
 }
 
 .invoice-client {
-  font-size: 14px;
+  font-size: 14.5px;
   font-weight: 600;
   color: var(--text-primary);
 }
 
 .invoice-secondary {
-  font-size: 12.5px;
+  font-size: 13px;
   color: var(--text-muted);
 }
 
 .invoice-amount {
-  font-size: 14px;
+  font-size: 14.5px;
   font-weight: 700;
   color: var(--text-primary);
   font-variant-numeric: tabular-nums;
@@ -1005,9 +1024,9 @@ table {
 
 .row-action {
   flex-shrink: 0;
-  height: 32px;
-  padding: 0 12px;
-  font-size: 13px;
+  height: 36px;
+  padding: 0 14px;
+  font-size: 13.5px;
   font-weight: 600;
   color: var(--primary);
   background: var(--surface);
@@ -1032,66 +1051,78 @@ table {
 /* ============================================================
    Top invoices to focus on — table (north-star mockup)
    ============================================================ */
-.invoice-table-wrap {
+/* Named top-invoices-table (not .invoice-table) — the Invoices list page
+   (below) already owns that class name for its own, differently-styled
+   table; reusing it here was silently cross-contaminating both. */
+.top-invoices-table-wrap {
   overflow-x: auto;
 }
 
-.invoice-table {
+.top-invoices-table {
   width: 100%;
-  min-width: 640px;
+  min-width: 720px;
   border-collapse: collapse;
 }
 
-.invoice-table thead th {
+/* Reason is the one column that should wrap rather than force horizontal
+   scroll for its own sake — bounded so it wraps at a predictable ~2 lines
+   instead of stretching the table arbitrarily wide. */
+.top-invoices-table col.col-reason {
+  width: 240px;
+}
+
+.top-invoices-table thead th {
   text-align: left;
-  font-size: 11px;
+  font-size: 11.5px;
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--text-muted);
-  padding: 0 12px 10px;
+  padding: 0 14px 12px;
   white-space: nowrap;
 }
 
-.invoice-table tbody td {
-  padding: 12px;
-  font-size: 13.5px;
+.top-invoices-table tbody td {
+  padding: 16px 14px;
+  font-size: 14.5px;
   color: var(--text-secondary);
   border-top: 0.5px solid var(--border);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.invoice-table tbody tr {
+.top-invoices-table tbody tr {
   cursor: pointer;
   transition: background 0.1s ease;
 }
 
-.invoice-table tbody tr:hover {
+.top-invoices-table tbody tr:hover {
   background: rgba(15, 17, 23, 0.015);
 }
 
-.invoice-table-client {
+.top-invoices-table-client {
   font-weight: 600;
   color: var(--text-primary);
 }
 
-.invoice-table-amount {
+.top-invoices-table-amount {
   font-weight: 700;
   color: var(--text-primary);
   font-variant-numeric: tabular-nums;
 }
 
-.invoice-table-reason {
+.top-invoices-table-reason {
   white-space: normal;
   font-weight: 600;
 }
 
-.invoice-table-reason.tone-red { color: #C22B2B; }
-.invoice-table-reason.tone-orange { color: #C2540A; }
-.invoice-table-reason.tone-amber { color: #B45309; }
-.invoice-table-reason.tone-blue { color: #3B82F6; }
+.top-invoices-table-reason.tone-red { color: #C22B2B; }
+.top-invoices-table-reason.tone-orange { color: #C2540A; }
+.top-invoices-table-reason.tone-amber { color: #B45309; }
+.top-invoices-table-reason.tone-blue { color: #3B82F6; }
 
-.invoice-table tbody td:last-child {
+.top-invoices-table tbody td:last-child {
   white-space: nowrap;
 }
 
@@ -2414,15 +2445,15 @@ table {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 16px;
 }
 
 .signature-card {
   background: var(--surface);
   border: 1px solid var(--border);
   border-left: 3px solid var(--primary);
-  border-radius: 10px;
-  padding: 18px 20px;
+  border-radius: 12px;
+  padding: 22px 24px;
   box-shadow: 0 1px 2px rgba(15, 17, 23, 0.04);
   transition: border-color 200ms ease, box-shadow 200ms ease, transform 200ms ease;
 }
@@ -2458,13 +2489,13 @@ table {
 }
 
 .signature-client {
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 700;
   color: var(--text-primary);
 }
 
 .signature-meta {
-  font-size: 12.5px;
+  font-size: 13px;
   color: var(--text-muted);
 }
 
@@ -2472,14 +2503,14 @@ table {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-top: 14px;
+  margin-top: 16px;
 }
 
 .signature-reco-label {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--primary);
 }
@@ -2492,23 +2523,23 @@ table {
 }
 
 .signature-reason {
-  margin-top: 4px;
-  font-size: 13px;
+  margin-top: 5px;
+  font-size: 13.5px;
   color: var(--text-secondary);
 }
 
 .signature-preview {
-  margin-top: 12px;
+  margin-top: 14px;
   background: var(--bg);
   border: 0.5px solid var(--border);
-  border-radius: 8px;
-  padding: 12px 14px;
+  border-radius: 9px;
+  padding: 14px 16px;
 }
 
 .signature-preview pre {
   margin: 0;
   font-family: inherit;
-  font-size: 13px;
+  font-size: 13.5px;
   color: var(--text-primary);
   white-space: pre-wrap;
   word-break: break-word;
@@ -2567,7 +2598,7 @@ table {
 }
 
 .signature-actions {
-  margin-top: 14px;
+  margin-top: 18px;
   display: flex;
   gap: 10px;
 }

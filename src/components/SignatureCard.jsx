@@ -72,7 +72,7 @@ export default function SignatureCard({ item, onApprove, onSkip, onEdit, onResol
   return (
     <li className={exiting ? 'signature-card exiting' : 'signature-card'}>
       <div className="signature-header">
-        <Avatar name={clientName} size={36} />
+        <Avatar name={clientName} size={40} />
         <div className="signature-header-text">
           <span className="signature-client">{clientName}</span>
           <span className="signature-meta">

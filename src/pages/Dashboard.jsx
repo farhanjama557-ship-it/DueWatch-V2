@@ -143,7 +143,7 @@ function InvoiceRow({ invoice, secondary, onClick }) {
       }}
     >
       <div className="invoice-row-line">
-        <Avatar name={invoice.clients?.name} size={36} />
+        <Avatar name={invoice.clients?.name} size={40} />
         <div className="invoice-main">
           <span className="invoice-client">{invoice.clients?.name || 'No client'}</span>
           <span className="invoice-secondary">{secondary}</span>
@@ -578,8 +578,16 @@ export default function Dashboard() {
                 {attentionCount === 0 ? (
                   <p className="brief-empty">No overdue invoices. You&apos;re all caught up.</p>
                 ) : (
-                  <div className="invoice-table-wrap">
-                    <table className="invoice-table">
+                  <div className="top-invoices-table-wrap">
+                    <table className="top-invoices-table">
+                      <colgroup>
+                        <col />
+                        <col />
+                        <col />
+                        <col />
+                        <col className="col-reason" />
+                        <col />
+                      </colgroup>
                       <thead>
                         <tr>
                           <th>Invoice</th>
@@ -597,11 +605,11 @@ export default function Dashboard() {
                           return (
                             <tr key={inv.id} onClick={() => setSelected(inv)}>
                               <td>{inv.invoice_number || '—'}</td>
-                              <td className="invoice-table-client">{inv.clients?.name || 'No client'}</td>
-                              <td className="invoice-table-amount">{formatMoney(balanceOf(inv))}</td>
+                              <td className="top-invoices-table-client">{inv.clients?.name || 'No client'}</td>
+                              <td className="top-invoices-table-amount">{formatMoney(balanceOf(inv))}</td>
                               <td>{od}</td>
                               <td>
-                                <span className={`invoice-table-reason tone-${reco.tone}`}>{reco.explanation}</span>
+                                <span className={`top-invoices-table-reason tone-${reco.tone}`}>{reco.explanation}</span>
                               </td>
                               <td>
                                 <button

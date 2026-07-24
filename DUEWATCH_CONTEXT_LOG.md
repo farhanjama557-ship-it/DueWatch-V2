@@ -207,6 +207,28 @@ This was a substantially bigger structural change than the earlier white/dark-ra
 
 **Open question:** none blocking — every substitution above is disclosed for Farhan to check against the mockup directly. The one open judgment call worth a second look: keeping `PresenceIndicator`'s existing prose layout instead of reformatting it into the mockup's bullet-list card — if that's wrong, it's a contained, low-risk follow-up (presence.css + Sidebar.jsx only).
 
+### 2026-07-24 — Claude Code — PR #20 (bundled): proportion/scale correction pass
+
+**Did:** Farhan flagged that the mockup reproduction was structurally correct but visually underscaled — everything read as a narrower, denser "widget" version of the reference rather than occupying the same proportion of a desktop screen. Explicit ask: scale correction only, no new modules, no changed data/scope decisions.
+
+The core structural fix: **the dark rail was a `position: sticky`, rounded, inset-with-gap floating card** — it could never read as "a full 30% architectural region" no matter how wide it was made, because visually it was still a widget sitting inside the page's padding. Changed it to `position: fixed; top/right/bottom: 0`, no border-radius, flush right edge, full viewport height with its own scroll — the same treatment `.sidebar` already uses. `.brief-main` now reserves the matching width via `padding-right: calc(var(--rail-w) + 28px)` instead of the rail being a grid column, since a fixed-position element needs to be compensated for, not laid out.
+
+Widths became viewport-proportional instead of fixed px, so the ~30% target holds across screen sizes rather than only at one specific width: `--sidebar-w: clamp(260px, 17vw, 300px)`, `--rail-w: clamp(380px, 30vw, 480px)`. `.brief` max-width raised 1360px → 1720px, `.content` padding 24px → 36px/40px.
+
+Then a broad typography/spacing pass — greeting 28px→34px, KPI values 26px→32px with card padding 16px→22px, section titles 15px→16.5px with card padding 8px/20px→12px/26px, sidebar nav items 9px/10px→12px/14px padding with 14px→14.5px text, signature cards 18px/20px→22px/24px padding, rail section spacing/tiles/list rows all scaled up proportionally. Full list of touched selectors in the diff — not reproducing every value here.
+
+**Real bug found and fixed along the way:** the new "Top invoices to focus on" table (built in the prior mockup-reproduction pass) used the class name `.invoice-table` — already owned by the separate Invoices list page's own, differently-styled table. Same-specificity, later-in-file rules were silently cross-contaminating both tables' styling. Renamed mine to `.top-invoices-table*` throughout (Dashboard.jsx + index.css) — unrelated to this pass's scope, but broke visibly once real spacing values started changing, so fixed it here rather than filing it separately.
+
+**A deliberate trade-off, disclosed rather than hidden:** at ~1536px viewport width (a common laptop resolution), the "Top invoices to focus on" table is wider than the space available next to the now-larger rail, so its rightmost column requires horizontal scroll within that one card to reach fully (verified working — nothing is hidden or truncated, everything is reachable). At ≥1728px it fits with no scroll at all. Tried forcing it to fit at 1536px via `table-layout: fixed` with percentage columns first — reverted that, because it silently ellipsis-truncated real data (invoice numbers, client names) to make the columns fit, which is worse than an occasional scroll. Chose real-but-sometimes-scrolls over fake-fits-but-hides-data.
+
+**Verification:** same throwaway-harness pattern (temp-exported the three contexts, mounted at `/__preview`, deleted before commit — `git diff` on all temporarily-touched files confirms empty). Screenshotted at 1536×864, 1728×1000, and 1024×900 (collapse breakpoint) to check the scale holds and nothing breaks at common desktop widths; confirmed the 1180px collapse breakpoint (rail goes static/full-width below main content) still works correctly at 1024px with zero page-level horizontal overflow.
+
+**Status:** built and verified via the harness; not yet re-deployed/looked at live.
+
+**Affects:** `src/index.css` (large — new `--sidebar-w`/`--rail-w` clamp() tokens, `.pulse-rail` repositioned to fixed, broad size increases across KPI/brief-card/sidebar/signature-card/rail-section rules, `.invoice-table` → `.top-invoices-table` rename), `src/pages/Dashboard.jsx` (table class rename, `<colgroup>` reason-column width hint, Avatar size bump), `src/components/SignatureCard.jsx` (Avatar size bump).
+
+**Open question:** none blocking. The 1536px horizontal-scroll trade-off is the one thing worth Farhan's eyes directly — if it reads as broken rather than as an acceptable "scroll to see full width" pattern once seen live, the fix is narrowing the rail slightly or dropping a column, not a big change.
+
 ---
 
 *Next entry goes below this line. Read everything above first.*
