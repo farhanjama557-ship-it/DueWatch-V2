@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useRef } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { Bot, History, CalendarClock, CalendarCheck } from 'lucide-react'
+import { History, CalendarClock, CalendarCheck } from 'lucide-react'
 import { useData, isOutstanding, balanceOf, effectiveStatus } from '../context/DataContext'
 import Avatar from '../components/Avatar'
 import StatusPill from '../components/StatusPill'
@@ -101,30 +101,6 @@ function InvoiceRow({ invoice, secondary, onClick, onDraft, recommendation }) {
         )}
       </div>
     </li>
-  )
-}
-
-// Compact ambient status header for the dark rail — count + Active/off only.
-// The scheduled-check content itself lives in the "Duewatch will do next"
-// panel below, so this doesn't repeat it.
-function RailStatus({ autopilotEnabled, outstandingCount, outstandingTotal }) {
-  return (
-    <section className="rail-status">
-      <span className={autopilotEnabled ? 'rail-status-dot active' : 'rail-status-dot off'} aria-hidden="true" />
-      <div className="rail-status-body">
-        <div className="rail-status-title">
-          <Bot size={16} /> Autopilot {autopilotEnabled ? 'is active' : 'is off'}
-        </div>
-        <div className="rail-status-sub">
-          Watching {outstandingCount} {outstandingCount === 1 ? 'invoice' : 'invoices'}
-          {' · '}
-          {formatMoney(outstandingTotal)} outstanding
-        </div>
-      </div>
-      <Link to="/autopilot" className="rail-status-link">
-        Manage
-      </Link>
-    </section>
   )
 }
 
@@ -507,12 +483,6 @@ export default function Dashboard() {
 
         {/* ---- Dark rail: Duewatch itself ---- */}
         <aside className="pulse-rail">
-          <RailStatus
-            autopilotEnabled={autopilotEnabled}
-            outstandingCount={derived.outstandingCount}
-            outstandingTotal={derived.outstandingTotal}
-          />
-
           <div ref={signatureSectionRef}>
             <SignatureSection
               items={awaitingSignature}

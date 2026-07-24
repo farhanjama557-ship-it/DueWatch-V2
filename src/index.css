@@ -370,62 +370,14 @@ table {
   }
 }
 
-.rail-status {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.rail-status-dot {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  flex-shrink: 0;
-  background: #8F8677;
-}
-
-.rail-status-dot.active {
-  background: #22A565;
-}
-
-.rail-status-body {
-  flex: 1;
-  min-width: 0;
-}
-
-.rail-status-title {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 14px;
-  font-weight: 700;
-  color: var(--text-primary);
-}
-
-.rail-status-sub {
-  margin-top: 2px;
-  font-size: 12.5px;
-  color: var(--text-muted);
-}
-
-.rail-status-link {
-  flex-shrink: 0;
-  font-size: 12.5px;
-  font-weight: 600;
-  color: var(--text-secondary);
-}
-
-.rail-status-link:hover {
-  color: var(--primary);
-}
-
+/* No border-top here (deliberately) — the rail's Autopilot status lives
+   only in the sidebar's PresenceIndicator (visible on every page, unlike
+   this rail which is Dashboard-only), so there's no longer a fixed leading
+   element to key a "skip the first divider" selector off of. Spacing comes
+   entirely from .pulse-rail's flex gap; a divider would need to know
+   whether Needs Your Approval rendered anything this load, which isn't
+   worth the fragility for a cosmetic line. */
 .rail-section {
-  border-top: 0.5px solid var(--border);
-  padding-top: 16px;
-}
-
-.rail-status + .rail-section {
-  border-top: none;
   padding-top: 0;
 }
 
