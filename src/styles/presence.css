@@ -8,24 +8,27 @@
    changing colors elsewhere in the app.
    ============================================================ */
 .presence-card {
+  /* Neutral chrome re-pointed at the shared dark-charcoal palette (index.css
+     :root) now that the sidebar itself is dark per the north-star mockup —
+     the per-state accent colors below (green/brand/amber/red) are
+     unchanged, they already read fine on a dark card. */
   --p-green: #22A565;
   --p-brand: #DA7756;
-  --p-brand-tint: #FBEEE8;
+  --p-brand-tint: #3A2E22;
   --p-amber: #E0930C;
   --p-red: #DC2626;
-  --p-navy: #231F1B;
-  --p-gray: #6B6B6B;
-  --p-border: #E7DFD1;
+  --p-navy: var(--dw-charcoal-text);
+  --p-gray: var(--dw-charcoal-text-muted);
+  --p-border: var(--dw-charcoal-border);
 
   display: block;
   width: 100%;
   text-align: left;
-  background: #FFFFFF;
+  background: var(--dw-charcoal-surface);
   border: 1px solid var(--p-border);
-  border-radius: 14px;
-  padding: 18px;
-  margin-top: 8px;
-  box-shadow: 0 1px 3px rgba(35, 31, 27, 0.04);
+  border-radius: 12px;
+  padding: 14px;
+  margin-top: 10px;
   cursor: pointer;
   font-family: inherit;
 }
@@ -50,7 +53,7 @@
 }
 
 .presence-off .presence-mark {
-  background: #F0EFEA;
+  background: var(--dw-charcoal);
   color: var(--p-gray);
 }
 
@@ -96,7 +99,7 @@
 .presence-last-action {
   margin-top: 10px;
   padding-top: 10px;
-  border-top: 1px solid #F0EBE3;
+  border-top: 1px solid var(--dw-charcoal-border);
   font-size: 11px;
   color: var(--p-gray);
   overflow: hidden;

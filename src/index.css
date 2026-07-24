@@ -6,9 +6,6 @@
   --primary-hover: #C46347;
   --primary-tint: #FAF0EC;
 
-  --sidebar-bg: #F7F7F5;
-  --sidebar-border: #E5E5E3;
-
   --bg: #F8F9FA;
   --surface: #FFFFFF;
   --border: #E7E9EE;
@@ -24,6 +21,20 @@
   --green: #22C55E;
 
   --sidebar-w: 240px;
+  --rail-w: 340px;
+
+  /* Shared dark-charcoal palette — the "Duewatch itself" zones (nav sidebar
+     + right rail per the north-star mockup). Applied by re-pointing the
+     generic --surface/--border/--text-* tokens at these within each dark
+     zone's own selector, so every reused component (brief-card,
+     signature-*, invoice-row, handled-list, etc.) re-themes automatically
+     without forking its CSS. */
+  --dw-charcoal: #17130E;
+  --dw-charcoal-surface: #221C15;
+  --dw-charcoal-border: #362E24;
+  --dw-charcoal-text: #F6F1E9;
+  --dw-charcoal-text-secondary: #C7BCAB;
+  --dw-charcoal-text-muted: #8C8172;
 }
 
 /* ============================================================
@@ -89,34 +100,49 @@ table {
   min-height: 100%;
 }
 
-/* --- Sidebar (light, labeled) --- */
+/* --- Sidebar (dark — "Duewatch itself," per the north-star mockup; same
+   shared charcoal palette as .pulse-rail) --- */
 .sidebar {
   width: var(--sidebar-w);
   min-width: var(--sidebar-w);
-  background: var(--sidebar-bg);
-  border-right: 0.5px solid var(--sidebar-border);
+  background: var(--dw-charcoal);
+  border-right: 1px solid var(--dw-charcoal-border);
   display: flex;
   flex-direction: column;
-  padding: 16px 12px;
+  padding: 20px 14px;
   position: fixed;
   top: 0;
   left: 0;
   bottom: 0;
   z-index: 20;
+  overflow-y: auto;
 }
 
 .sidebar-brand {
   display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 4px 8px 20px;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 4px 8px 24px;
+}
+
+.sidebar-brand-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
 }
 
 .sidebar-brand-name {
   font-size: 16px;
   font-weight: 700;
-  color: var(--text-primary);
-  flex: 1;
+  color: var(--dw-charcoal-text);
+  line-height: 1.2;
+}
+
+.sidebar-brand-subtitle {
+  font-size: 11px;
+  color: var(--dw-charcoal-text-muted);
+  line-height: 1.3;
 }
 
 /* Small identity status indicator — same real Presence state the sidebar's
@@ -174,22 +200,22 @@ table {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 10px;
+  padding: 9px 10px;
   border-radius: 8px;
-  color: var(--text-secondary);
+  color: var(--dw-charcoal-text-secondary);
   font-size: 14px;
   font-weight: 500;
   transition: background 0.12s ease, color 0.12s ease;
 }
 
 .nav-item:hover {
-  background: rgba(15, 17, 23, 0.04);
-  color: var(--text-primary);
+  background: rgba(246, 241, 233, 0.06);
+  color: var(--dw-charcoal-text);
 }
 
 .nav-item.active {
-  color: var(--primary);
-  background: var(--primary-tint);
+  color: #fff;
+  background: var(--primary);
 }
 
 .nav-icon {
@@ -219,24 +245,98 @@ table {
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--text-muted);
+  color: var(--dw-charcoal-text-muted);
   padding: 16px 10px 6px;
+}
+
+/* --- Sidebar status/evidence cards (Duewatch Status, Evidence) --- */
+.sidebar-card {
+  background: var(--dw-charcoal-surface);
+  border: 1px solid var(--dw-charcoal-border);
+  border-radius: 12px;
+  padding: 14px;
+  margin-top: 10px;
+}
+
+.sidebar-card-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--dw-charcoal-text-muted);
+  margin-bottom: 10px;
+}
+
+.sidebar-card-status {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--primary);
+  margin-bottom: 10px;
+}
+
+.sidebar-card-list {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sidebar-card-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--dw-charcoal-text-secondary);
+}
+
+.sidebar-card-list li::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--primary);
+  flex-shrink: 0;
+}
+
+.sidebar-card-line {
+  font-size: 12.5px;
+  color: var(--dw-charcoal-text-secondary);
+  margin-bottom: 4px;
+}
+
+.sidebar-card-meta {
+  font-size: 11.5px;
+  color: var(--dw-charcoal-text-muted);
+  margin-bottom: 10px;
+}
+
+.sidebar-card-link {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--primary);
+}
+
+.sidebar-card-link:hover {
+  color: var(--primary-hover);
 }
 
 .sidebar-profile {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 8px 4px;
-  margin-top: 8px;
-  border-top: 0.5px solid var(--sidebar-border);
+  padding: 12px 8px 4px;
+  margin-top: 12px;
+  border-top: 1px solid var(--dw-charcoal-border);
 }
 
 .profile-avatar {
   width: 32px;
   height: 32px;
   border-radius: 50%;
-  background: var(--primary-tint);
+  background: var(--dw-charcoal-surface);
+  border: 1px solid var(--dw-charcoal-border);
   color: var(--primary);
   display: flex;
   align-items: center;
@@ -244,18 +344,26 @@ table {
   font-size: 12px;
   font-weight: 700;
   flex-shrink: 0;
+  overflow: hidden;
+}
+
+.profile-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .profile-meta {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  flex: 1;
 }
 
 .profile-name {
   font-size: 13px;
   font-weight: 600;
-  color: var(--text-primary);
+  color: var(--dw-charcoal-text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -263,7 +371,7 @@ table {
 
 .profile-tier {
   font-size: 11px;
-  color: var(--text-muted);
+  color: var(--dw-charcoal-text-muted);
 }
 
 /* --- Main content --- */
@@ -282,6 +390,13 @@ table {
   max-width: 1360px;
 }
 
+.brief-topbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+}
+
 .brief-greeting {
   font-size: 28px;
   font-weight: 700;
@@ -289,10 +404,162 @@ table {
   letter-spacing: -0.01em;
 }
 
-.brief-subline {
+.brief-topbar-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.topbar-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 260px;
+  height: 38px;
+  padding: 0 10px 0 12px;
+  background: var(--surface);
+  border: 0.5px solid var(--border);
+  border-radius: 10px;
+}
+
+.topbar-search-icon {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.topbar-search-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 13.5px;
+  color: var(--text-primary);
+}
+
+.topbar-search-input::placeholder {
+  color: var(--text-muted);
+}
+
+.topbar-search-kbd {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  border: 0.5px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+.topbar-search-results {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  background: var(--surface);
+  border: 0.5px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(15, 17, 23, 0.12);
+  z-index: 30;
+}
+
+.topbar-search-results li button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  width: 100%;
+  padding: 7px 8px;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  text-align: left;
+}
+
+.topbar-search-results li button:hover {
+  background: var(--bg);
+}
+
+.topbar-search-client {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.topbar-search-meta {
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.topbar-icon-btn {
+  position: relative;
+  width: 38px;
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface);
+  border: 0.5px solid var(--border);
+  border-radius: 10px;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.topbar-icon-btn:hover {
+  color: var(--text-primary);
+  border-color: var(--text-muted);
+}
+
+.topbar-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--primary);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.brief-header-sub {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
   margin-top: 6px;
+}
+
+.brief-subline {
   font-size: 14px;
   color: var(--text-secondary);
+  max-width: 62ch;
+}
+
+.brief-date-range {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: var(--surface);
+  border: 0.5px solid var(--border);
+  border-radius: 8px;
+  padding: 7px 12px;
+  white-space: nowrap;
 }
 
 .brief-loading,
@@ -322,7 +589,7 @@ table {
    ============================================================ */
 .brief-shell {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 360px;
+  grid-template-columns: minmax(0, 1fr) var(--rail-w);
   gap: 24px;
   align-items: start;
   margin-top: 20px;
@@ -340,16 +607,16 @@ table {
   /* Dark-scoped token overrides — everything nested inside (brief-card,
      signature-*, invoice-row, handled-list, etc.) already reads these same
      custom properties, so this alone re-themes the reused components
-     without forking their CSS. */
-  --surface: #2A2621;
-  --border: #3D3833;
-  --bg: #211D1A;
-  --text-primary: #F4EFE7;
-  --text-secondary: #C4BBAD;
-  --text-muted: #8F8677;
+     without forking their CSS. Same shared palette as .sidebar. */
+  --surface: var(--dw-charcoal-surface);
+  --border: var(--dw-charcoal-border);
+  --bg: var(--dw-charcoal);
+  --text-primary: var(--dw-charcoal-text);
+  --text-secondary: var(--dw-charcoal-text-secondary);
+  --text-muted: var(--dw-charcoal-text-muted);
   --primary-tint: rgba(218, 119, 86, 0.18);
 
-  background: #17140F;
+  background: var(--dw-charcoal);
   border-radius: 16px;
   padding: 20px;
   color: var(--text-primary);
@@ -402,6 +669,61 @@ table {
 .rail-empty {
   font-size: 13px;
   color: var(--text-muted);
+}
+
+.rail-tile-row {
+  display: flex;
+  gap: 10px;
+}
+
+.rail-tile {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  background: var(--bg);
+  border: 0.5px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.rail-tile-icon {
+  color: var(--primary);
+}
+
+.rail-tile-label {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.rail-tile-value {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.rail-work-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.rail-work-list li {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.rail-work-list li svg {
+  flex-shrink: 0;
+  color: var(--primary);
 }
 
 .rail-upcoming-list,
@@ -513,11 +835,10 @@ table {
 }
 
 /* --- KPI cards --- */
-/* Outstanding is the dominant number (spec: it's what actually matters most
-   at a glance); the rest are secondary context, not equal-weight siblings. */
+/* Four equal-weight cards, matching the north-star mockup. */
 .kpi-grid {
   display: grid;
-  grid-template-columns: 1.6fr 1fr 1fr 1fr;
+  grid-template-columns: repeat(4, 1fr);
   gap: 16px;
   margin: 20px 0 24px;
 }
@@ -527,20 +848,6 @@ table {
   border: 0.5px solid var(--border);
   border-radius: 10px;
   padding: 16px;
-}
-
-.kpi-dominant {
-  padding: 20px;
-  background: var(--primary-tint);
-  border-color: rgba(218, 119, 86, 0.25);
-}
-
-.kpi-dominant .kpi-value {
-  font-size: 36px;
-}
-
-.kpi-dominant .kpi-label {
-  color: var(--primary);
 }
 
 .kpi-top {
@@ -574,6 +881,23 @@ table {
 .kpi-support {
   margin-top: 4px;
   font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+/* Only shown when a real historical comparison exists (Collected, via
+   timestamped events) — see Dashboard.jsx's collectedTrend comment for why
+   the other three cards don't get one. */
+.kpi-trend {
+  margin-top: 4px;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.kpi-trend-up {
+  color: var(--green);
+}
+
+.kpi-trend-down {
   color: var(--text-muted);
 }
 
@@ -699,27 +1023,76 @@ table {
 }
 
 
-/* ============================================================
-   Needs Attention — denser status + reason + action rows
-   ============================================================ */
-.invoice-row-col {
-  flex-direction: column;
-  align-items: stretch;
-  gap: 10px;
-}
-
 .invoice-row-line {
   display: flex;
   align-items: center;
   gap: 12px;
 }
 
-/* Real reason text (recommendFor / Autopilot rule match), shown inline
-   under the client name rather than behind a click-to-reveal toggle. */
-.invoice-reason-inline {
-  font-size: 12px;
+/* ============================================================
+   Top invoices to focus on — table (north-star mockup)
+   ============================================================ */
+.invoice-table-wrap {
+  overflow-x: auto;
+}
+
+.invoice-table {
+  width: 100%;
+  min-width: 640px;
+  border-collapse: collapse;
+}
+
+.invoice-table thead th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
   color: var(--text-muted);
-  margin-top: 1px;
+  padding: 0 12px 10px;
+  white-space: nowrap;
+}
+
+.invoice-table tbody td {
+  padding: 12px;
+  font-size: 13.5px;
+  color: var(--text-secondary);
+  border-top: 0.5px solid var(--border);
+  white-space: nowrap;
+}
+
+.invoice-table tbody tr {
+  cursor: pointer;
+  transition: background 0.1s ease;
+}
+
+.invoice-table tbody tr:hover {
+  background: rgba(15, 17, 23, 0.015);
+}
+
+.invoice-table-client {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.invoice-table-amount {
+  font-weight: 700;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.invoice-table-reason {
+  white-space: normal;
+  font-weight: 600;
+}
+
+.invoice-table-reason.tone-red { color: #C22B2B; }
+.invoice-table-reason.tone-orange { color: #C2540A; }
+.invoice-table-reason.tone-amber { color: #B45309; }
+.invoice-table-reason.tone-blue { color: #3B82F6; }
+
+.invoice-table tbody td:last-child {
+  white-space: nowrap;
 }
 
 /* ============================================================

@@ -1,9 +1,8 @@
 import { useState, useMemo, useEffect, useRef } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { History, CalendarClock, CalendarCheck } from 'lucide-react'
-import { useData, isOutstanding, balanceOf, effectiveStatus } from '../context/DataContext'
+import { History, CalendarClock, CalendarCheck, CheckCircle2, FileText, Clock, RefreshCw, Calendar } from 'lucide-react'
+import { useData, isOutstanding, balanceOf } from '../context/DataContext'
 import Avatar from '../components/Avatar'
-import StatusPill from '../components/StatusPill'
 import InvoiceDetailPanel from '../components/InvoiceDetailPanel'
 import SignatureSection from '../components/SignatureSection'
 import CognitiveCompose from '../features/reminders/CognitiveCompose'
@@ -25,14 +24,16 @@ import {
   RemindersIcon,
   SparkleIcon,
   ArrowRightIcon,
+  SearchIcon,
+  BellIcon,
 } from '../components/icons'
 
 const NUDGE_DISMISS_KEY = 'duewatch_autopilot_nudge_dismissed_at'
 const NUDGE_DISMISS_DAYS = 7
 
-function KpiCard({ Icon, label, value, valueColor, support, dominant }) {
+function KpiCard({ Icon, label, value, valueColor, trend, support }) {
   return (
-    <div className={dominant ? 'kpi-card kpi-dominant' : 'kpi-card'}>
+    <div className="kpi-card">
       <div className="kpi-top">
         <Icon className="kpi-icon" />
         <span className="kpi-label">{label}</span>
@@ -40,7 +41,13 @@ function KpiCard({ Icon, label, value, valueColor, support, dominant }) {
       <div className="kpi-value" style={valueColor ? { color: valueColor } : undefined}>
         {value}
       </div>
-      <div className="kpi-support">{support}</div>
+      {trend ? (
+        <div className={`kpi-trend kpi-trend-${trend.direction}`}>
+          {trend.direction === 'up' ? '↑' : '↓'} {trend.text}
+        </div>
+      ) : (
+        <div className="kpi-support">{support}</div>
+      )}
     </div>
   )
 }
@@ -63,10 +70,68 @@ function reasonFor(inv, autopilotEnabled, autopilotRules) {
   return recommendFor(inv)
 }
 
-function InvoiceRow({ invoice, secondary, onClick, onDraft, recommendation }) {
+// Real, functional invoice/client search — not a decorative input. The ⌘K
+// hint actually focuses this field (see the keydown listener in Dashboard).
+function TopSearch({ invoices, onSelect, inputRef }) {
+  const [query, setQuery] = useState('')
+  const q = query.trim().toLowerCase()
+  const results =
+    q.length === 0
+      ? []
+      : invoices
+          .filter((inv) => {
+            const client = (inv.clients?.name || '').toLowerCase()
+            const num = (inv.invoice_number || '').toLowerCase()
+            return client.includes(q) || num.includes(q)
+          })
+          .slice(0, 6)
+
+  return (
+    <div className="topbar-search">
+      <SearchIcon className="topbar-search-icon" width={15} height={15} />
+      <input
+        ref={inputRef}
+        type="text"
+        className="topbar-search-input"
+        placeholder="Search invoices, clients…"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') {
+            setQuery('')
+            e.currentTarget.blur()
+          }
+        }}
+      />
+      <span className="topbar-search-kbd">⌘K</span>
+      {results.length > 0 && (
+        <ul className="topbar-search-results">
+          {results.map((inv) => (
+            <li key={inv.id}>
+              <button
+                type="button"
+                onClick={() => {
+                  onSelect(inv)
+                  setQuery('')
+                }}
+              >
+                <span className="topbar-search-client">{inv.clients?.name || 'No client'}</span>
+                <span className="topbar-search-meta">
+                  {inv.invoice_number || 'No number'} · {formatMoney(balanceOf(inv))}
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+function InvoiceRow({ invoice, secondary, onClick }) {
   return (
     <li
-      className={recommendation ? 'invoice-row invoice-row-col' : 'invoice-row'}
+      className="invoice-row"
       onClick={onClick}
       role="button"
       tabIndex={0}
@@ -82,23 +147,8 @@ function InvoiceRow({ invoice, secondary, onClick, onDraft, recommendation }) {
         <div className="invoice-main">
           <span className="invoice-client">{invoice.clients?.name || 'No client'}</span>
           <span className="invoice-secondary">{secondary}</span>
-          {recommendation && (
-            <span className="invoice-reason-inline">{recommendation.explanation}</span>
-          )}
         </div>
-        <StatusPill status={effectiveStatus(invoice)} />
         <span className="invoice-amount">{formatMoney(balanceOf(invoice))}</span>
-        {onDraft && (
-          <button
-            className="row-action"
-            onClick={(e) => {
-              e.stopPropagation()
-              onDraft()
-            }}
-          >
-            Draft Reminder
-          </button>
-        )}
       </div>
     </li>
   )
@@ -106,14 +156,14 @@ function InvoiceRow({ invoice, secondary, onClick, onDraft, recommendation }) {
 
 function SinceLastVisit({ data }) {
   if (!data) return null
-  const parts = []
+  const tiles = []
   if (data.checked > 0) {
-    parts.push(`Checked ${data.checked} ${data.checked === 1 ? 'invoice' : 'invoices'}`)
+    tiles.push({ Icon: CheckCircle2, label: 'Checked', value: data.checked, unit: data.checked === 1 ? 'invoice' : 'invoices' })
   }
   if (data.drafted > 0) {
-    parts.push(`Drafted ${data.drafted} ${data.drafted === 1 ? 'reminder' : 'reminders'}`)
+    tiles.push({ Icon: FileText, label: 'Drafted', value: data.drafted, unit: data.drafted === 1 ? 'reminder' : 'reminders' })
   }
-  if (parts.length === 0) return null
+  if (tiles.length === 0) return null
 
   return (
     <section className="rail-section">
@@ -121,30 +171,53 @@ function SinceLastVisit({ data }) {
         <History size={15} />
         <span>Since your last visit</span>
       </div>
-      <p className="rail-section-line">{parts.join('. ')}.</p>
+      <div className="rail-tile-row">
+        {tiles.map((t) => (
+          <div className="rail-tile" key={t.label}>
+            <t.Icon size={14} className="rail-tile-icon" />
+            <span className="rail-tile-label">{t.label}</span>
+            <span className="rail-tile-value">
+              {t.value} {t.unit}
+            </span>
+          </div>
+        ))}
+      </div>
     </section>
   )
 }
 
-function WillDoNext({ autopilotEnabled, eligibleCount, outstandingCount }) {
-  let line
-  if (!autopilotEnabled) {
-    line = 'Autopilot is off. Nothing is scheduled.'
-  } else if (outstandingCount === 0) {
-    line = 'Nothing scheduled beyond tomorrow’s check.'
-  } else if (eligibleCount > 0) {
-    line = `Next check is tomorrow morning. ${eligibleCount} ${eligibleCount === 1 ? 'invoice is' : 'invoices are'} ready for a reminder.`
-  } else {
-    line = 'Next check is tomorrow morning. Nothing new expected yet.'
+function WorkingOn({ autopilotEnabled, eligibleCount, outstandingCount }) {
+  const items = []
+  if (autopilotEnabled) {
+    items.push({ Icon: Clock, text: 'Next check: tomorrow morning' })
+    if (outstandingCount > 0 && eligibleCount > 0) {
+      items.push({
+        Icon: RefreshCw,
+        text: `${eligibleCount} ${eligibleCount === 1 ? 'invoice' : 'invoices'} ready for a reminder`,
+      })
+    }
   }
 
   return (
     <section className="rail-section">
       <div className="rail-section-head">
         <CalendarClock size={15} />
-        <span>Duewatch will do next</span>
+        <span>Duewatch is working on</span>
       </div>
-      <p className="rail-section-line">{line}</p>
+      {items.length === 0 ? (
+        <p className="rail-section-line">
+          {autopilotEnabled ? 'Nothing scheduled beyond tomorrow’s check.' : 'Autopilot is off. Nothing is scheduled.'}
+        </p>
+      ) : (
+        <ul className="rail-work-list">
+          {items.map((it) => (
+            <li key={it.text}>
+              <it.Icon size={14} />
+              <span>{it.text}</span>
+            </li>
+          ))}
+        </ul>
+      )}
     </section>
   )
 }
@@ -255,6 +328,20 @@ function AutopilotNudge({ visible, onDismiss }) {
   )
 }
 
+// Real current-month range, e.g. "Jul 1 – Jul 31, 2026" — display only.
+// Not an interactive date filter: nothing in this app can re-query the
+// dashboard for an arbitrary past period yet, so making it look clickable
+// would promise a capability that doesn't exist.
+function currentMonthRangeLabel() {
+  const now = new Date()
+  const start = new Date(now.getFullYear(), now.getMonth(), 1)
+  const end = new Date(now.getFullYear(), now.getMonth() + 1, 0)
+  const opts = { month: 'short', day: 'numeric' }
+  const startLabel = start.toLocaleDateString('en-US', opts)
+  const endLabel = end.toLocaleDateString('en-US', { ...opts, year: 'numeric' })
+  return `${startLabel} – ${endLabel}`
+}
+
 export default function Dashboard() {
   const {
     invoices,
@@ -269,6 +356,7 @@ export default function Dashboard() {
     resolveSignatureLocal,
     sinceLastVisit,
     collectedThisMonth,
+    collectedLastMonth,
   } = useData()
   const [selected, setSelected] = useState(null)
   const [signatureContext, setSignatureContext] = useState(null)
@@ -279,10 +367,12 @@ export default function Dashboard() {
     return Date.now() - at < NUDGE_DISMISS_DAYS * 24 * 60 * 60 * 1000
   })
 
-  // Sidebar "Awaiting your signature" indicator navigates here and asks to
-  // scroll to the "Needs your approval" panel. Clear the state after
-  // handling it so navigating away and back doesn't re-trigger the scroll.
+  // Sidebar "Awaiting your signature" indicator (and the topbar bell) both
+  // navigate here and ask to scroll to the "Needs your approval" panel.
+  // Clear the state after handling it so navigating away and back doesn't
+  // re-trigger the scroll.
   const signatureSectionRef = useRef(null)
+  const searchInputRef = useRef(null)
   const location = useLocation()
   const navigate = useNavigate()
   useEffect(() => {
@@ -291,6 +381,19 @@ export default function Dashboard() {
       navigate(location.pathname, { replace: true, state: {} })
     }
   }, [location, navigate])
+
+  // Real keyboard shortcut behind the topbar's "⌘K" hint — it wouldn't be
+  // honest to show a shortcut hint that doesn't do anything.
+  useEffect(() => {
+    function onKeyDown(e) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        searchInputRef.current?.focus()
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
 
   const derived = useMemo(() => {
     const outstanding = invoices.filter(isOutstanding)
@@ -352,11 +455,11 @@ export default function Dashboard() {
   const awaitingCount = awaitingSignature.length
   const decisionsNeeded = attentionCount + awaitingCount
 
-  // Narrative headline (Session 8 Morning Brief redesign) — every number
-  // traces to a real query: collectedThisMonth (events.evidence.amount,
-  // this calendar month), outstandingTotal (balance of unpaid invoices),
-  // outstandingCount (Autopilot's watch list), decisionsNeeded (overdue +
-  // awaiting-signature — things that need the founder specifically).
+  // Narrative headline — every number traces to a real query:
+  // collectedThisMonth (events.evidence.amount, this calendar month),
+  // outstandingTotal (balance of unpaid invoices), outstandingCount
+  // (Autopilot's watch list), decisionsNeeded (overdue + awaiting-signature
+  // — things that need the founder specifically).
   const headline = `You collected ${formatMoney(collectedThisMonth)} this month. ${formatMoney(
     derived.outstandingTotal
   )} remains outstanding. Duewatch is handling ${derived.outstandingCount}, and ${decisionsNeeded} decision${
@@ -368,6 +471,19 @@ export default function Dashboard() {
   const remindersSentAllTime = events.filter((e) => e.event_type === 'reminder_sent').length
   const showNudge =
     !autopilotEnabled && !nudgeDismissed && invoices.length >= 3 && remindersSentAllTime >= 2
+
+  // Real month-over-month trend — only Collected has a comparable historical
+  // query (events are timestamped). Outstanding/Need Attention/Reminders
+  // Sent are derived from current invoice state, not logged events, so
+  // there's no past snapshot to diff against without new schema — they get
+  // their existing plain caption instead of a fabricated trend line.
+  const collectedTrend =
+    collectedLastMonth > 0
+      ? {
+          direction: collectedThisMonth >= collectedLastMonth ? 'up' : 'down',
+          text: `${Math.abs(Math.round(((collectedThisMonth - collectedLastMonth) / collectedLastMonth) * 100))}% vs last month`,
+        }
+      : null
 
   function dismissNudge() {
     localStorage.setItem(NUDGE_DISMISS_KEY, String(Date.now()))
@@ -384,28 +500,53 @@ export default function Dashboard() {
     setSignatureContext(null)
   }
 
+  function scrollToApprovals() {
+    signatureSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+
   return (
     <div className="brief">
-      <h1 className="brief-greeting">Good morning, {name}.</h1>
-      <p className="brief-subline">{headline}</p>
+      <div className="brief-topbar">
+        <h1 className="brief-greeting">Good morning, {name}.</h1>
+        <div className="brief-topbar-controls">
+          <TopSearch invoices={invoices} onSelect={(inv) => setSelected(inv)} inputRef={searchInputRef} />
+          <button
+            type="button"
+            className="topbar-icon-btn"
+            aria-label={`${decisionsNeeded} decisions need you`}
+            onClick={scrollToApprovals}
+          >
+            <BellIcon width={17} height={17} />
+            {decisionsNeeded > 0 && <span className="topbar-badge">{decisionsNeeded}</span>}
+          </button>
+        </div>
+      </div>
+
+      <div className="brief-header-sub">
+        <p className="brief-subline">{headline}</p>
+        <div className="brief-date-range">
+          <Calendar size={14} />
+          {currentMonthRangeLabel()}
+        </div>
+      </div>
 
       <div className="brief-shell">
         {/* ---- White canvas: the business ---- */}
         <div className="brief-main">
           <section className="kpi-grid">
             <KpiCard
-              Icon={OutstandingIcon}
-              label="Outstanding"
-              value={formatMoney(derived.outstandingTotal)}
-              support={`across ${derived.outstandingCount} ${derived.outstandingCount === 1 ? 'invoice' : 'invoices'}`}
-              dominant
-            />
-            <KpiCard
               Icon={CollectedIcon}
               label="Collected"
               value={formatMoney(collectedThisMonth)}
               valueColor="var(--green)"
+              trend={collectedTrend}
               support="this month"
+            />
+            <KpiCard
+              Icon={OutstandingIcon}
+              label="Outstanding"
+              value={formatMoney(derived.outstandingTotal)}
+              support={`across ${derived.outstandingCount} ${derived.outstandingCount === 1 ? 'invoice' : 'invoices'}`}
             />
             <KpiCard
               Icon={AttentionIcon}
@@ -428,36 +569,66 @@ export default function Dashboard() {
             </section>
           ) : (
             <>
-              {/* Needs Attention — manual/non-Autopilot items, with reasons */}
+              {/* Top invoices to focus on — manual/non-Autopilot items */}
               <section className="brief-card">
                 <div className="section-head">
-                  <h2 className="section-title">Needs attention</h2>
+                  <h2 className="section-title">Top invoices to focus on</h2>
                   {attentionCount > 0 && <span className="section-count">{attentionCount}</span>}
                 </div>
                 {attentionCount === 0 ? (
                   <p className="brief-empty">No overdue invoices. You&apos;re all caught up.</p>
                 ) : (
-                  <ul className="invoice-list">
-                    {derived.needsAttention.map((inv) => {
-                      const od = daysOverdue(inv.due_date)
-                      return (
-                        <InvoiceRow
-                          key={inv.id}
-                          invoice={inv}
-                          secondary={`${od} ${od === 1 ? 'day' : 'days'} overdue · ${inv.invoice_number || 'No number'}`}
-                          onClick={() => setSelected(inv)}
-                          onDraft={() => setComposeInvoice(inv)}
-                          recommendation={reasonFor(inv, autopilotEnabled, autopilotRules)}
-                        />
-                      )
-                    })}
-                  </ul>
+                  <div className="invoice-table-wrap">
+                    <table className="invoice-table">
+                      <thead>
+                        <tr>
+                          <th>Invoice</th>
+                          <th>Client</th>
+                          <th>Amount</th>
+                          <th>Days</th>
+                          <th>Reason</th>
+                          <th aria-hidden="true" />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {derived.needsAttention.map((inv) => {
+                          const od = daysOverdue(inv.due_date)
+                          const reco = reasonFor(inv, autopilotEnabled, autopilotRules)
+                          return (
+                            <tr key={inv.id} onClick={() => setSelected(inv)}>
+                              <td>{inv.invoice_number || '—'}</td>
+                              <td className="invoice-table-client">{inv.clients?.name || 'No client'}</td>
+                              <td className="invoice-table-amount">{formatMoney(balanceOf(inv))}</td>
+                              <td>{od}</td>
+                              <td>
+                                <span className={`invoice-table-reason tone-${reco.tone}`}>{reco.explanation}</span>
+                              </td>
+                              <td>
+                                <button
+                                  type="button"
+                                  className="row-action"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    setComposeInvoice(inv)
+                                  }}
+                                >
+                                  Draft Reminder
+                                </button>
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
                 )}
               </section>
 
               <AutopilotNudge visible={showNudge} onDismiss={dismissNudge} />
 
-              {/* Due Soon */}
+              {/* Due Soon — real scheduled/due invoices occupying the space
+                  the north-star grid gives to forecast/pattern content that
+                  isn't real yet */}
               <section className="brief-card">
                 <div className="section-head">
                   <h2 className="section-title">Due Soon</h2>
@@ -494,7 +665,7 @@ export default function Dashboard() {
 
           <SinceLastVisit data={sinceLastVisit} />
 
-          <WillDoNext
+          <WorkingOn
             autopilotEnabled={autopilotEnabled}
             eligibleCount={derived.eligibleForNextCheck}
             outstandingCount={derived.outstandingCount}

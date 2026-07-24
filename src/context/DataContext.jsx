@@ -102,6 +102,10 @@ export function DataProvider({ children }) {
   // counts payments recorded since evidence.amount started being captured;
   // older events have no amount and are silently excluded, not estimated.
   const [collectedThisMonth, setCollectedThisMonth] = useState(0)
+  const [collectedLastMonth, setCollectedLastMonth] = useState(0)
+  // Real all-time count of every logged event — not the 20-row recent
+  // window above — for the sidebar Evidence card's "N actions recorded".
+  const [totalEventsCount, setTotalEventsCount] = useState(0)
 
   // Presence System (Merged Spec v1.1) signals that aren't fetched from the
   // DB — they're set directly by the real action that's happening in this
@@ -239,7 +243,9 @@ export function DataProvider({ children }) {
     // events logged this calendar month. Queried directly (not derived from
     // the 20-row recent-events window above) so a busy month can't silently
     // undercount.
-    const startOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString()
+    const now = new Date()
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
+    const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString()
     const collectedPromise = supabase
       .from('events')
       .select('evidence')
@@ -247,6 +253,29 @@ export function DataProvider({ children }) {
       .in('event_type', ['payment_recorded', 'invoice_marked_paid'])
       .gte('created_at', startOfMonth)
       .then((r) => (r.data || []).reduce((sum, row) => sum + (Number(row.evidence?.amount) || 0), 0))
+      .catch(() => 0)
+
+    // Real month-over-month comparison for the Collected KPI card — same
+    // query, prior calendar month's window. (Outstanding/Need Attention
+    // have no equivalent: they're derived from current invoice state, not
+    // logged events, so there's no historical snapshot to diff against
+    // without new schema — omitted rather than faked.)
+    const collectedLastMonthPromise = supabase
+      .from('events')
+      .select('evidence')
+      .eq('user_id', user.id)
+      .in('event_type', ['payment_recorded', 'invoice_marked_paid'])
+      .gte('created_at', startOfLastMonth)
+      .lt('created_at', startOfMonth)
+      .then((r) => (r.data || []).reduce((sum, row) => sum + (Number(row.evidence?.amount) || 0), 0))
+      .catch(() => 0)
+
+    // Real all-time event count for the sidebar Evidence card.
+    const totalEventsPromise = supabase
+      .from('events')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', user.id)
+      .then((r) => r.count ?? 0)
       .catch(() => 0)
 
     const draftedSincePromise =
@@ -272,6 +301,8 @@ export function DataProvider({ children }) {
       checkedSince,
       draftedSince,
       collected,
+      collectedLast,
+      totalEvents,
     ] = await Promise.all([
       profilePromise,
       invoicesPromise,
@@ -284,6 +315,8 @@ export function DataProvider({ children }) {
       checkedSincePromise,
       draftedSincePromise,
       collectedPromise,
+      collectedLastMonthPromise,
+      totalEventsPromise,
     ])
 
     if (invErr) {
@@ -307,6 +340,8 @@ export function DataProvider({ children }) {
     setLastAutopilotRun(lastRun || null)
     setAutopilotRules(rules || [])
     setCollectedThisMonth(collected || 0)
+    setCollectedLastMonth(collectedLast || 0)
+    setTotalEventsCount(totalEvents || 0)
 
     if (isFirstLoadThisSession) {
       setSinceLastVisit(
@@ -391,6 +426,8 @@ export function DataProvider({ children }) {
     autopilotRules,
     sinceLastVisit,
     collectedThisMonth,
+    collectedLastMonth,
+    totalEventsCount,
     criticalOverdueCount,
     autopilotErrorCount,
     cognitiveActivity,
