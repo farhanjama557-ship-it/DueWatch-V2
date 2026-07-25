@@ -229,6 +229,30 @@ Then a broad typography/spacing pass — greeting 28px→34px, KPI values 26px�
 
 **Open question:** none blocking. The 1536px horizontal-scroll trade-off is the one thing worth Farhan's eyes directly — if it reads as broken rather than as an acceptable "scroll to see full width" pattern once seen live, the fix is narrowing the rail slightly or dropping a column, not a big change.
 
+### 2026-07-25 — Claude Code — PR #20 (bundled): geometry correction against a real measured mockup
+
+**Did:** Farhan/Claude Design sent a detailed geometry critique plus, critically, an actual working HTML export of the approved mockup (not just a screenshot) — a "Bundled Page" artifact that rendered correctly standalone. That let me *measure* the approved design directly (Playwright + `getComputedStyle`/`getBoundingClientRect`) instead of eyeballing a PNG. Key findings from measuring it at its native 1728px width:
+
+- Sidebar 265px, main content 1078px (1014px usable after its own padding), rail 385px — sums to exactly 1728px, i.e. the mockup's three columns are **fixed pixel widths that add up to one specific design width**, not viewport-relative.
+- At a wider test viewport (2400px) the mockup's own sidebar/rail stayed fixed but its center column and KPI cards kept growing to fill the extra space — meaning the raw mockup file doesn't itself demonstrate good ultrawide behavior; the "add a max-width to the whole shell" instruction in the brief is the design team's own guidance for handling that gap, not something visible in the file to copy literally.
+- The greeting ("Good morning, Alex.") is small and unemphasized — 16px/400 weight. The narrative headline is the actual focal point — 29px/700 weight, line-height ~1.35. **This build had it backwards**: greeting was 34px/700 (dominant), headline was 15.5px (supporting). That inversion is almost certainly why "the headline and KPI cards are not prominent enough" was the top complaint.
+- KPI card: 240×127px, 20px padding, 12px radius, value 29px/700 (same size as the headline), label 13px/500, trend 13px/600.
+- Sidebar nav item: 39px tall, 11px/13px padding, 14px/600. Sidebar outer padding 26px/16px. Due Soon avatar 34px (was 40px). No date-range control anywhere in the approved header composition — removed the one this build had added (it wasn't wrong data, just not part of the approved design, and the brief's itemized "match" list for the header didn't include it).
+
+**The structural fix** (their own words: "the most important technical fix is probably... add a max-width to the full three-column shell"): `.app-shell` now has `max-width: 1728px; margin: 0 auto`, and — this was the real bug — `.sidebar`/`.pulse-rail` changed from `position: fixed` (pinned to the *raw browser viewport* edges, escaping any centering) to `position: sticky` (respects the bounded, centered shell as its containing block). `.content`'s old `margin-left: var(--sidebar-w)` compensation and `.brief-main`'s `padding-right` rail-compensation both went away since sidebar/rail are normal in-flow flex children again once they're not viewport-fixed. Verified: at 2400px viewport the shell now holds at exactly 1728px, centered with equal margins, and KPI cards stay ~236px instead of stretching to 408px like before this fix (and like the raw approved-mockup file itself does above 1728px).
+
+**Real bug found while verifying the narrow/collapse breakpoint:** `.brief-shell`'s `align-items: flex-start` (needed at wide viewports so the sticky rail doesn't stretch to match the main column's height) also applied inside the `max-width: 1180px` breakpoint, where `flex-direction` switches to `column` — and in column mode, the cross-axis is *width*, so `flex-start` there means "size to content" instead of "stretch to container," which let the invoice table's `min-width: 720px` blow the whole page out to a 51px horizontal scroll. Fixed by overriding `align-items: stretch` inside that breakpoint specifically.
+
+**Also done mid-pass:** swapped the sidebar's "Autopilot" nav icon from a custom bolt glyph to `SparkleIcon` — the exact same icon `src/pages/Autopilot.jsx`'s own pitch-step header already uses — per a direct request, so the nav and the page it links to now share one real icon instead of two different invented ones.
+
+**Verification:** same throwaway-harness pattern (temp-exported the three contexts, mounted at `/__preview`, deleted before commit — confirmed empty diff on all temporarily-touched files). Checked geometry numerically (not just visually) at 1728px against the measured mockup values, at 2400px to confirm the ultrawide bound holds, and at 1024px to confirm the collapse breakpoint has zero horizontal overflow.
+
+**Status:** built and verified via the harness; not yet re-deployed/looked at live.
+
+**Affects:** `src/index.css` (app-shell bounding/centering, sidebar+rail position:fixed→sticky, greeting/headline size swap, KPI/nav/sidebar dimension calibration, breakpoint align-items fix), `src/pages/Dashboard.jsx` (removed the date-range control and its now-unused helper/import), `src/components/Sidebar.jsx` (Autopilot icon → `SparkleIcon`), `src/components/icons.jsx` (removed the now-unused custom `AutopilotNavIcon`).
+
+**Open question:** none blocking. Did not attempt to pixel-match every last measurement (e.g. the invoice table row's 61px vs. this build's ~64-66px) — prioritized the structural shell-bounding fix and the greeting/headline inversion since those were the two changes with real layout consequences; the rest is calibrated close but not exhaustively chased given diminishing returns.
+
 ---
 
 *Next entry goes below this line. Read everything above first.*

@@ -10,18 +10,21 @@ import {
   InvoicesIcon,
   ClientsIcon,
   CashFlowIcon,
-  AutopilotNavIcon,
+  SparkleIcon,
   ActivityIcon,
   SettingsIcon,
   LogoMark,
 } from './icons'
 
+// Autopilot's nav icon is SparkleIcon — the exact same icon the Autopilot
+// page itself uses in its own header (src/pages/Autopilot.jsx's pitch
+// step), not a separate invented glyph.
 const mainNav = [
   { to: '/', label: 'Pulse', Icon: PulseIcon, end: true },
   { to: '/invoices', label: 'Invoices', Icon: InvoicesIcon, badge: true },
   { to: '/clients', label: 'Clients', Icon: ClientsIcon },
   { to: '/cash-flow', label: 'Cash Flow', Icon: CashFlowIcon },
-  { to: '/autopilot', label: 'Autopilot', Icon: AutopilotNavIcon },
+  { to: '/autopilot', label: 'Autopilot', Icon: SparkleIcon },
   { to: '/activity', label: 'Activity', Icon: ActivityIcon },
   { to: '/settings', label: 'Settings', Icon: SettingsIcon },
 ]

@@ -20,12 +20,15 @@
   --red: #EF4444;
   --green: #22C55E;
 
-  /* Scaled up (2026-07-24 proportion pass) so the app reads at the
-     north-star mockup's density on a normal desktop viewport instead of a
-     narrower "widget" scale — the rail in particular should occupy roughly
-     30% of viewport width, not a fixed 340px regardless of screen size. */
-  --sidebar-w: clamp(260px, 17vw, 300px);
-  --rail-w: clamp(380px, 30vw, 480px);
+  /* Fixed px, measured directly from the approved mockup's own HTML export
+     at its native 1728px design width — the mockup itself doesn't scale
+     these with viewport, it holds them fixed and lets the center column
+     flex between them. --shell-max-w (sidebar + main-content + rail, all
+     measured) is what actually keeps the layout dense on wide screens —
+     see .app-shell's comment. */
+  --sidebar-w: 265px;
+  --rail-w: 385px;
+  --shell-max-w: 1728px;
 
   /* Shared dark-charcoal palette — the "Duewatch itself" zones (nav sidebar
      + right rail per the north-star mockup). Applied by re-pointing the
@@ -99,8 +102,18 @@ table {
 /* ============================================================
    App shell
    ============================================================ */
+/* Bounded and centered — measured directly against the approved mockup's
+   own HTML export: sidebar(265) + main-content(1078) + rail(385) = 1728,
+   its native design width. Below that width the shell just fills the
+   viewport as before; above it, extra space becomes centered margin
+   instead of the center column (and its KPI cards) stretching wider and
+   wider on ultrawide monitors — that stretch was the root cause of the
+   "zoomed out" complaint, not font sizes. */
 .app-shell {
   display: flex;
+  align-items: flex-start;
+  max-width: var(--shell-max-w);
+  margin: 0 auto;
   min-height: 100%;
 }
 
@@ -113,11 +126,15 @@ table {
   border-right: 1px solid var(--dw-charcoal-border);
   display: flex;
   flex-direction: column;
-  padding: 28px 20px;
-  position: fixed;
+  padding: 26px 16px;
+  /* sticky, not fixed — fixed pins to the raw browser viewport edge, which
+     is exactly what let the sidebar/rail stay put while the center column
+     stretched across an ultrawide monitor between them. Sticky respects
+     the centered/bounded .app-shell instead. */
+  position: sticky;
   top: 0;
-  left: 0;
-  bottom: 0;
+  align-self: flex-start;
+  max-height: 100vh;
   z-index: 20;
   overflow-y: auto;
 }
@@ -205,12 +222,12 @@ table {
 .nav-item {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px 14px;
+  gap: 11px;
+  padding: 11px 13px;
   border-radius: 9px;
   color: var(--dw-charcoal-text-secondary);
-  font-size: 14.5px;
-  font-weight: 500;
+  font-size: 14px;
+  font-weight: 600;
   transition: background 0.12s ease, color 0.12s ease;
 }
 
@@ -383,7 +400,6 @@ table {
 /* --- Main content --- */
 .content {
   flex: 1;
-  margin-left: var(--sidebar-w);
   background: var(--bg);
   padding: 36px 40px;
   min-width: 0;
@@ -392,9 +408,10 @@ table {
 /* ============================================================
    Pulse (Morning Brief)
    ============================================================ */
-.brief {
-  max-width: 1720px;
-}
+/* No .brief max-width — .app-shell's --shell-max-w already bounds the
+   whole three-column layout, so .content (this page's direct parent) can
+   never exceed roughly 1078px in practice; a second cap here would just
+   be dead weight. */
 
 .brief-topbar {
   display: flex;
@@ -403,11 +420,13 @@ table {
   gap: 24px;
 }
 
+/* Small and unemphasized on purpose — measured off the approved mockup,
+   the greeting is a quiet lead-in; the narrative headline below (.brief-
+   subline) is the actual focal point. The build had this backwards. */
 .brief-greeting {
-  font-size: 34px;
-  font-weight: 700;
-  color: var(--text-primary);
-  letter-spacing: -0.01em;
+  font-size: 16px;
+  font-weight: 400;
+  color: var(--text-secondary);
 }
 
 .brief-topbar-controls {
@@ -540,18 +559,19 @@ table {
 }
 
 .brief-header-sub {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 24px;
   margin-top: 10px;
 }
 
+/* The actual focal point of the page header — measured off the approved
+   mockup (29px/700/~1.35 line-height), not supporting copy. No max-width:
+   the mockup's headline runs the full content width and wraps to 2 lines
+   from its natural length at this size, not from an artificial constraint. */
 .brief-subline {
-  font-size: 15.5px;
-  color: var(--text-secondary);
-  max-width: 66ch;
-  line-height: 1.5;
+  font-size: 29px;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
+  line-height: 1.35;
 }
 
 .brief-date-range {
@@ -595,25 +615,25 @@ table {
    White = the business, dark = Duewatch itself.
    ============================================================ */
 .brief-shell {
+  display: flex;
+  align-items: flex-start;
+  gap: 0;
   margin-top: 24px;
 }
 
-/* The rail is fixed (see .pulse-rail below) and out of normal flow, so
-   .brief-main reserves the matching width via padding rather than a grid
-   column — it's the only in-flow child here. */
 .brief-main {
+  flex: 1;
   min-width: 0;
-  padding-right: calc(var(--rail-w) + 28px);
 }
 
 .brief-main .kpi-grid {
   margin-top: 0;
 }
 
-/* Full-height architectural panel — same treatment as .sidebar (fixed,
-   edge-to-edge, its own scroll), not a floating card inset within the
-   page's padding. This is what makes it read as a ~30%-of-viewport region
-   rather than a widget. */
+/* Sticky (within the bounded, centered .app-shell), not fixed-to-viewport
+   — see .app-shell's comment. Same fixed width as measured on the
+   approved mockup (385px), not viewport-relative, since the mockup itself
+   doesn't scale this column with screen width. */
 .pulse-rail {
   /* Dark-scoped token overrides — everything nested inside (brief-card,
      signature-*, invoice-row, handled-list, etc.) already reads these same
@@ -628,28 +648,37 @@ table {
   --primary-tint: rgba(218, 119, 86, 0.18);
 
   width: var(--rail-w);
+  flex-shrink: 0;
   background: var(--dw-charcoal);
   border-left: 1px solid var(--dw-charcoal-border);
-  padding: 32px 28px;
+  padding: 32px 22px;
   color: var(--text-primary);
   display: flex;
   flex-direction: column;
   gap: 26px;
-  position: fixed;
+  position: sticky;
   top: 0;
-  right: 0;
-  bottom: 0;
+  align-self: flex-start;
+  max-height: 100vh;
   overflow-y: auto;
   z-index: 15;
 }
 
 @media (max-width: 1180px) {
-  .brief-main {
-    padding-right: 0;
+  .brief-shell {
+    flex-direction: column;
+    /* In row direction, flex-start keeps the sticky rail from stretching
+       to .brief-main's height. In column direction (this breakpoint) the
+       cross-axis is width, so flex-start instead means "size to content"
+       — exactly what let the invoice table's min-width blow the column
+       out past the viewport. Stretch here so .brief-main's min-width: 0
+       actually takes effect. */
+    align-items: stretch;
   }
   .pulse-rail {
     position: static;
     width: auto;
+    max-height: none;
     border-left: none;
     border-top: 1px solid var(--dw-charcoal-border);
     margin-top: 24px;
@@ -858,7 +887,7 @@ table {
 .kpi-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 20px;
+  gap: 18px;
   margin: 28px 0 32px;
 }
 
@@ -866,7 +895,7 @@ table {
   background: var(--surface);
   border: 0.5px solid var(--border);
   border-radius: 12px;
-  padding: 22px;
+  padding: 20px;
 }
 
 .kpi-top {
@@ -889,8 +918,8 @@ table {
 }
 
 .kpi-value {
-  margin-top: 14px;
-  font-size: 32px;
+  margin-top: 12px;
+  font-size: 29px;
   font-weight: 700;
   color: var(--text-primary);
   line-height: 1.1;
@@ -925,7 +954,7 @@ table {
   background: var(--surface);
   border: 0.5px solid var(--border);
   border-radius: 12px;
-  padding: 12px 26px;
+  padding: 8px 24px;
   margin-bottom: 22px;
 }
 

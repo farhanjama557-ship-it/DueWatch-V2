@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useRef } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { History, CalendarClock, CalendarCheck, CheckCircle2, FileText, Clock, RefreshCw, Calendar } from 'lucide-react'
+import { History, CalendarClock, CalendarCheck, CheckCircle2, FileText, Clock, RefreshCw } from 'lucide-react'
 import { useData, isOutstanding, balanceOf } from '../context/DataContext'
 import Avatar from '../components/Avatar'
 import InvoiceDetailPanel from '../components/InvoiceDetailPanel'
@@ -143,7 +143,7 @@ function InvoiceRow({ invoice, secondary, onClick }) {
       }}
     >
       <div className="invoice-row-line">
-        <Avatar name={invoice.clients?.name} size={40} />
+        <Avatar name={invoice.clients?.name} size={34} />
         <div className="invoice-main">
           <span className="invoice-client">{invoice.clients?.name || 'No client'}</span>
           <span className="invoice-secondary">{secondary}</span>
@@ -328,20 +328,6 @@ function AutopilotNudge({ visible, onDismiss }) {
   )
 }
 
-// Real current-month range, e.g. "Jul 1 – Jul 31, 2026" — display only.
-// Not an interactive date filter: nothing in this app can re-query the
-// dashboard for an arbitrary past period yet, so making it look clickable
-// would promise a capability that doesn't exist.
-function currentMonthRangeLabel() {
-  const now = new Date()
-  const start = new Date(now.getFullYear(), now.getMonth(), 1)
-  const end = new Date(now.getFullYear(), now.getMonth() + 1, 0)
-  const opts = { month: 'short', day: 'numeric' }
-  const startLabel = start.toLocaleDateString('en-US', opts)
-  const endLabel = end.toLocaleDateString('en-US', { ...opts, year: 'numeric' })
-  return `${startLabel} – ${endLabel}`
-}
-
 export default function Dashboard() {
   const {
     invoices,
@@ -524,10 +510,6 @@ export default function Dashboard() {
 
       <div className="brief-header-sub">
         <p className="brief-subline">{headline}</p>
-        <div className="brief-date-range">
-          <Calendar size={14} />
-          {currentMonthRangeLabel()}
-        </div>
       </div>
 
       <div className="brief-shell">
