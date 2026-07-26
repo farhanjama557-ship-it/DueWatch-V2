@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useRef } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { History, CalendarClock, CalendarCheck, CheckCircle2, FileText, Clock, RefreshCw } from 'lucide-react'
+import { History, CalendarClock, CalendarCheck, Clock, RefreshCw } from 'lucide-react'
 import { useData, isOutstanding, balanceOf } from '../context/DataContext'
 import Avatar from '../components/Avatar'
 import InvoiceDetailPanel from '../components/InvoiceDetailPanel'
@@ -143,7 +143,7 @@ function InvoiceRow({ invoice, secondary, onClick }) {
       }}
     >
       <div className="invoice-row-line">
-        <Avatar name={invoice.clients?.name} size={34} />
+        <Avatar name={invoice.clients?.name} size={28} />
         <div className="invoice-main">
           <span className="invoice-client">{invoice.clients?.name || 'No client'}</span>
           <span className="invoice-secondary">{secondary}</span>
@@ -154,35 +154,31 @@ function InvoiceRow({ invoice, secondary, onClick }) {
   )
 }
 
-function SinceLastVisit({ data }) {
+// "Since your last visit" — relocated from a dark-rail section into the
+// north-star mockup's compact banner treatment at the top of the white
+// canvas. Same real Checked/Drafted facts, same real-empty-state rule:
+// omitted entirely when there's no prior visit to diff against.
+function SinceLastVisitBanner({ data }) {
   if (!data) return null
-  const tiles = []
+  const parts = []
   if (data.checked > 0) {
-    tiles.push({ Icon: CheckCircle2, label: 'Checked', value: data.checked, unit: data.checked === 1 ? 'invoice' : 'invoices' })
+    parts.push(`Checked ${data.checked} ${data.checked === 1 ? 'invoice' : 'invoices'}`)
   }
   if (data.drafted > 0) {
-    tiles.push({ Icon: FileText, label: 'Drafted', value: data.drafted, unit: data.drafted === 1 ? 'reminder' : 'reminders' })
+    parts.push(`Drafted ${data.drafted} ${data.drafted === 1 ? 'reminder' : 'reminders'}`)
   }
-  if (tiles.length === 0) return null
+  if (parts.length === 0) return null
 
   return (
-    <section className="rail-section">
-      <div className="rail-section-head">
+    <div className="brief-banner">
+      <span className="brief-banner-icon">
         <History size={15} />
-        <span>Since your last visit</span>
+      </span>
+      <div>
+        <div className="brief-banner-title">Since your last visit</div>
+        <div className="brief-banner-detail">{parts.join(' · ')}</div>
       </div>
-      <div className="rail-tile-row">
-        {tiles.map((t) => (
-          <div className="rail-tile" key={t.label}>
-            <t.Icon size={14} className="rail-tile-icon" />
-            <span className="rail-tile-label">{t.label}</span>
-            <span className="rail-tile-value">
-              {t.value} {t.unit}
-            </span>
-          </div>
-        ))}
-      </div>
-    </section>
+    </div>
   )
 }
 
@@ -202,7 +198,7 @@ function WorkingOn({ autopilotEnabled, eligibleCount, outstandingCount }) {
     <section className="rail-section">
       <div className="rail-section-head">
         <CalendarClock size={15} />
-        <span>Duewatch is working on</span>
+        <span>Duewatch Will Do Next</span>
       </div>
       {items.length === 0 ? (
         <p className="rail-section-line">
@@ -441,16 +437,14 @@ export default function Dashboard() {
   const awaitingCount = awaitingSignature.length
   const decisionsNeeded = attentionCount + awaitingCount
 
-  // Narrative headline — every number traces to a real query:
-  // collectedThisMonth (events.evidence.amount, this calendar month),
-  // outstandingTotal (balance of unpaid invoices), outstandingCount
-  // (Autopilot's watch list), decisionsNeeded (overdue + awaiting-signature
-  // — things that need the founder specifically).
-  const headline = `You collected ${formatMoney(collectedThisMonth)} this month. ${formatMoney(
-    derived.outstandingTotal
-  )} remains outstanding. Duewatch is handling ${derived.outstandingCount}, and ${decisionsNeeded} decision${
-    decisionsNeeded === 1 ? '' : 's'
-  } need${decisionsNeeded === 1 ? 's' : ''} you.`
+  // Real, deterministic status headline — a plain read of already-computed
+  // counts (overdue + awaiting-signature), never a fabricated qualitative
+  // assessment. Mirrors the same "never faked" rule that ruled out an
+  // AI-sentiment "What Duewatch Noticed" feature elsewhere in this app.
+  const statusHeadline =
+    decisionsNeeded === 0
+      ? 'Your receivables are on track.'
+      : `${decisionsNeeded} decision${decisionsNeeded === 1 ? '' : 's'} need${decisionsNeeded === 1 ? 's' : ''} your attention.`
 
   const hasAnyInvoices = invoices.length > 0
 
@@ -493,7 +487,10 @@ export default function Dashboard() {
   return (
     <div className="brief">
       <div className="brief-topbar">
-        <h1 className="brief-greeting">Good morning, {name}.</h1>
+        <div>
+          <p className="brief-greeting">Good morning, {name}.</p>
+          <h1 className="brief-headline">{statusHeadline}</h1>
+        </div>
         <div className="brief-topbar-controls">
           <TopSearch invoices={invoices} onSelect={(inv) => setSelected(inv)} inputRef={searchInputRef} />
           <button
@@ -509,12 +506,21 @@ export default function Dashboard() {
       </div>
 
       <div className="brief-header-sub">
-        <p className="brief-subline">{headline}</p>
+        <p className="brief-subline">
+          You collected <b>{formatMoney(collectedThisMonth)}</b> this month. {formatMoney(derived.outstandingTotal)}{' '}
+          remains outstanding. Duewatch is handling {derived.outstandingCount}, and{' '}
+          <span className="o">
+            {decisionsNeeded} decision{decisionsNeeded === 1 ? '' : 's'}
+          </span>{' '}
+          need{decisionsNeeded === 1 ? 's' : ''} you.
+        </p>
       </div>
 
       <div className="brief-shell">
         {/* ---- White canvas: the business ---- */}
         <div className="brief-main">
+          <SinceLastVisitBanner data={sinceLastVisit} />
+
           <section className="kpi-grid">
             <KpiCard
               Icon={CollectedIcon}
@@ -551,93 +557,95 @@ export default function Dashboard() {
             </section>
           ) : (
             <>
-              {/* Top invoices to focus on — manual/non-Autopilot items */}
-              <section className="brief-card">
-                <div className="section-head">
-                  <h2 className="section-title">Top invoices to focus on</h2>
-                  {attentionCount > 0 && <span className="section-count">{attentionCount}</span>}
-                </div>
-                {attentionCount === 0 ? (
-                  <p className="brief-empty">No overdue invoices. You&apos;re all caught up.</p>
-                ) : (
-                  <div className="top-invoices-table-wrap">
-                    <table className="top-invoices-table">
-                      <colgroup>
-                        <col />
-                        <col />
-                        <col />
-                        <col />
-                        <col className="col-reason" />
-                        <col />
-                      </colgroup>
-                      <thead>
-                        <tr>
-                          <th>Invoice</th>
-                          <th>Client</th>
-                          <th>Amount</th>
-                          <th>Days</th>
-                          <th>Reason</th>
-                          <th aria-hidden="true" />
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {derived.needsAttention.map((inv) => {
-                          const od = daysOverdue(inv.due_date)
-                          const reco = reasonFor(inv, autopilotEnabled, autopilotRules)
-                          return (
-                            <tr key={inv.id} onClick={() => setSelected(inv)}>
-                              <td>{inv.invoice_number || '—'}</td>
-                              <td className="top-invoices-table-client">{inv.clients?.name || 'No client'}</td>
-                              <td className="top-invoices-table-amount">{formatMoney(balanceOf(inv))}</td>
-                              <td>{od}</td>
-                              <td>
-                                <span className={`top-invoices-table-reason tone-${reco.tone}`}>{reco.explanation}</span>
-                              </td>
-                              <td>
-                                <button
-                                  type="button"
-                                  className="row-action"
-                                  onClick={(e) => {
-                                    e.stopPropagation()
-                                    setComposeInvoice(inv)
-                                  }}
-                                >
-                                  Draft Reminder
-                                </button>
-                              </td>
-                            </tr>
-                          )
-                        })}
-                      </tbody>
-                    </table>
+              <div className="brief-row-2col">
+                {/* Top invoices to focus on — manual/non-Autopilot items */}
+                <section className="brief-card">
+                  <div className="section-head">
+                    <h2 className="section-title">Top invoices to focus on</h2>
+                    {attentionCount > 0 && <span className="section-count">{attentionCount}</span>}
                   </div>
-                )}
-              </section>
+                  {attentionCount === 0 ? (
+                    <p className="brief-empty">No overdue invoices. You&apos;re all caught up.</p>
+                  ) : (
+                    <div className="top-invoices-table-wrap">
+                      <table className="top-invoices-table">
+                        <colgroup>
+                          <col />
+                          <col />
+                          <col />
+                          <col />
+                          <col className="col-reason" />
+                          <col />
+                        </colgroup>
+                        <thead>
+                          <tr>
+                            <th>Invoice</th>
+                            <th>Client</th>
+                            <th>Amount</th>
+                            <th>Days</th>
+                            <th>Reason</th>
+                            <th aria-hidden="true" />
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {derived.needsAttention.map((inv) => {
+                            const od = daysOverdue(inv.due_date)
+                            const reco = reasonFor(inv, autopilotEnabled, autopilotRules)
+                            return (
+                              <tr key={inv.id} onClick={() => setSelected(inv)}>
+                                <td>{inv.invoice_number || '—'}</td>
+                                <td className="top-invoices-table-client">{inv.clients?.name || 'No client'}</td>
+                                <td className="top-invoices-table-amount">{formatMoney(balanceOf(inv))}</td>
+                                <td>{od}</td>
+                                <td>
+                                  <span className={`top-invoices-table-reason tone-${reco.tone}`}>{reco.explanation}</span>
+                                </td>
+                                <td>
+                                  <button
+                                    type="button"
+                                    className="row-action"
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      setComposeInvoice(inv)
+                                    }}
+                                  >
+                                    Draft Reminder
+                                  </button>
+                                </td>
+                              </tr>
+                            )
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </section>
+
+                {/* Due Soon — real scheduled/due invoices occupying the space
+                    the north-star grid gives to forecast/pattern content that
+                    isn't real yet */}
+                <section className="brief-card">
+                  <div className="section-head">
+                    <h2 className="section-title">Due Soon</h2>
+                  </div>
+                  {derived.dueSoon.length === 0 ? (
+                    <p className="brief-empty">Nothing due in the next 14 days.</p>
+                  ) : (
+                    <ul className="invoice-list">
+                      {derived.dueSoon.map((inv) => (
+                        <InvoiceRow
+                          key={inv.id}
+                          invoice={inv}
+                          secondary={`Due ${formatShortDate(inv.due_date)} · ${inv.invoice_number || 'No number'} · reminder scheduled`}
+                          onClick={() => setSelected(inv)}
+                        />
+                      ))}
+                    </ul>
+                  )}
+                </section>
+              </div>
 
               <AutopilotNudge visible={showNudge} onDismiss={dismissNudge} />
-
-              {/* Due Soon — real scheduled/due invoices occupying the space
-                  the north-star grid gives to forecast/pattern content that
-                  isn't real yet */}
-              <section className="brief-card">
-                <div className="section-head">
-                  <h2 className="section-title">Due Soon</h2>
-                </div>
-                {derived.dueSoon.length === 0 ? (
-                  <p className="brief-empty">Nothing due in the next 14 days.</p>
-                ) : (
-                  <ul className="invoice-list">
-                    {derived.dueSoon.map((inv) => (
-                      <InvoiceRow
-                        key={inv.id}
-                        invoice={inv}
-                        secondary={`Due ${formatShortDate(inv.due_date)} · ${inv.invoice_number || 'No number'} · reminder scheduled`}
-                        onClick={() => setSelected(inv)}
-                      />
-                    ))}
-                  </ul>
-                )}
-              </section>
             </>
           )}
         </div>
@@ -652,8 +660,6 @@ export default function Dashboard() {
               title="Needs your approval"
             />
           </div>
-
-          <SinceLastVisit data={sinceLastVisit} />
 
           <WorkingOn
             autopilotEnabled={autopilotEnabled}

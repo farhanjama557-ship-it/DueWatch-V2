@@ -195,7 +195,7 @@ export function CloseIcon(props) {
 
 export function LogoMark(props) {
   return (
-    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" {...props}>
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" {...props}>
       <path
         d="M12 2.5 4 5.5v6c0 5 3.4 8.4 8 10 4.6-1.6 8-5 8-10v-6L12 2.5z"
         fill="#DA7756"
