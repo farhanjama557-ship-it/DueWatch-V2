@@ -8,7 +8,7 @@ import { useAuth } from '../context/AuthContext'
  * "Awaiting Your Signature" — always first in the Morning Brief hierarchy,
  * hidden entirely when there's nothing pending.
  */
-export default function SignatureSection({ items, onResolved, onEdit }) {
+export default function SignatureSection({ items, onResolved, onEdit, title = 'Awaiting Your Signature' }) {
   const { user } = useAuth()
   const [toast, setToast] = useState('')
 
@@ -62,7 +62,7 @@ export default function SignatureSection({ items, onResolved, onEdit }) {
   return (
     <section className="signature-section">
       <div className="section-head">
-        <h2 className="section-title">Awaiting Your Signature</h2>
+        <h2 className="section-title">{title}</h2>
         <span className="section-count">{items.length}</span>
       </div>
       <ul className="signature-list">

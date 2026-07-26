@@ -1,0 +1,124 @@
+.section {
+  max-width: var(--land-max-width);
+  margin: 0 auto;
+  padding: var(--land-section-padding) var(--land-gutter);
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 24px;
+}
+
+.copy {
+  grid-column: 1 / 5;
+}
+
+.label {
+  font-family: var(--land-font-body);
+  font-size: var(--land-size-label);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--land-terracotta);
+  margin: 0 0 16px;
+}
+
+.headline {
+  font-family: var(--land-font-display);
+  font-weight: 400;
+  font-size: var(--land-size-section-headline);
+  line-height: 1.05;
+  margin: 0 0 16px;
+}
+
+.supporting {
+  font-family: var(--land-font-body);
+  font-size: var(--land-size-body);
+  color: var(--land-muted-text);
+  max-width: 36ch;
+  margin: 0;
+}
+
+.trail {
+  grid-column: 5 / 13;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  position: relative;
+  border-left: 1px solid var(--land-warm-border);
+}
+
+.event {
+  position: relative;
+  padding: 0 0 32px 28px;
+}
+
+.dot {
+  position: absolute;
+  left: -13px;
+  top: 0;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--land-charcoal);
+  border: 1px solid var(--land-warm-border);
+  color: var(--land-terracotta);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.eventTop {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.eventType {
+  font-family: var(--land-font-body);
+  font-weight: 700;
+  text-transform: capitalize;
+}
+
+.eventMeta {
+  font-family: var(--land-font-body);
+  font-size: var(--land-size-ui-meta);
+  color: var(--land-dark-muted);
+}
+
+.eventMessage {
+  font-family: var(--land-font-body);
+  font-size: var(--land-size-body);
+  color: var(--land-muted-text);
+  margin: 6px 0;
+}
+
+.eventOutcome {
+  font-family: var(--land-font-body);
+  font-size: var(--land-size-ui-meta);
+  color: var(--land-terracotta);
+}
+
+@media (max-width: 1279px) and (min-width: 768px) {
+  .section {
+    grid-template-columns: repeat(8, 1fr);
+    padding: var(--land-section-padding-tablet) var(--land-gutter-tablet);
+  }
+  .copy {
+    grid-column: 1 / 9;
+  }
+  .trail {
+    grid-column: 1 / 9;
+    margin-top: 32px;
+  }
+}
+
+@media (max-width: 767px) {
+  .section {
+    display: flex;
+    flex-direction: column;
+    padding: var(--land-section-padding-mobile) var(--land-gutter-mobile);
+  }
+  .trail {
+    margin-top: 32px;
+  }
+}

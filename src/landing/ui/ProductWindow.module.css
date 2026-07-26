@@ -1,0 +1,46 @@
+/* Shared "product window" chrome — the warm-paper canvas both the Hero
+   demo and Meet Duewatch's demonstration sit inside. Static in Phase 1;
+   Phase 2 adds the internal state-driven content changes described in the
+   locked Meet Duewatch framing (fixed frame, no camera movement). */
+.window {
+  width: 100%;
+  max-width: var(--land-product-max-hero);
+  aspect-ratio: 16 / 9;
+  background: var(--land-warm-white);
+  color: var(--land-dark-text);
+  border-radius: var(--land-radius);
+  border: 1px solid var(--land-warm-border);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.35);
+  padding: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow: hidden;
+}
+
+.windowWide {
+  max-width: var(--land-product-max-wide);
+}
+
+.label {
+  align-self: flex-start;
+  font-family: var(--land-font-body);
+  font-size: var(--land-size-label);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--land-terracotta);
+}
+
+.body {
+  flex: 1;
+  min-height: 0;
+}
+
+@media (max-width: 767px) {
+  .window {
+    aspect-ratio: auto;
+    min-height: 420px;
+    padding: 20px;
+  }
+}

@@ -203,7 +203,11 @@ export default function InvoiceDetailPanel({
     setBusy(false)
     if (error) return setActionError(error.message)
     setData((d) => ({ ...d, paid: true }))
-    logEvent('invoice_marked_paid', { userId: user.id, invoiceId: data.id })
+    logEvent('invoice_marked_paid', {
+      userId: user.id,
+      invoiceId: data.id,
+      evidence: { amount: balance },
+    })
     celebrate({
       clientName,
       amount: formatMoney(balance),
@@ -237,7 +241,11 @@ export default function InvoiceDetailPanel({
       setActionError(error.message)
       return
     }
-    logEvent('payment_recorded', { userId: user.id, invoiceId: data.id })
+    logEvent('payment_recorded', {
+      userId: user.id,
+      invoiceId: data.id,
+      evidence: { amount: amt },
+    })
     if (willBePaid) {
       logEvent('invoice_marked_paid', { userId: user.id, invoiceId: data.id })
       // Celebratory only on the payment that actually closes the invoice —

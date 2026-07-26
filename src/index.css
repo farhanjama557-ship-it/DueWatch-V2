@@ -1,29 +1,55 @@
 /* ============================================================
-   DueWatch — Design tokens (Session 2 system)
+   DueWatch — Design tokens
+   Warm-neutral palette measured directly from the approved
+   "north-star-corrected" reference (2026-07-25) — replaces the earlier
+   cooler-gray scale so the light canvas actually matches the dark rail's
+   warm undertone instead of looking like two different products.
    ============================================================ */
 :root {
   --primary: #DA7756;
-  --primary-hover: #C46347;
-  --primary-tint: #FAF0EC;
+  --primary-hover: #C2603F;
+  --primary-tint: #FBEEE8;
 
-  --sidebar-bg: #F7F7F5;
-  --sidebar-border: #E5E5E3;
-
-  --bg: #F8F9FA;
+  --bg: #FBFAF7;
   --surface: #FFFFFF;
-  --border: #E7E9EE;
+  --border: #EDE7DC;
+  --border-soft: #F4EFE7;
 
-  --text-primary: #0F1117;
-  --text-secondary: #6B7280;
-  --text-muted: #9AA1AC;
+  --text-primary: #231F1B;
+  --text-secondary: #4A4540;
+  --text-muted: #8A8272;
 
-  --blue: #3B82F6;
-  --amber: #F59E0B;
+  --blue: #3B7DD8;
+  --blue-tint: #E7F0FB;
+  --amber: #E0930C;
+  --amber-tint: #FCF2DE;
   --orange: #F97316;
-  --red: #EF4444;
-  --green: #22C55E;
+  --red: #DC5148;
+  --red-tint: #FBEAE8;
+  --green: #22A565;
+  --green-tint: #E7F4EC;
 
-  --sidebar-w: 240px;
+  /* Fixed px, measured directly from the approved reference's own HTML at
+     1728px viewport width (.app{grid-template-columns:210px 1fr 300px}).
+     Main itself is an unbounded 1fr in the reference — it doesn't
+     demonstrate its own ultrawide behavior — so --shell-max-w (this
+     session's own judgment call, not a measured value) is what keeps the
+     layout from stretching indefinitely; see .app-shell's comment. */
+  --sidebar-w: 210px;
+  --rail-w: 300px;
+  --shell-max-w: 1520px;
+
+  /* Shared dark-charcoal palette — the "Duewatch itself" zones (nav sidebar
+     + right rail). Applied by re-pointing the generic --surface/--border/
+     --text-* tokens at these within each dark zone's own selector, so
+     every reused component (brief-card, signature-*, invoice-row,
+     handled-list, etc.) re-themes automatically without forking its CSS. */
+  --dw-charcoal: #1E1A17;
+  --dw-charcoal-surface: #272220;
+  --dw-charcoal-border: #332E2A;
+  --dw-charcoal-text: #EDE7DC;
+  --dw-charcoal-text-secondary: #A79E92;
+  --dw-charcoal-text-muted: #8F8479;
 }
 
 /* ============================================================
@@ -84,44 +110,137 @@ table {
 /* ============================================================
    App shell
    ============================================================ */
+/* Bounded and centered — measured directly against the approved mockup's
+   own HTML export: sidebar(265) + main-content(1078) + rail(385) = 1728,
+   its native design width. Below that width the shell just fills the
+   viewport as before; above it, extra space becomes centered margin
+   instead of the center column (and its KPI cards) stretching wider and
+   wider on ultrawide monitors — that stretch was the root cause of the
+   "zoomed out" complaint, not font sizes. */
 .app-shell {
   display: flex;
+  align-items: flex-start;
+  max-width: var(--shell-max-w);
+  margin: 0 auto;
   min-height: 100%;
 }
 
-/* --- Sidebar (light, labeled) --- */
+/* --- Sidebar (dark — "Duewatch itself," per the north-star mockup; same
+   shared charcoal palette as .pulse-rail) --- */
 .sidebar {
   width: var(--sidebar-w);
   min-width: var(--sidebar-w);
-  background: var(--sidebar-bg);
-  border-right: 0.5px solid var(--sidebar-border);
+  background: var(--dw-charcoal);
+  border-right: 1px solid var(--dw-charcoal-border);
   display: flex;
   flex-direction: column;
-  padding: 16px 12px;
-  position: fixed;
+  padding: 20px 14px;
+  /* sticky, not fixed — fixed pins to the raw browser viewport edge, which
+     is exactly what let the sidebar/rail stay put while the center column
+     stretched across an ultrawide monitor between them. Sticky respects
+     the centered/bounded .app-shell instead. */
+  position: sticky;
   top: 0;
-  left: 0;
-  bottom: 0;
+  align-self: flex-start;
+  max-height: 100vh;
   z-index: 20;
+  overflow-y: auto;
 }
 
 .sidebar-brand {
   display: flex;
   align-items: center;
   gap: 9px;
-  padding: 4px 8px 20px;
+  padding: 6px 8px 4px;
+  margin-bottom: 4px;
+}
+
+.sidebar-brand-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
 }
 
 .sidebar-brand-name {
-  font-size: 16px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 15px;
   font-weight: 700;
-  color: var(--text-primary);
+  color: var(--dw-charcoal-text);
+  line-height: 1.2;
+}
+
+.sidebar-brand-beta {
+  flex-shrink: 0;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--dw-charcoal-text-secondary);
+  background: var(--dw-charcoal-surface);
+  border: 1px solid var(--dw-charcoal-border);
+  border-radius: 999px;
+  padding: 2px 7px;
+}
+
+.sidebar-brand-subtitle {
+  font-size: 9.5px;
+  color: var(--dw-charcoal-text-secondary);
+  line-height: 1.3;
+  margin-top: 1px;
+  display: block;
+}
+
+/* Small identity status indicator — same real Presence state the sidebar's
+   PresenceIndicator card already shows, just glanceable at the top too.
+   Colors intentionally duplicated from styles/presence.css rather than
+   shared, matching that file's own scoping convention. */
+.sidebar-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: #6B6B6B;
+}
+
+.sidebar-status-dot.status-resting,
+.sidebar-status-dot.status-celebratory {
+  background: #22A565;
+}
+
+.sidebar-status-dot.status-contextual,
+.sidebar-status-dot.status-active {
+  background: #E0930C;
+  animation: sidebar-dot-pulse 1.4s ease-in-out infinite;
+}
+
+.sidebar-status-dot.status-error {
+  background: #DC2626;
+}
+
+.sidebar-status-dot.status-off {
+  background: #9AA1AC;
+}
+
+.sidebar-status-dot.status-cognitive {
+  background: #DA7756;
+}
+
+@keyframes sidebar-dot-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-status-dot { animation: none; }
 }
 
 .sidebar-nav {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
   flex: 1;
 }
 
@@ -131,24 +250,26 @@ table {
   gap: 10px;
   padding: 8px 10px;
   border-radius: 8px;
-  color: var(--text-secondary);
-  font-size: 14px;
+  color: var(--dw-charcoal-text-secondary);
+  font-size: 12.5px;
   font-weight: 500;
   transition: background 0.12s ease, color 0.12s ease;
 }
 
 .nav-item:hover {
-  background: rgba(15, 17, 23, 0.04);
-  color: var(--text-primary);
+  background: rgba(246, 241, 233, 0.06);
+  color: var(--dw-charcoal-text);
 }
 
 .nav-item.active {
-  color: var(--primary);
-  background: var(--primary-tint);
+  color: #fff;
+  background: var(--primary);
 }
 
 .nav-icon {
   flex-shrink: 0;
+  width: 16px;
+  height: 16px;
 }
 
 .nav-label {
@@ -156,98 +277,340 @@ table {
 }
 
 .nav-badge {
-  min-width: 18px;
-  height: 18px;
+  min-width: 16px;
+  height: 16px;
   padding: 0 5px;
-  border-radius: 9px;
+  border-radius: 8px;
   background: var(--amber);
   color: #fff;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
   display: inline-flex;
   align-items: center;
   justify-content: center;
 }
 
-.sidebar-section-label {
+/* --- Sidebar status/evidence cards (Duewatch Status, Evidence) --- */
+.sidebar-card {
+  background: var(--dw-charcoal-surface);
+  border: 1px solid var(--dw-charcoal-border);
+  border-radius: 10px;
+  padding: 11px 12px;
+  margin-top: 10px;
+}
+
+.sidebar-card-title {
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--dw-charcoal-text-secondary);
+  margin-bottom: 8px;
+}
+
+.sidebar-card-status {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--dw-charcoal-text);
+  margin-bottom: 6px;
+}
+
+.sidebar-card-list {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.sidebar-card-list li {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  color: var(--dw-charcoal-text-secondary);
+}
+
+.sidebar-card-list li::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--primary);
+  flex-shrink: 0;
+}
+
+.sidebar-card-line {
+  font-size: 11px;
+  color: var(--dw-charcoal-text-secondary);
+  margin-bottom: 4px;
+}
+
+.sidebar-card-meta {
+  font-size: 10.5px;
+  color: var(--dw-charcoal-text-muted);
+  margin-bottom: 8px;
+  line-height: 1.5;
+}
+
+.sidebar-card-link {
   font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--text-muted);
-  padding: 16px 10px 6px;
+  color: var(--primary);
+}
+
+.sidebar-card-link:hover {
+  color: var(--primary-hover);
 }
 
 .sidebar-profile {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 8px 4px;
+  gap: 9px;
+  padding: 10px 8px 2px;
   margin-top: 8px;
-  border-top: 0.5px solid var(--sidebar-border);
+  border-top: 1px solid var(--dw-charcoal-border);
 }
 
 .profile-avatar {
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   background: var(--primary-tint);
-  color: var(--primary);
+  border: none;
+  color: var(--primary-hover);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
   flex-shrink: 0;
+  overflow: hidden;
+}
+
+.profile-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .profile-meta {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  flex: 1;
 }
 
 .profile-name {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
-  color: var(--text-primary);
+  color: var(--dw-charcoal-text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .profile-tier {
-  font-size: 11px;
-  color: var(--text-muted);
+  font-size: 10px;
+  color: var(--dw-charcoal-text-secondary);
 }
 
 /* --- Main content --- */
 .content {
   flex: 1;
-  margin-left: var(--sidebar-w);
   background: var(--bg);
-  padding: 24px;
+  padding: 22px 26px;
   min-width: 0;
 }
 
 /* ============================================================
-   Morning Brief
+   Pulse (Morning Brief)
    ============================================================ */
-.brief {
-  max-width: 1080px;
+/* No .brief max-width — .app-shell's --shell-max-w already bounds the
+   whole three-column layout, so .content (this page's direct parent) can
+   never exceed roughly 1078px in practice; a second cap here would just
+   be dead weight. */
+
+.brief-topbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
 }
 
+/* Small and unemphasized on purpose — the greeting is a quiet lead-in; the
+   real status headline + narrative below are the actual focal point. */
 .brief-greeting {
-  font-size: 28px;
-  font-weight: 700;
-  color: var(--text-primary);
-  letter-spacing: -0.01em;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-muted);
+  margin-bottom: 3px;
 }
 
-.brief-subline {
-  margin-top: 6px;
-  font-size: 14px;
+.brief-topbar-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+/* Not present in this reference's header — kept because it's real, working
+   search (not decorative), just resized down to the denser scale. See
+   context log for why this is a disclosed deviation, not an oversight. */
+.topbar-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 240px;
+  height: 34px;
+  padding: 0 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+}
+
+.topbar-search-icon {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.topbar-search-input {
+  flex: 1;
+  width: 0;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 12.5px;
+  color: var(--text-primary);
+}
+
+.topbar-search-input::placeholder {
+  color: var(--text-muted);
+}
+
+.topbar-search-kbd {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  border: 0.5px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+.topbar-search-results {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  background: var(--surface);
+  border: 0.5px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(15, 17, 23, 0.12);
+  z-index: 30;
+}
+
+.topbar-search-results li button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  width: 100%;
+  padding: 7px 8px;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  text-align: left;
+}
+
+.topbar-search-results li button:hover {
+  background: var(--bg);
+}
+
+.topbar-search-client {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.topbar-search-meta {
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.topbar-icon-btn {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 9px;
   color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.topbar-icon-btn:hover {
+  color: var(--text-primary);
+  border-color: var(--text-muted);
+}
+
+.topbar-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--primary);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.brief-header-sub {
+  margin-top: 2px;
+  margin-bottom: 18px;
+}
+
+/* Real, deterministic status line (0 decisions vs N decisions) — not an AI
+   "insight," just a plain read of already-computed real counts. This is
+   the header's visual anchor. */
+.brief-headline {
+  font-size: 23px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+  margin-bottom: 5px;
+}
+
+/* The real narrative sentence with inline highlighted real values. */
+.brief-subline {
+  font-size: 13.5px;
+  font-weight: 400;
+  color: var(--text-secondary);
+}
+
+.brief-subline b {
+  color: var(--green);
+  font-weight: 700;
+}
+
+.brief-subline .o {
+  color: var(--primary-hover);
+  font-weight: 600;
 }
 
 .brief-loading,
@@ -271,93 +634,483 @@ table {
   font-size: 14px;
 }
 
-/* --- KPI cards --- */
-.kpi-grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 16px;
-  margin: 20px 0 24px;
+/* ============================================================
+   Pulse shell — white/dark split (Session 8 Morning Brief redesign).
+   White = the business, dark = Duewatch itself.
+   ============================================================ */
+.brief-shell {
+  display: flex;
+  align-items: flex-start;
+  gap: 0;
+  margin-top: 24px;
 }
 
-.kpi-card {
-  background: var(--surface);
-  border: 0.5px solid var(--border);
-  border-radius: 10px;
-  padding: 16px;
+.brief-main {
+  flex: 1;
+  min-width: 0;
 }
 
-.kpi-top {
+.brief-main .kpi-grid {
+  margin-top: 0;
+}
+
+/* Sticky (within the bounded, centered .app-shell), not fixed-to-viewport
+   — see .app-shell's comment. Same fixed width as measured on the
+   approved mockup (385px), not viewport-relative, since the mockup itself
+   doesn't scale this column with screen width. */
+.pulse-rail {
+  /* Dark-scoped token overrides — everything nested inside (brief-card,
+     signature-*, invoice-row, handled-list, etc.) already reads these same
+     custom properties, so this alone re-themes the reused components
+     without forking their CSS. Same shared palette as .sidebar. */
+  --surface: var(--dw-charcoal-surface);
+  --border: var(--dw-charcoal-border);
+  --bg: var(--dw-charcoal);
+  --text-primary: var(--dw-charcoal-text);
+  --text-secondary: var(--dw-charcoal-text-secondary);
+  --text-muted: var(--dw-charcoal-text-muted);
+  --primary-tint: rgba(218, 119, 86, 0.18);
+
+  width: var(--rail-w);
+  flex-shrink: 0;
+  background: var(--dw-charcoal);
+  border-left: 1px solid var(--dw-charcoal-border);
+  padding: 24px 18px;
+  color: var(--text-primary);
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  position: sticky;
+  top: 0;
+  align-self: flex-start;
+  max-height: 100vh;
+  overflow-y: auto;
+  z-index: 15;
+}
+
+@media (max-width: 1180px) {
+  .brief-shell {
+    flex-direction: column;
+    /* In row direction, flex-start keeps the sticky rail from stretching
+       to .brief-main's height. In column direction (this breakpoint) the
+       cross-axis is width, so flex-start instead means "size to content"
+       — exactly what let the invoice table's min-width blow the column
+       out past the viewport. Stretch here so .brief-main's min-width: 0
+       actually takes effect. */
+    align-items: stretch;
+  }
+  .pulse-rail {
+    position: static;
+    width: auto;
+    max-height: none;
+    border-left: none;
+    border-top: 1px solid var(--dw-charcoal-border);
+    margin-top: 24px;
+  }
+}
+
+/* Not present in the reference — a static desktop mockup with no
+   responsive spec of its own (same gap as --shell-max-w). Judgment call:
+   collapse the labeled 210px sidebar into a 60px icon-only rail so nothing
+   overflows the viewport; every nav route/icon/badge stays functional,
+   just unlabeled. The status/evidence cards and presence card don't fit at
+   this width and are dropped, not shrunk into illegibility — the sidebar's
+   status dot (still shown, next to the logo) remains the compact Presence
+   signal. */
+@media (max-width: 640px) {
+  :root {
+    --sidebar-w: 60px;
+  }
+  .sidebar {
+    padding: 16px 6px;
+  }
+  .sidebar-brand {
+    justify-content: center;
+    padding: 4px 0;
+  }
+  .sidebar-brand-text {
+    display: none;
+  }
+  .nav-item {
+    justify-content: center;
+    padding: 10px 0;
+  }
+  .nav-label {
+    display: none;
+  }
+  .presence-card,
+  .sidebar-card {
+    display: none;
+  }
+  .sidebar-profile {
+    justify-content: center;
+    padding: 10px 0 0;
+  }
+  .profile-meta {
+    display: none;
+  }
+
+  /* The 240px fixed search box + bell don't fit next to the greeting at
+     this width — wrap controls to their own full-width row and let the
+     (real, functional) search field flex instead of staying fixed-width. */
+  .brief-topbar {
+    flex-wrap: wrap;
+    row-gap: 12px;
+  }
+  .brief-topbar-controls {
+    width: 100%;
+  }
+  .topbar-search {
+    width: auto;
+    flex: 1;
+  }
+}
+
+/* No border-top here (deliberately) — the rail's Autopilot status lives
+   only in the sidebar's PresenceIndicator (visible on every page, unlike
+   this rail which is Dashboard-only), so there's no longer a fixed leading
+   element to key a "skip the first divider" selector off of. Spacing comes
+   entirely from .pulse-rail's flex gap; a divider would need to know
+   whether Needs Your Approval rendered anything this load, which isn't
+   worth the fragility for a cosmetic line. */
+.rail-section {
+  padding-top: 0;
+}
+
+.rail-section-head {
   display: flex;
   align-items: center;
   gap: 7px;
-  color: var(--text-secondary);
-}
-
-.kpi-icon {
-  width: 15px;
-  height: 15px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
   color: var(--text-muted);
+  margin-bottom: 11px;
 }
 
-.kpi-label {
+.rail-section-line {
   font-size: 12.5px;
-  font-weight: 500;
   color: var(--text-secondary);
+  line-height: 1.5;
 }
 
-.kpi-value {
-  margin-top: 10px;
-  font-size: 26px;
-  font-weight: 700;
-  color: var(--text-primary);
-  line-height: 1.1;
-  letter-spacing: -0.01em;
-}
-
-.kpi-support {
-  margin-top: 4px;
+.rail-empty {
   font-size: 12.5px;
   color: var(--text-muted);
 }
 
-/* --- Section cards --- */
-.brief-card {
-  background: var(--surface);
-  border: 0.5px solid var(--border);
-  border-radius: 10px;
-  padding: 8px 20px;
-  margin-bottom: 16px;
+.rail-work-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
-.section-head {
+.rail-work-list li {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 14px 0 6px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
 }
 
-.section-title {
-  font-size: 15px;
+.rail-work-list li svg {
+  flex-shrink: 0;
+  color: var(--primary);
+}
+
+.rail-upcoming-list,
+.rail-activity-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.rail-upcoming-item {
+  padding: 10px 0;
+  border-top: 0.5px solid var(--border);
+}
+
+.rail-upcoming-item:first-child {
+  border-top: none;
+}
+
+.rail-upcoming-client {
+  display: block;
+  font-size: 12.5px;
   font-weight: 600;
   color: var(--text-primary);
 }
 
-.section-count {
-  min-width: 20px;
-  height: 20px;
-  padding: 0 6px;
-  border-radius: 10px;
-  background: var(--primary-tint);
-  color: var(--primary);
-  font-size: 12px;
-  font-weight: 700;
+.rail-upcoming-detail {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.rail-activity-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+  border-top: 0.5px solid var(--border);
+}
+
+.rail-activity-item:first-child {
+  border-top: none;
+}
+
+.rail-activity-icon {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--bg);
+  border: 0.5px solid var(--border);
   display: inline-flex;
   align-items: center;
   justify-content: center;
 }
 
+.rail-activity-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.rail-activity-action {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.rail-activity-context {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.rail-activity-time {
+  flex-shrink: 0;
+  font-size: 10.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.rail-see-all {
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+/* Journey bar's connector/dot colors are hardcoded warm-light hex (not
+   token-driven) — needs explicit dark overrides to stay legible in the rail. */
+.pulse-rail .journey-connector {
+  background: #4A443C;
+}
+
+.pulse-rail .journey-connector-completed {
+  background: #22A565;
+}
+
+.pulse-rail .journey-dot {
+  border-color: #4A443C;
+}
+
+.pulse-rail .journey-dot-completed {
+  background: #22A565;
+  border-color: #22A565;
+}
+
+/* Avatar initials use a hardcoded light background — needs a dark
+   equivalent so the (also-overridden, lighter) text stays legible. */
+.pulse-rail .avatar-initials {
+  background: #3D3833;
+}
+
+/* --- KPI cards --- */
+/* Four real cards (not the reference's five — no real "collection rate" or
+   "avg days to pay" computation exists, so those columns simply don't
+   exist here rather than being filled with placeholder numbers). */
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 11px;
+  margin: 0 0 16px;
+}
+
+.kpi-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 13px 14px;
+}
+
+.kpi-top {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-muted);
+}
+
+.kpi-icon {
+  width: 13px;
+  height: 13px;
+  color: var(--text-muted);
+}
+
+.kpi-label {
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.kpi-value {
+  margin-top: 7px;
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--text-primary);
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+}
+
+.kpi-support {
+  margin-top: 3px;
+  font-size: 10.5px;
+  color: var(--text-muted);
+}
+
+/* Only shown when a real historical comparison exists (Collected, via
+   timestamped events) — see Dashboard.jsx's collectedTrend comment for why
+   the other three cards don't get one. */
+.kpi-trend {
+  margin-top: 3px;
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.kpi-trend-up {
+  color: var(--green);
+}
+
+.kpi-trend-down {
+  color: var(--red);
+}
+
+/* "Since your last visit" banner — same real Checked/Drafted facts this
+   app has shown since Session 8, restyled into the reference's compact
+   single-row banner instead of two rail tiles. Only rendered when there's
+   a real prior visit to diff against (see Dashboard.jsx). */
+.brief-banner {
+  background: linear-gradient(90deg, var(--primary-tint), var(--surface));
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 13px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.brief-banner-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--primary);
+  flex-shrink: 0;
+}
+
+.brief-banner-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.brief-banner-detail {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+.brief-banner-cta {
+  margin-left: auto;
+  flex-shrink: 0;
+  color: var(--primary-hover);
+  font-weight: 600;
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+/* --- Section cards --- */
+.brief-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 15px 16px;
+  margin-bottom: 14px;
+}
+
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0;
+  margin-bottom: 12px;
+}
+
+.section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.section-count {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: var(--primary-tint);
+  color: var(--primary-hover);
+  font-size: 9.5px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 6px;
+}
+
 .brief-card > .brief-empty {
-  padding: 6px 0 16px;
+  padding: 4px 0 8px;
+}
+
+/* Two-column row (Top Invoices + Due Soon), matching the reference's
+   grid2 proportions. */
+.brief-row-2col {
+  display: grid;
+  grid-template-columns: 1.15fr 0.85fr;
+  gap: 14px;
+  margin-bottom: 14px;
+  align-items: start;
+}
+
+.brief-row-2col > .brief-card {
+  margin-bottom: 0;
+  /* Without this, a grid item's default min-width:auto sizes it to its
+     content's min-content width — the table wrapper's overflow-x:auto
+     already resets that for card 1, but card 2 (Due Soon's invoice list)
+     has no such wrapper, so its min-content forced the whole row to blow
+     out past .brief-row-2col's own width instead of honoring the 1.15fr/
+     0.85fr split. */
+  min-width: 0;
 }
 
 /* --- Invoice rows --- */
@@ -370,8 +1123,8 @@ table {
 .invoice-row {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px 0;
+  gap: 11px;
+  padding: 11px 0;
   border-top: 0.5px solid var(--border);
   cursor: pointer;
   transition: background 0.1s ease;
@@ -404,18 +1157,18 @@ table {
 }
 
 .invoice-client {
-  font-size: 14px;
+  font-size: 12.5px;
   font-weight: 600;
   color: var(--text-primary);
 }
 
 .invoice-secondary {
-  font-size: 12.5px;
+  font-size: 11.5px;
   color: var(--text-muted);
 }
 
 .invoice-amount {
-  font-size: 14px;
+  font-size: 12.5px;
   font-weight: 700;
   color: var(--text-primary);
   font-variant-numeric: tabular-nums;
@@ -424,14 +1177,14 @@ table {
 
 .row-action {
   flex-shrink: 0;
-  height: 32px;
+  height: 30px;
   padding: 0 12px;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--primary);
   background: var(--surface);
   border: 0.5px solid var(--primary);
-  border-radius: 8px;
+  border-radius: 7px;
   white-space: nowrap;
   transition: background 0.12s ease, color 0.12s ease;
 }
@@ -441,111 +1194,6 @@ table {
   color: #fff;
 }
 
-.reco-toggle {
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  height: 32px;
-  padding: 0 8px;
-  border: none;
-  background: transparent;
-  color: var(--primary);
-  border-radius: 8px;
-  transition: background 0.12s ease;
-}
-
-.reco-toggle:hover {
-  background: var(--primary-tint);
-}
-
-/* ============================================================
-   Watching indicator card
-   ============================================================ */
-.watching-card {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  background: var(--surface);
-  border: 0.5px solid var(--border);
-  border-radius: 10px;
-  padding: 14px 16px;
-  margin-top: 18px;
-}
-
-.watching-dot {
-  position: relative;
-  width: 9px;
-  height: 9px;
-  flex-shrink: 0;
-  border-radius: 50%;
-  background: var(--green);
-}
-
-.watching-dot::after {
-  content: '';
-  position: absolute;
-  inset: -5px;
-  border-radius: 50%;
-  border: 2px solid var(--green);
-  opacity: 0.5;
-  animation: watching-pulse 2s ease-out infinite;
-}
-
-@keyframes watching-pulse {
-  0% { transform: scale(0.6); opacity: 0.6; }
-  100% { transform: scale(1.5); opacity: 0; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .watching-dot::after { animation: none; }
-}
-
-.watching-body {
-  min-width: 0;
-}
-
-.watching-title {
-  font-size: 14px;
-  font-weight: 700;
-  color: var(--text-primary);
-}
-
-.watching-sub {
-  font-size: 12.5px;
-  color: var(--text-secondary);
-}
-
-.watching-badge {
-  margin-left: auto;
-  flex-shrink: 0;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--primary);
-  background: var(--primary-tint);
-  padding: 3px 10px;
-  border-radius: 999px;
-}
-
-.watching-manage-link {
-  flex-shrink: 0;
-  font-size: 12.5px;
-  font-weight: 600;
-  color: var(--text-secondary);
-}
-
-.watching-manage-link:hover {
-  color: var(--primary);
-}
-
-/* ============================================================
-   Needs Attention — inline recommendation
-   ============================================================ */
-.invoice-row-col {
-  flex-direction: column;
-  align-items: stretch;
-  gap: 10px;
-}
 
 .invoice-row-line {
   display: flex;
@@ -553,108 +1201,86 @@ table {
   gap: 12px;
 }
 
-.invoice-reco {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-left: 48px;
-  padding: 8px 12px;
-  background: var(--primary-tint);
-  border-radius: 8px;
+/* ============================================================
+   Top invoices to focus on — table (north-star mockup)
+   ============================================================ */
+/* Named top-invoices-table (not .invoice-table) — the Invoices list page
+   (below) already owns that class name for its own, differently-styled
+   table; reusing it here was silently cross-contaminating both. */
+.top-invoices-table-wrap {
+  overflow-x: auto;
 }
 
-.reco-icon {
-  color: var(--primary);
-  flex-shrink: 0;
+.top-invoices-table {
+  width: 100%;
+  min-width: 500px;
+  border-collapse: collapse;
 }
 
-.reco-text {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-width: 0;
+/* Reason is the one column that should wrap rather than force horizontal
+   scroll for its own sake — bounded so it wraps at a predictable ~2 lines
+   instead of stretching the table arbitrarily wide. */
+.top-invoices-table col.col-reason {
+  width: 170px;
 }
 
-.reco-action {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.reco-explanation {
-  font-size: 12.5px;
-  color: var(--text-secondary);
-}
-
-.reco-badge {
-  flex-shrink: 0;
-  font-size: 11px;
-  font-weight: 600;
-  padding: 2px 9px;
-  border-radius: 999px;
+.top-invoices-table thead th {
+  text-align: left;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding: 0 8px 8px;
   white-space: nowrap;
 }
 
-.reco-badge.tone-red { color: #C22B2B; background: #FDECEC; }
-.reco-badge.tone-orange { color: #C2540A; background: #FEF0E6; }
-.reco-badge.tone-amber { color: #B45309; background: #FEF5E7; }
-.reco-badge.tone-blue { color: #3B82F6; background: #EBF2FE; }
-
-/* ============================================================
-   Handled for you
-   ============================================================ */
-.handled-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
+.top-invoices-table thead th:first-child,
+.top-invoices-table tbody td:first-child {
+  padding-left: 0;
 }
 
-.handled-item {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 11px 0;
+.top-invoices-table tbody td {
+  padding: 10px 8px;
+  font-size: 11.5px;
+  color: var(--text-secondary);
   border-top: 0.5px solid var(--border);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.handled-item:first-child {
-  border-top: none;
+.top-invoices-table tbody tr {
+  cursor: pointer;
+  transition: background 0.1s ease;
 }
 
-.handled-check {
-  flex-shrink: 0;
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  background: var(--bg);
-  border: 0.5px solid var(--border);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+.top-invoices-table tbody tr:hover {
+  background: rgba(15, 17, 23, 0.015);
 }
 
-.handled-text {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-width: 0;
-}
-
-.handled-action {
-  font-size: 14px;
+.top-invoices-table-client {
   font-weight: 600;
   color: var(--text-primary);
 }
 
-.handled-context {
-  font-size: 12.5px;
-  color: var(--text-muted);
+.top-invoices-table-amount {
+  font-weight: 700;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
 }
 
-.handled-time {
-  flex-shrink: 0;
-  font-size: 12px;
-  color: var(--text-muted);
+.top-invoices-table-reason {
+  white-space: normal;
+  font-weight: 600;
+}
+
+.top-invoices-table-reason.tone-red { color: #C22B2B; }
+.top-invoices-table-reason.tone-orange { color: #C2540A; }
+.top-invoices-table-reason.tone-amber { color: #B45309; }
+.top-invoices-table-reason.tone-blue { color: #3B82F6; }
+
+.top-invoices-table tbody td:last-child {
   white-space: nowrap;
 }
 
@@ -1485,38 +2111,6 @@ table {
    + src/styles/presence.css) — see Merged Engineering Spec v1.1.
    ============================================================ */
 
-/* ============================================================
-   Recent Activity (collapsible) — Morning Brief
-   ============================================================ */
-.recent-activity-toggle {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  width: 100%;
-  padding: 14px 0;
-  border: none;
-  background: transparent;
-  text-align: left;
-  cursor: pointer;
-}
-
-.activity-summary {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.chevron {
-  color: var(--text-muted);
-  flex-shrink: 0;
-  transition: transform 0.18s ease;
-}
-
-.chevron-open {
-  transform: rotate(180deg);
-}
-
 .see-all-link {
   display: inline-flex;
   align-items: center;
@@ -2000,7 +2594,7 @@ table {
    Signature Card + Signature Section (Session 7 — Awaiting Your Signature)
    ============================================================ */
 .signature-section {
-  margin-bottom: 16px;
+  margin-bottom: 0;
 }
 
 .signature-list {
@@ -2016,8 +2610,8 @@ table {
   background: var(--surface);
   border: 1px solid var(--border);
   border-left: 3px solid var(--primary);
-  border-radius: 10px;
-  padding: 18px 20px;
+  border-radius: 11px;
+  padding: 14px 15px;
   box-shadow: 0 1px 2px rgba(15, 17, 23, 0.04);
   transition: border-color 200ms ease, box-shadow 200ms ease, transform 200ms ease;
 }
@@ -2043,7 +2637,7 @@ table {
 .signature-header {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
 }
 
 .signature-header-text {
@@ -2053,68 +2647,68 @@ table {
 }
 
 .signature-client {
-  font-size: 15px;
+  font-size: 13.5px;
   font-weight: 700;
   color: var(--text-primary);
 }
 
 .signature-meta {
-  font-size: 12.5px;
+  font-size: 11.5px;
   color: var(--text-muted);
 }
 
 .signature-reco {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-top: 14px;
+  gap: 8px;
+  margin-top: 12px;
 }
 
 .signature-reco-label {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 12.5px;
+  font-size: 11.5px;
   font-weight: 600;
   color: var(--primary);
 }
 
 .tone-pill {
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 600;
-  padding: 3px 9px;
+  padding: 2px 8px;
   border-radius: 999px;
 }
 
 .signature-reason {
   margin-top: 4px;
-  font-size: 13px;
+  font-size: 11.5px;
   color: var(--text-secondary);
 }
 
 .signature-preview {
-  margin-top: 12px;
+  margin-top: 11px;
   background: var(--bg);
   border: 0.5px solid var(--border);
   border-radius: 8px;
-  padding: 12px 14px;
+  padding: 11px 12px;
 }
 
 .signature-preview pre {
   margin: 0;
   font-family: inherit;
-  font-size: 13px;
+  font-size: 11.5px;
   color: var(--text-primary);
   white-space: pre-wrap;
   word-break: break-word;
 }
 
 .signature-preview-toggle {
-  margin-top: 8px;
+  margin-top: 7px;
   border: none;
   background: transparent;
   color: var(--primary);
-  font-size: 12.5px;
+  font-size: 11px;
   font-weight: 600;
 }
 
@@ -2127,36 +2721,36 @@ table {
 }
 
 .signature-skip-form {
-  margin-top: 14px;
+  margin-top: 11px;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
 .signature-skip-form select {
   flex: 1;
-  min-width: 180px;
-  height: 36px;
-  padding: 0 10px;
-  font-size: 13px;
+  min-width: 140px;
+  height: 32px;
+  padding: 0 9px;
+  font-size: 11.5px;
   color: var(--text-primary);
   background: var(--surface);
   border: 0.5px solid var(--border);
-  border-radius: 8px;
+  border-radius: 7px;
 }
 
 .signature-skip-actions {
   display: flex;
-  gap: 8px;
+  gap: 7px;
 }
 
 .signature-sent-state {
-  margin-top: 14px;
+  margin-top: 11px;
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 14px;
+  gap: 7px;
+  font-size: 12.5px;
   font-weight: 600;
   color: #15803D;
 }
@@ -2164,17 +2758,31 @@ table {
 .signature-actions {
   margin-top: 14px;
   display: flex;
-  gap: 10px;
+  gap: 8px;
 }
 
 .signature-actions .btn-terracotta,
 .signature-actions .btn-outline {
   flex: 1;
   width: auto;
+  height: 32px;
+  font-size: 12px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 6px;
+}
+
+.signature-actions .btn-ghost {
+  height: 32px;
+  font-size: 12px;
+  padding: 0 10px;
+}
+
+.signature-skip-actions .btn-outline {
+  height: 30px;
+  font-size: 11.5px;
+  padding: 0 10px;
 }
 
 .btn-ghost {
@@ -2209,7 +2817,10 @@ table {
   position: fixed;
   bottom: 24px;
   right: 24px;
-  background: var(--text-primary);
+  /* Fixed color, not var(--text-primary) — this can render nested inside
+     the dark rail's token overrides, and a toast must stay legible either
+     way, independent of ancestor theming. */
+  background: #171310;
   color: #fff;
   font-size: 13px;
   font-weight: 600;
@@ -2433,6 +3044,18 @@ table {
 /* ============================================================
    Responsive
    ============================================================ */
+/* Below this, .brief-main isn't wide enough for both the Top Invoices
+   table (needs ~500px to avoid its own horizontal scroll) and a usable
+   Due Soon column side by side — stack them full-width instead. Wider
+   than the .pulse-rail's own 1180px stacking breakpoint on purpose: the
+   rail moving below main first is what frees up enough width for this
+   row to still make sense at some in-between sizes. */
+@media (max-width: 1040px) {
+  .brief-row-2col {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 860px) {
   .kpi-grid {
     grid-template-columns: repeat(2, 1fr);

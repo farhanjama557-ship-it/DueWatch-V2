@@ -11,7 +11,7 @@ const base = {
 }
 
 /* ---------- Nav icons ---------- */
-export function MorningBriefIcon(props) {
+export function PulseIcon(props) {
   return (
     <svg {...base} {...props}>
       <path d="M17 18a5 5 0 0 0-10 0" />
@@ -83,6 +83,15 @@ export function OutstandingIcon(props) {
   )
 }
 
+export function CollectedIcon(props) {
+  return (
+    <svg {...base} {...props}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="m8.5 12.5 2.5 2.5 4.5-5" />
+    </svg>
+  )
+}
+
 export function ExpectedIcon(props) {
   return (
     <svg {...base} {...props}>
@@ -119,6 +128,15 @@ export function SearchIcon(props) {
     <svg {...base} {...props}>
       <circle cx="11" cy="11" r="8" />
       <line x1="21" y1="21" x2="16.65" y2="16.65" />
+    </svg>
+  )
+}
+
+export function BellIcon(props) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
+      <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
     </svg>
   )
 }
@@ -177,10 +195,13 @@ export function CloseIcon(props) {
 
 export function LogoMark(props) {
   return (
-    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" {...props}>
-      <circle cx="12" cy="12" r="9" fill="#DA7756" />
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" {...props}>
       <path
-        d="M12 7v5l3.5 2"
+        d="M12 2.5 4 5.5v6c0 5 3.4 8.4 8 10 4.6-1.6 8-5 8-10v-6L12 2.5z"
+        fill="#DA7756"
+      />
+      <path
+        d="m8.5 12 2.5 2.5 4.5-5"
         stroke="#FFFFFF"
         strokeWidth="2"
         strokeLinecap="round"

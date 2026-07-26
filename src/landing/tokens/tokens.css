@@ -1,0 +1,59 @@
+/* Duewatch landing page — design tokens (Unified Spec §6/§7, Visual Spec v2).
+   Scoped to .landingRoot rather than :root — this page shares a runtime
+   with the authenticated product app, whose own :root tokens (index.css)
+   use different values for the same names (e.g. --primary vs this page's
+   --land-terracotta). Scoping prevents either system leaking into the
+   other. */
+.landingRoot {
+  /* ---- Color (Unified Spec §7) ---- */
+  --land-warm-white: #F7F7F5;
+  --land-near-black: #0B0B0A;
+  --land-charcoal: #141311;
+  --land-raised-charcoal: #1B1916;
+  --land-warm-border: #2B2824;
+  --land-muted-text: #A6A19A;
+  --land-dark-text: #171512;
+  --land-dark-muted: #66615B;
+  --land-terracotta: #DA7756;
+  --land-amber: #E0930C;
+  --land-red: #DC2626;
+  --land-green: #22A565;
+  --land-off-gray: #6B6B6B;
+
+  /* ---- Type (Unified Spec §6) ---- */
+  --land-font-display: 'Newsreader', 'Iowan Old Style', 'Palatino Linotype', Georgia, serif;
+  --land-font-body: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+
+  --land-size-hero: clamp(3rem, 8vw, 8.5rem);
+  --land-size-section-statement: clamp(2.5rem, 6vw, 6.5rem);
+  --land-size-section-headline: clamp(2rem, 4vw, 4.5rem);
+  --land-size-product-title: 1.25rem;
+  --land-size-body-lg: 1.25rem;
+  --land-size-body: 1rem;
+  --land-size-label: 0.75rem;
+  --land-size-ui-meta: 0.8125rem;
+
+  /* ---- Layout (Unified Spec §8) ---- */
+  --land-max-width: 1280px;
+  --land-gutter: 80px;
+  --land-gutter-tablet: 48px;
+  --land-gutter-mobile: 20px;
+  --land-section-padding: 144px;
+  --land-section-padding-tablet: 112px;
+  --land-section-padding-mobile: 88px;
+  --land-product-max-hero: 760px;
+  --land-product-max-wide: 880px;
+  --land-radius: 14px;
+
+  /* ---- Motion timing constants (defined now, consumed from Phase 2 on —
+     no animation is wired to these yet). ---- */
+  --land-ease-reveal: cubic-bezier(0.22, 1, 0.36, 1);
+  --land-ease-transition: cubic-bezier(0.4, 0, 0.2, 1);
+  --land-ease-attention: cubic-bezier(0.33, 1, 0.68, 1);
+  --land-ease-exit: cubic-bezier(0.4, 0, 1, 1);
+
+  color-scheme: dark;
+  background: var(--land-near-black);
+  color: var(--land-warm-white);
+  font-family: var(--land-font-body);
+}

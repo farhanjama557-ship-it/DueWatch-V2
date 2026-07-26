@@ -1,7 +1,8 @@
-import { createContext, useContext, useEffect, useState, useCallback } from 'react'
+import { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from './AuthContext'
 import { daysOverdue, daysUntil } from '../lib/format'
+import { fetchAutopilotRules } from '../lib/autopilot'
 
 const DataContext = createContext(null)
 
@@ -88,6 +89,23 @@ export function DataProvider({ children }) {
   const [autopilotApprovalRequired, setAutopilotApprovalRequired] = useState(true)
   const [awaitingSignature, setAwaitingSignature] = useState([])
   const [lastAutopilotRun, setLastAutopilotRun] = useState(null)
+  const [autopilotRules, setAutopilotRules] = useState([])
+  // Real activity since the founder's last visit (this app session) — null
+  // until computed, and stays null forever on someone's very first-ever
+  // visit (no prior last_seen_at to diff against). Computed once per mount,
+  // not on every silent background refresh, so it doesn't reset itself
+  // mid-session (see the visitStamped guard in `load` below).
+  const [sinceLastVisit, setSinceLastVisit] = useState(null)
+  const visitStamped = useRef(false)
+  // Sum of evidence.amount across payment events this calendar month — real
+  // dollars actually recorded, traced to the events that logged them. Only
+  // counts payments recorded since evidence.amount started being captured;
+  // older events have no amount and are silently excluded, not estimated.
+  const [collectedThisMonth, setCollectedThisMonth] = useState(0)
+  const [collectedLastMonth, setCollectedLastMonth] = useState(0)
+  // Real all-time count of every logged event — not the 20-row recent
+  // window above — for the sidebar Evidence card's "N actions recorded".
+  const [totalEventsCount, setTotalEventsCount] = useState(0)
 
   // Presence System (Merged Spec v1.1) signals that aren't fetched from the
   // DB — they're set directly by the real action that's happening in this
@@ -104,6 +122,23 @@ export function DataProvider({ children }) {
     if (!user) return
     if (!opts.silent) setLoading(true)
     setError(null)
+
+    // "Since your last visit" is anchored to when this app session started,
+    // not to every refresh — a mutation-triggered refresh() mid-session
+    // must not quietly zero the counts back out. Computed once per mount:
+    // read the last_seen_at written at the *previous* session's load before
+    // anything in this session can overwrite it.
+    const isFirstLoadThisSession = !visitStamped.current
+    visitStamped.current = true
+    let previousLastSeenAt = null
+    if (isFirstLoadThisSession) {
+      const { data: seenRow } = await supabase
+        .from('profiles')
+        .select('last_seen_at')
+        .eq('id', user.id)
+        .maybeSingle()
+      previousLastSeenAt = seenRow?.last_seen_at ?? null
+    }
 
     const profilePromise = supabase
       .from('profiles')
@@ -122,10 +157,11 @@ export function DataProvider({ children }) {
       .eq('user_id', user.id)
 
     // Recent activity for "Handled for you". Tolerates the events table not
-    // existing yet (query errors → treated as empty).
+    // existing yet (query errors → treated as empty). `evidence` carries
+    // real per-event data (e.g. payment amounts) captured at write time.
     const eventsPromise = supabase
       .from('events')
-      .select('id, event_type, invoice_id, created_at, invoices(inv_num, clients(name))')
+      .select('id, event_type, invoice_id, created_at, evidence, invoices(inv_num, clients(name))')
       .eq('user_id', user.id)
       .order('created_at', { ascending: false })
       .limit(20)
@@ -183,6 +219,76 @@ export function DataProvider({ children }) {
         return null
       })
 
+    // Real rules, for the Top Invoices "why" text and the "Duewatch will do
+    // next" panel — the same engine the scheduler itself uses (ruleSchedule.js
+    // mirrors _shared/rules.js), not a generic heuristic.
+    const rulesPromise = fetchAutopilotRules(user.id).catch(() => [])
+
+    // Real counts since the previous session, for "Since your last visit".
+    // Only fired on the first load of this session, and only when there's a
+    // prior last_seen_at to diff against (nothing to compare on a brand new
+    // account's very first visit — that case renders no panel at all).
+    const checkedSincePromise =
+      isFirstLoadThisSession && previousLastSeenAt
+        ? supabase
+            .from('autopilot_runs')
+            .select('invoices_checked')
+            .eq('user_id', user.id)
+            .gte('started_at', previousLastSeenAt)
+            .then((r) => (r.data || []).reduce((sum, row) => sum + (row.invoices_checked || 0), 0))
+            .catch(() => null)
+        : Promise.resolve(null)
+
+    // Real "Collected this month" — summed from evidence.amount on payment
+    // events logged this calendar month. Queried directly (not derived from
+    // the 20-row recent-events window above) so a busy month can't silently
+    // undercount.
+    const now = new Date()
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
+    const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString()
+    const collectedPromise = supabase
+      .from('events')
+      .select('evidence')
+      .eq('user_id', user.id)
+      .in('event_type', ['payment_recorded', 'invoice_marked_paid'])
+      .gte('created_at', startOfMonth)
+      .then((r) => (r.data || []).reduce((sum, row) => sum + (Number(row.evidence?.amount) || 0), 0))
+      .catch(() => 0)
+
+    // Real month-over-month comparison for the Collected KPI card — same
+    // query, prior calendar month's window. (Outstanding/Need Attention
+    // have no equivalent: they're derived from current invoice state, not
+    // logged events, so there's no historical snapshot to diff against
+    // without new schema — omitted rather than faked.)
+    const collectedLastMonthPromise = supabase
+      .from('events')
+      .select('evidence')
+      .eq('user_id', user.id)
+      .in('event_type', ['payment_recorded', 'invoice_marked_paid'])
+      .gte('created_at', startOfLastMonth)
+      .lt('created_at', startOfMonth)
+      .then((r) => (r.data || []).reduce((sum, row) => sum + (Number(row.evidence?.amount) || 0), 0))
+      .catch(() => 0)
+
+    // Real all-time event count for the sidebar Evidence card.
+    const totalEventsPromise = supabase
+      .from('events')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', user.id)
+      .then((r) => r.count ?? 0)
+      .catch(() => 0)
+
+    const draftedSincePromise =
+      isFirstLoadThisSession && previousLastSeenAt
+        ? supabase
+            .from('awaiting_signature')
+            .select('id', { count: 'exact', head: true })
+            .eq('user_id', user.id)
+            .gte('created_at', previousLastSeenAt)
+            .then((r) => r.count ?? null)
+            .catch(() => null)
+        : Promise.resolve(null)
+
     const [
       { data: profile },
       { data: inv, error: invErr },
@@ -191,6 +297,12 @@ export function DataProvider({ children }) {
       autopilot,
       awaiting,
       lastRun,
+      rules,
+      checkedSince,
+      draftedSince,
+      collected,
+      collectedLast,
+      totalEvents,
     ] = await Promise.all([
       profilePromise,
       invoicesPromise,
@@ -199,6 +311,12 @@ export function DataProvider({ children }) {
       autopilotPromise,
       awaitingPromise,
       lastRunPromise,
+      rulesPromise,
+      checkedSincePromise,
+      draftedSincePromise,
+      collectedPromise,
+      collectedLastMonthPromise,
+      totalEventsPromise,
     ])
 
     if (invErr) {
@@ -220,10 +338,30 @@ export function DataProvider({ children }) {
       }))
     )
     setLastAutopilotRun(lastRun || null)
+    setAutopilotRules(rules || [])
+    setCollectedThisMonth(collected || 0)
+    setCollectedLastMonth(collectedLast || 0)
+    setTotalEventsCount(totalEvents || 0)
+
+    if (isFirstLoadThisSession) {
+      setSinceLastVisit(
+        previousLastSeenAt ? { checked: checkedSince ?? 0, drafted: draftedSince ?? 0 } : null
+      )
+      // Fire-and-forget: stamp this visit so next session's diff starts from
+      // here. Never blocks rendering on it.
+      supabase
+        .from('profiles')
+        .update({ last_seen_at: new Date().toISOString() })
+        .eq('id', user.id)
+        .then(({ error }) => {
+          if (error) console.warn('profiles.last_seen_at update failed:', error.message)
+        })
+    }
     setLoading(false)
   }, [user])
 
   useEffect(() => {
+    visitStamped.current = false
     load()
   }, [load])
 
@@ -285,6 +423,11 @@ export function DataProvider({ children }) {
     resolveSignatureLocal,
     lastAutopilotRun,
     hasCompletedAutopilotRun: lastAutopilotRun?.status === 'completed',
+    autopilotRules,
+    sinceLastVisit,
+    collectedThisMonth,
+    collectedLastMonth,
+    totalEventsCount,
     criticalOverdueCount,
     autopilotErrorCount,
     cognitiveActivity,

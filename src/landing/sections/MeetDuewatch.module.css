@@ -1,0 +1,237 @@
+.section {
+  max-width: var(--land-max-width);
+  margin: 0 auto;
+  padding: var(--land-section-padding) var(--land-gutter);
+  background: var(--land-charcoal);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 12px;
+}
+
+.label {
+  font-family: var(--land-font-body);
+  font-size: var(--land-size-label);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--land-terracotta);
+  margin: 0;
+}
+
+.title {
+  font-family: var(--land-font-display);
+  font-weight: 400;
+  font-size: var(--land-size-section-statement);
+  margin: 0;
+}
+
+.supportingLine {
+  font-family: var(--land-font-body);
+  font-size: var(--land-size-body-lg);
+  color: var(--land-muted-text);
+  margin: 0;
+}
+
+.principle,
+.aiMention {
+  font-family: var(--land-font-body);
+  font-size: var(--land-size-body);
+  color: var(--land-dark-muted);
+  max-width: 52ch;
+  margin: 4px 0 0;
+}
+
+.stage {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 32px;
+  margin-top: 40px;
+}
+
+.morningBrief {
+  max-width: 480px;
+  text-align: left;
+  font-family: var(--land-font-body);
+  font-size: var(--land-size-ui-meta);
+  color: var(--land-muted-text);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mbGreeting {
+  font-weight: 600;
+  color: var(--land-warm-white);
+}
+
+.mbClosing {
+  color: var(--land-terracotta);
+  margin-top: 4px;
+}
+
+/* ---- Demo content ---- */
+.demo {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  height: 100%;
+}
+
+.demoTop {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.botMark {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: #FBEEE8;
+  color: var(--land-terracotta);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.demoClient {
+  font-family: var(--land-font-body);
+  font-weight: 700;
+  margin: 0;
+}
+
+.demoInvoice {
+  font-family: var(--land-font-body);
+  font-size: var(--land-size-ui-meta);
+  color: var(--land-dark-muted);
+  margin: 0;
+}
+
+.draft {
+  font-family: var(--land-font-body);
+  font-size: 0.875rem;
+  white-space: pre-wrap;
+  background: rgba(0, 0, 0, 0.03);
+  border: 1px solid var(--land-warm-border);
+  border-radius: 8px;
+  padding: 14px;
+  margin: 0;
+  flex: 1;
+  text-align: left;
+}
+
+.demoActions {
+  display: flex;
+  gap: 10px;
+}
+
+.approveBtn,
+.secondaryBtn,
+.ghostBtn {
+  font-family: var(--land-font-body);
+  font-size: var(--land-size-ui-meta);
+  font-weight: 600;
+  border-radius: 8px;
+  min-height: 44px;
+  padding: 0 18px;
+}
+
+.approveBtn {
+  background: var(--land-terracotta);
+  color: var(--land-near-black);
+  border: none;
+}
+
+.secondaryBtn {
+  background: transparent;
+  color: var(--land-dark-text);
+  border: 1px solid var(--land-warm-border);
+}
+
+.ghostBtn {
+  background: transparent;
+  color: var(--land-dark-muted);
+  border: none;
+}
+
+.journeyBar {
+  list-style: none;
+  display: flex;
+  gap: 8px;
+  margin: 4px 0 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--land-warm-border);
+  font-family: var(--land-font-body);
+  font-size: 0.75rem;
+}
+
+.journeyBar li {
+  flex: 1;
+  text-align: center;
+  padding: 4px 0;
+  border-radius: 999px;
+}
+
+.journeyDone {
+  color: var(--land-green);
+  font-weight: 600;
+}
+
+.journeyPending {
+  color: var(--land-dark-muted);
+}
+
+.labels {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  margin: 24px 0 0;
+  padding: 0;
+}
+
+.labels li {
+  font-family: var(--land-font-body);
+  font-size: var(--land-size-ui-meta);
+  color: var(--land-muted-text);
+  border: 1px solid var(--land-warm-border);
+  border-radius: 999px;
+  padding: 6px 14px;
+}
+
+.controls {
+  display: flex;
+  gap: 16px;
+  margin-top: 24px;
+}
+
+.controlBtn {
+  font-family: var(--land-font-body);
+  font-size: var(--land-size-ui-meta);
+  font-weight: 600;
+  color: var(--land-warm-white);
+  border: 1px solid var(--land-warm-border);
+  border-radius: 8px;
+  padding: 12px 20px;
+  min-height: 44px;
+  background: transparent;
+}
+
+@media (max-width: 767px) {
+  .section {
+    padding: var(--land-section-padding-mobile) var(--land-gutter-mobile);
+  }
+  .journeyBar {
+    flex-wrap: wrap;
+  }
+  .controls {
+    flex-direction: column;
+    width: 100%;
+  }
+}

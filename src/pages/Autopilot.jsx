@@ -129,7 +129,7 @@ export default function Autopilot() {
 
         <div className="autopilot-footer-actions">
           <Link to="/" className="btn-terracotta btn-inline">
-            Back to Morning Brief
+            Back to Pulse
           </Link>
           <button className="btn-outline btn-inline" onClick={handleDisable} disabled={saving}>
             {saving ? 'Turning off…' : 'Turn off Autopilot'}
@@ -152,7 +152,7 @@ export default function Autopilot() {
             Duewatch is now watching {watchingCount} {watchingCount === 1 ? 'invoice' : 'invoices'}.
           </p>
           <Link to="/" className="btn-terracotta btn-inline">
-            Back to Morning Brief
+            Back to Pulse
           </Link>
         </div>
       </div>

@@ -1,0 +1,46 @@
+.footer {
+  border-top: 1px solid var(--land-warm-border);
+}
+
+.inner {
+  max-width: var(--land-max-width);
+  margin: 0 auto;
+  padding: 48px var(--land-gutter);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.brandName {
+  font-family: var(--land-font-display);
+  font-size: 1.125rem;
+  margin: 0;
+}
+
+.brandTagline {
+  font-family: var(--land-font-body);
+  font-size: var(--land-size-ui-meta);
+  color: var(--land-dark-muted);
+  margin: 2px 0 0;
+}
+
+.links {
+  display: flex;
+  gap: 24px;
+}
+
+.links a {
+  font-family: var(--land-font-body);
+  font-size: var(--land-size-ui-meta);
+  color: var(--land-muted-text);
+}
+
+@media (max-width: 767px) {
+  .inner {
+    padding: 40px var(--land-gutter-mobile);
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

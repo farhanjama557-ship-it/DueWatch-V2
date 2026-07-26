@@ -1,0 +1,111 @@
+.header {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  height: 72px;
+  background: var(--land-near-black);
+  border-bottom: 1px solid var(--land-warm-border);
+}
+
+.inner {
+  max-width: var(--land-max-width);
+  height: 100%;
+  margin: 0 auto;
+  padding: 0 var(--land-gutter);
+  display: flex;
+  align-items: center;
+  gap: 32px;
+}
+
+.wordmark {
+  font-family: var(--land-font-display);
+  font-size: 1.375rem;
+  color: var(--land-warm-white);
+}
+
+.nav {
+  display: flex;
+  gap: 28px;
+  flex: 1;
+}
+
+.nav a {
+  font-family: var(--land-font-body);
+  font-size: var(--land-size-ui-meta);
+  font-weight: 500;
+  color: var(--land-muted-text);
+}
+
+.nav a:hover {
+  color: var(--land-warm-white);
+}
+
+.cta {
+  font-family: var(--land-font-body);
+  font-size: var(--land-size-ui-meta);
+  font-weight: 600;
+  color: var(--land-near-black);
+  background: var(--land-terracotta);
+  padding: 10px 20px;
+  border-radius: 8px;
+  white-space: nowrap;
+}
+
+.menuButton {
+  display: none;
+  background: transparent;
+  border: none;
+  color: var(--land-warm-white);
+  width: 44px;
+  height: 44px;
+  align-items: center;
+  justify-content: center;
+}
+
+.mobileNav {
+  display: none;
+}
+
+@media (max-width: 767px) {
+  .inner {
+    padding: 0 var(--land-gutter-mobile);
+  }
+
+  .nav,
+  .cta {
+    display: none;
+  }
+
+  .menuButton {
+    display: flex;
+    margin-left: auto;
+  }
+
+  .mobileNav {
+    display: flex;
+    flex-direction: column;
+    background: var(--land-charcoal);
+    border-bottom: 1px solid var(--land-warm-border);
+    padding: 16px var(--land-gutter-mobile) 24px;
+  }
+
+  .mobileNav a {
+    font-family: var(--land-font-body);
+    font-size: 1rem;
+    color: var(--land-warm-white);
+    padding: 14px 0;
+    border-bottom: 1px solid var(--land-warm-border);
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+  }
+
+  .mobileCta {
+    margin-top: 12px;
+    text-align: center;
+    color: var(--land-near-black);
+    background: var(--land-terracotta);
+    border-radius: 8px;
+    font-weight: 600;
+  }
+}
