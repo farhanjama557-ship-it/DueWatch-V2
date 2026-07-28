@@ -570,12 +570,12 @@ export default function Dashboard() {
                     <div className="top-invoices-table-wrap">
                       <table className="top-invoices-table">
                         <colgroup>
-                          <col />
-                          <col />
-                          <col />
-                          <col />
+                          <col className="col-invoice" />
+                          <col className="col-client" />
+                          <col className="col-amount" />
+                          <col className="col-days" />
                           <col className="col-reason" />
-                          <col />
+                          <col className="col-action" />
                         </colgroup>
                         <thead>
                           <tr>
