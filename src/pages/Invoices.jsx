@@ -88,6 +88,14 @@ export default function Invoices() {
           </p>
         ) : (
           <table className="invoice-table">
+            <colgroup>
+              <col className="col-inv-client" />
+              <col className="col-inv-number" />
+              <col className="col-inv-amount" />
+              <col className="col-inv-date" />
+              <col className="col-inv-overdue" />
+              <col className="col-inv-status" />
+            </colgroup>
             <thead>
               <tr>
                 <th>Client</th>
