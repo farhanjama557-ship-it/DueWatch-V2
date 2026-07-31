@@ -29,15 +29,12 @@
   --green: #22A565;
   --green-tint: #E7F4EC;
 
-  /* Fixed px, measured directly from the approved reference's own HTML at
-     1728px viewport width (.app{grid-template-columns:210px 1fr 300px}).
-     Main itself is an unbounded 1fr in the reference — it doesn't
-     demonstrate its own ultrawide behavior — so --shell-max-w (this
-     session's own judgment call, not a measured value) is what keeps the
-     layout from stretching indefinitely; see .app-shell's comment. */
+  /* Fixed px, matching the approved reference's own rule verbatim:
+     `.app{grid-template-columns:210px 1fr 300px}`. The center column is
+     the reference's own unbounded `1fr` — no shell-wide max-width here on
+     purpose; see .app-shell's comment. */
   --sidebar-w: 210px;
   --rail-w: 300px;
-  --shell-max-w: 1520px;
 
   /* Shared dark-charcoal palette — the "Duewatch itself" zones (nav sidebar
      + right rail). Applied by re-pointing the generic --surface/--border/
@@ -110,19 +107,25 @@ table {
 /* ============================================================
    App shell
    ============================================================ */
-/* Bounded and centered — measured directly against the approved mockup's
-   own HTML export: sidebar(265) + main-content(1078) + rail(385) = 1728,
-   its native design width. Below that width the shell just fills the
-   viewport as before; above it, extra space becomes centered margin
-   instead of the center column (and its KPI cards) stretching wider and
-   wider on ultrawide monitors — that stretch was the root cause of the
-   "zoomed out" complaint, not font sizes. */
+/* Full-bleed, per the north-star-corrected reference's own rule:
+   `.app{display:grid;grid-template-columns:210px 1fr 300px;min-height:100vh}`
+   — no max-width, no centering wrapper, no margin:auto. A prior pass added
+   a --shell-max-w bound + margin:0 auto here to stop the center column
+   stretching indefinitely on ultrawide monitors; that instead made the
+   *entire shell* float as a narrow centered block with dead white space on
+   both sides at any normal desktop width (1440-2560px) — the opposite of
+   what the reference specifies. Sidebar/rail are meant to be flush against
+   the viewport edges and full height; only the center column should ever
+   grow. Checked at 2560px: KPI cards and the invoice table stay legible
+   and proportioned, not stretched into unreadable single-row blocks — so
+   no ultrawide max-width was added back in, even scoped to just the
+   center column. Judgment call, disclosed rather than applied silently;
+   revisit if a wider real monitor makes the canvas look genuinely
+   stretched rather than just spacious. */
 .app-shell {
   display: flex;
   align-items: flex-start;
-  max-width: var(--shell-max-w);
-  margin: 0 auto;
-  min-height: 100%;
+  min-height: 100vh;
 }
 
 /* --- Sidebar (dark — "Duewatch itself," per the north-star mockup; same
@@ -135,14 +138,20 @@ table {
   display: flex;
   flex-direction: column;
   padding: 20px 14px;
-  /* sticky, not fixed — fixed pins to the raw browser viewport edge, which
-     is exactly what let the sidebar/rail stay put while the center column
-     stretched across an ultrawide monitor between them. Sticky respects
-     the centered/bounded .app-shell instead. */
-  position: sticky;
+  /* Fixed, not sticky. A prior pass used position:sticky specifically
+     because the shell was bounded/centered (max-width + margin:auto) and
+     `fixed` would have pinned this to the raw viewport edge, escaping that
+     centering. The shell is now intentionally full-bleed (see .app-shell's
+     comment), so that reason no longer applies — `fixed` is what actually
+     satisfies "full height, flush to the edge, regardless of content or
+     scroll position," which sticky-within-a-flex-row never fully did (its
+     box only sizes to its own content, not the viewport, when that content
+     is shorter than the window). See .content's margin-left for the space
+     this reserves. */
+  position: fixed;
   top: 0;
-  align-self: flex-start;
-  max-height: 100vh;
+  left: 0;
+  height: 100vh;
   z-index: 20;
   overflow-y: auto;
 }
@@ -422,16 +431,15 @@ table {
   background: var(--bg);
   padding: 22px 26px;
   min-width: 0;
+  /* .sidebar is position:fixed (removed from .app-shell's flex flow) so it
+     can be genuinely full-height regardless of scroll/content — this
+     reserves the space it would otherwise occupy. */
+  margin-left: var(--sidebar-w);
 }
 
 /* ============================================================
    Pulse (Morning Brief)
    ============================================================ */
-/* No .brief max-width — .app-shell's --shell-max-w already bounds the
-   whole three-column layout, so .content (this page's direct parent) can
-   never exceed roughly 1078px in practice; a second cap here would just
-   be dead weight. */
-
 .brief-topbar {
   display: flex;
   align-items: flex-start;
@@ -638,6 +646,15 @@ table {
    Pulse shell — white/dark split (Session 8 Morning Brief redesign).
    White = the business, dark = Duewatch itself.
    ============================================================ */
+/* .pulse-rail is position:fixed (see its own comment) — this reserves the
+   width it would otherwise occupy so the header row, headline, and
+   .brief-main's cards don't render underneath it. Only Dashboard needs
+   this (the rail is Dashboard-only); reset to 0 below 1180px, where the
+   rail drops into normal flow instead of docking beside the canvas. */
+.brief {
+  padding-right: var(--rail-w);
+}
+
 .brief-shell {
   display: flex;
   align-items: flex-start;
@@ -680,15 +697,28 @@ table {
   display: flex;
   flex-direction: column;
   gap: 20px;
-  position: sticky;
+  /* Fixed, not sticky, and flush to the true viewport edge (right:0) —
+     same reasoning as .sidebar. Previously sticky-within-a-flex-row sized
+     this box to its own content, so on any page where that content was
+     shorter than the viewport, the dark background stopped short and the
+     page's own white background showed through beneath it. .brief
+     reserves this width via padding-right so the canvas's real content
+     never renders underneath it. */
+  position: fixed;
   top: 0;
-  align-self: flex-start;
-  max-height: 100vh;
+  right: 0;
+  height: 100vh;
   overflow-y: auto;
   z-index: 15;
 }
 
 @media (max-width: 1180px) {
+  /* Below this, .brief-main isn't wide enough for the rail to dock beside
+     it at all (see .pulse-rail's own override) — no reserved space needed
+     once it's back in normal flow, stacked below. */
+  .brief {
+    padding-right: 0;
+  }
   .brief-shell {
     flex-direction: column;
     /* In row direction, flex-start keeps the sticky rail from stretching
@@ -702,7 +732,7 @@ table {
   .pulse-rail {
     position: static;
     width: auto;
-    max-height: none;
+    height: auto;
     border-left: none;
     border-top: 1px solid var(--dw-charcoal-border);
     margin-top: 24px;
@@ -710,7 +740,7 @@ table {
 }
 
 /* Not present in the reference — a static desktop mockup with no
-   responsive spec of its own (same gap as --shell-max-w). Judgment call:
+   responsive spec of its own. Judgment call:
    collapse the labeled 210px sidebar into a 60px icon-only rail so nothing
    overflows the viewport; every nav route/icon/badge stays functional,
    just unlabeled. The status/evidence cards and presence card don't fit at
@@ -1194,6 +1224,40 @@ table {
   color: #fff;
 }
 
+/* A draft already exists for this invoice — links to the real pending
+   approval instead of offering to draft a second, redundant one. Same
+   box as .row-action so the column doesn't reflow; muted instead of
+   primary-colored since it isn't a new call to action. */
+.row-action-passive {
+  flex-shrink: 0;
+  height: 30px;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: var(--surface);
+  border: 0.5px solid var(--border);
+  border-radius: 7px;
+  white-space: nowrap;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.row-action-passive:hover {
+  background: var(--bg);
+  border-color: var(--text-muted);
+}
+
+/* Autopilot already has this invoice covered — a plain, non-interactive
+   label rather than a button that would just duplicate what's already
+   scheduled. */
+.row-action-label {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
 
 .invoice-row-line {
   display: flex;
@@ -1213,16 +1277,28 @@ table {
 
 .top-invoices-table {
   width: 100%;
-  min-width: 500px;
+  min-width: 480px;
   border-collapse: collapse;
+  /* Explicit per-column widths below only take effect under fixed layout
+     — with the default auto layout, the browser redistributes width by
+     content regardless of the colgroup hints, which is what let the
+     Reason column collapse to a narrow wrapped strip once the table was
+     squeezed toward its min-width on a real (not ultrawide) desktop. */
+  table-layout: fixed;
 }
 
-/* Reason is the one column that should wrap rather than force horizontal
-   scroll for its own sake — bounded so it wraps at a predictable ~2 lines
-   instead of stretching the table arbitrarily wide. */
-.top-invoices-table col.col-reason {
-  width: 170px;
-}
+.top-invoices-table col.col-invoice { width: 56px; }
+.top-invoices-table col.col-client { width: 100px; }
+/* Wide enough that a real dollar amount ($4,200.00) never truncates —
+   an ellipsis on money is worse than the modest extra horizontal scroll
+   it costs at the very narrowest desktop width this table supports. */
+.top-invoices-table col.col-amount { width: 78px; }
+.top-invoices-table col.col-days { width: 36px; }
+/* The one column that should wrap rather than force horizontal scroll for
+   its own sake — fixed so it reliably wraps at ~2 lines instead of
+   collapsing to a single-word-wide strip. */
+.top-invoices-table col.col-reason { width: 155px; }
+.top-invoices-table col.col-action { width: 112px; }
 
 .top-invoices-table thead th {
   text-align: left;
@@ -1262,6 +1338,18 @@ table {
 .top-invoices-table-client {
   font-weight: 600;
   color: var(--text-primary);
+}
+
+/* Overrides the generic td's nowrap+ellipsis (needed for Amount/Days,
+   which are short fixed-format values) — client names are real, variable-
+   length data and were getting cut mid-word ("Northfield Logis…") at the
+   column's fixed width. Wraps onto a second line instead; the column
+   width (table-layout:fixed) doesn't change either way. */
+.top-invoices-table tbody td.top-invoices-table-client {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  line-height: 1.3;
 }
 
 .top-invoices-table-amount {
