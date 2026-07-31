@@ -34,10 +34,17 @@ export function presenceCopy(state, ctx = {}) {
         mission: 'Fix needed — email undeliverable.',
       }
     case 'active':
+      // criticalOverdueCount counts severely overdue invoices (15+ days),
+      // not pending approval records — those are a separate, correctly-
+      // labeled count in the 'contextual' state below. This used to say
+      // "N reminders need review", which reads as if these were drafts
+      // awaiting the founder's review; they aren't, so the copy shouldn't
+      // imply it. The hardcoded "One item" in the old mission line was
+      // also wrong regardless of the real count.
       return {
         title: 'Autopilot needs attention',
-        subtitle: `${ctx.criticalOverdueCount} ${ctx.criticalOverdueCount === 1 ? 'reminder needs' : 'reminders need'} review`,
-        mission: 'One item needs your review.',
+        subtitle: `${ctx.criticalOverdueCount} ${ctx.criticalOverdueCount === 1 ? 'invoice is' : 'invoices are'} critically overdue`,
+        mission: `${ctx.criticalOverdueCount} ${ctx.criticalOverdueCount === 1 ? 'invoice needs' : 'invoices need'} your attention.`,
       }
     case 'contextual':
       return {

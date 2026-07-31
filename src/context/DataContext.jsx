@@ -103,6 +103,11 @@ export function DataProvider({ children }) {
   // older events have no amount and are silently excluded, not estimated.
   const [collectedThisMonth, setCollectedThisMonth] = useState(0)
   const [collectedLastMonth, setCollectedLastMonth] = useState(0)
+  // How many distinct payment events made up collectedLastMonth — the
+  // Collected KPI's month-over-month trend needs this, not just the sum,
+  // to tell a real comparison baseline from a single sparse data point
+  // (see Dashboard.jsx's collectedTrend).
+  const [collectedLastMonthCount, setCollectedLastMonthCount] = useState(0)
   // Real all-time count of every logged event — not the 20-row recent
   // window above — for the sidebar Evidence card's "N actions recorded".
   const [totalEventsCount, setTotalEventsCount] = useState(0)
@@ -267,8 +272,14 @@ export function DataProvider({ children }) {
       .in('event_type', ['payment_recorded', 'invoice_marked_paid'])
       .gte('created_at', startOfLastMonth)
       .lt('created_at', startOfMonth)
-      .then((r) => (r.data || []).reduce((sum, row) => sum + (Number(row.evidence?.amount) || 0), 0))
-      .catch(() => 0)
+      .then((r) => {
+        const rows = r.data || []
+        return {
+          sum: rows.reduce((sum, row) => sum + (Number(row.evidence?.amount) || 0), 0),
+          count: rows.length,
+        }
+      })
+      .catch(() => ({ sum: 0, count: 0 }))
 
     // Real all-time event count for the sidebar Evidence card.
     const totalEventsPromise = supabase
@@ -340,7 +351,8 @@ export function DataProvider({ children }) {
     setLastAutopilotRun(lastRun || null)
     setAutopilotRules(rules || [])
     setCollectedThisMonth(collected || 0)
-    setCollectedLastMonth(collectedLast || 0)
+    setCollectedLastMonth(collectedLast?.sum || 0)
+    setCollectedLastMonthCount(collectedLast?.count || 0)
     setTotalEventsCount(totalEvents || 0)
 
     if (isFirstLoadThisSession) {
@@ -427,6 +439,7 @@ export function DataProvider({ children }) {
     sinceLastVisit,
     collectedThisMonth,
     collectedLastMonth,
+    collectedLastMonthCount,
     totalEventsCount,
     criticalOverdueCount,
     autopilotErrorCount,

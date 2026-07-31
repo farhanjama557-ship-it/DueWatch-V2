@@ -70,6 +70,19 @@ function reasonFor(inv, autopilotEnabled, autopilotRules) {
   return recommendFor(inv)
 }
 
+// What the Top Invoices row's action column should actually offer, given
+// this invoice's real workflow state — not "Draft Reminder" unconditionally
+// on every row regardless of whether a draft already exists or Autopilot
+// already has it covered.
+function rowActionState(inv, { awaitingInvoiceIds, autopilotEnabled, autopilotRules, events }) {
+  if (awaitingInvoiceIds.has(inv.id)) return 'awaiting'
+  const latestEvent = events.find((e) => e.invoice_id === inv.id)
+  const hasUnresolvedError = latestEvent?.lifecycle_state === 'error'
+  const autopilotHasThis =
+    autopilotEnabled && !inv.autopilot_paused && Boolean(nextScheduledAction(autopilotRules, inv)) && !hasUnresolvedError
+  return autopilotHasThis ? 'automated' : 'manual'
+}
+
 // Real, functional invoice/client search — not a decorative input. The ⌘K
 // hint actually focuses this field (see the keydown listener in Dashboard).
 function TopSearch({ invoices, onSelect, inputRef }) {
@@ -339,6 +352,7 @@ export default function Dashboard() {
     sinceLastVisit,
     collectedThisMonth,
     collectedLastMonth,
+    collectedLastMonthCount,
   } = useData()
   const [selected, setSelected] = useState(null)
   const [signatureContext, setSignatureContext] = useState(null)
@@ -382,6 +396,31 @@ export default function Dashboard() {
 
     const DUE_SOON_DAYS = 14
 
+    // Most recent event for a given invoice, if any is in the loaded
+    // (recent) window — `events` is already newest-first, so the first
+    // match per invoice_id is its latest. An invoice whose latest event is
+    // a failed send has a real, unresolved problem no automation will fix
+    // on its own; older invoices outside that recent window default to
+    // "no known error" rather than guessing.
+    function hasUnresolvedError(inv) {
+      const latest = events.find((e) => e.invoice_id === inv.id)
+      return latest?.lifecycle_state === 'error'
+    }
+
+    // True only when Autopilot genuinely has this invoice covered: it's
+    // on, this specific invoice isn't paused, a rule actually applies
+    // (now or later), and nothing about it failed. Everything else —
+    // Autopilot off, no matching rule, an individual pause, an unresolved
+    // send error — is a real gap only a human can close.
+    function hasWorkingAutomation(inv) {
+      return (
+        autopilotEnabled &&
+        !inv.autopilot_paused &&
+        Boolean(nextScheduledAction(autopilotRules, inv)) &&
+        !hasUnresolvedError(inv)
+      )
+    }
+
     let outstandingTotal = 0
     const needsAttention = []
     const dueSoon = []
@@ -389,6 +428,7 @@ export default function Dashboard() {
     const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000
     let remindersSent = 0
     let eligibleForNextCheck = 0
+    let handlingCount = 0
 
     for (const inv of outstanding) {
       const bal = balanceOf(inv)
@@ -410,10 +450,18 @@ export default function Dashboard() {
       if (!inv.autopilot_paused && nextScheduledAction(autopilotRules, inv)?.eligible) {
         eligibleForNextCheck += 1
       }
+
+      if (hasWorkingAutomation(inv)) handlingCount += 1
     }
 
     needsAttention.sort((a, b) => daysOverdue(b.due_date) - daysOverdue(a.due_date))
     dueSoon.sort((a, b) => daysUntil(a.due_date) - daysUntil(b.due_date))
+
+    // Of the overdue invoices specifically, the ones Autopilot does NOT
+    // have real working coverage for are the ones that actually need a
+    // human — being overdue while Autopilot is actively on the case isn't
+    // a decision, it's Autopilot doing its job.
+    const blockedCount = needsAttention.filter((inv) => !hasWorkingAutomation(inv)).length
 
     return {
       outstandingTotal,
@@ -422,8 +470,10 @@ export default function Dashboard() {
       remindersSent,
       outstandingCount: outstanding.length,
       eligibleForNextCheck,
+      handlingCount,
+      blockedCount,
     }
-  }, [invoices, autopilotRules])
+  }, [invoices, autopilotRules, autopilotEnabled, events])
 
   if (loading) {
     return <div className="brief-loading">Loading your brief…</div>
@@ -435,12 +485,21 @@ export default function Dashboard() {
 
   const attentionCount = derived.needsAttention.length
   const awaitingCount = awaitingSignature.length
-  const decisionsNeeded = attentionCount + awaitingCount
+  // A genuine human decision is either a draft literally waiting on the
+  // founder's approval, or an overdue invoice Autopilot has no real,
+  // working path to act on (off, individually paused, no matching rule,
+  // or an unresolved send error) — not every overdue invoice. Most overdue
+  // invoices are Autopilot's job, not a decision; conflating the two is
+  // exactly the overcount this headline used to make.
+  const decisionsNeeded = awaitingCount + derived.blockedCount
+  // Plain computation, not a hook — safe to sit after the loading/error
+  // early returns above.
+  const awaitingInvoiceIds = new Set(awaitingSignature.map((a) => a.invoice_id))
 
   // Real, deterministic status headline — a plain read of already-computed
-  // counts (overdue + awaiting-signature), never a fabricated qualitative
-  // assessment. Mirrors the same "never faked" rule that ruled out an
-  // AI-sentiment "What Duewatch Noticed" feature elsewhere in this app.
+  // counts, never a fabricated qualitative assessment. Mirrors the same
+  // "never faked" rule that ruled out an AI-sentiment "What Duewatch
+  // Noticed" feature elsewhere in this app.
   const statusHeadline =
     decisionsNeeded === 0
       ? 'Your receivables are on track.'
@@ -457,8 +516,16 @@ export default function Dashboard() {
   // Sent are derived from current invoice state, not logged events, so
   // there's no past snapshot to diff against without new schema — they get
   // their existing plain caption instead of a fabricated trend line.
+  //
+  // A nonzero sum alone isn't a meaningful baseline: one stray $10 payment
+  // last month would make a normal collections month read as a 6,000%
+  // swing. Require at least 2 distinct payments last month before showing
+  // a percentage at all — below that, the plain "this month" caption
+  // (no trend line) is more honest than a dramatic-looking number with
+  // nothing real behind its scale.
+  const MIN_BASELINE_PAYMENTS = 2
   const collectedTrend =
-    collectedLastMonth > 0
+    collectedLastMonth > 0 && collectedLastMonthCount >= MIN_BASELINE_PAYMENTS
       ? {
           direction: collectedThisMonth >= collectedLastMonth ? 'up' : 'down',
           text: `${Math.abs(Math.round(((collectedThisMonth - collectedLastMonth) / collectedLastMonth) * 100))}% vs last month`,
@@ -508,11 +575,12 @@ export default function Dashboard() {
       <div className="brief-header-sub">
         <p className="brief-subline">
           You collected <b>{formatMoney(collectedThisMonth)}</b> this month. {formatMoney(derived.outstandingTotal)}{' '}
-          remains outstanding. Duewatch is handling {derived.outstandingCount}, and{' '}
+          remains outstanding. Duewatch is handling {derived.handlingCount} automatically, {awaitingCount}{' '}
+          {awaitingCount === 1 ? 'awaits' : 'await'} your approval, and{' '}
           <span className="o">
-            {decisionsNeeded} decision{decisionsNeeded === 1 ? '' : 's'}
-          </span>{' '}
-          need{decisionsNeeded === 1 ? 's' : ''} you.
+            {derived.blockedCount} {derived.blockedCount === 1 ? 'needs' : 'need'} you directly
+          </span>
+          .
         </p>
       </div>
 
@@ -570,12 +638,12 @@ export default function Dashboard() {
                     <div className="top-invoices-table-wrap">
                       <table className="top-invoices-table">
                         <colgroup>
-                          <col />
-                          <col />
-                          <col />
-                          <col />
+                          <col className="col-invoice" />
+                          <col className="col-client" />
+                          <col className="col-amount" />
+                          <col className="col-days" />
                           <col className="col-reason" />
-                          <col />
+                          <col className="col-action" />
                         </colgroup>
                         <thead>
                           <tr>
@@ -591,6 +659,12 @@ export default function Dashboard() {
                           {derived.needsAttention.map((inv) => {
                             const od = daysOverdue(inv.due_date)
                             const reco = reasonFor(inv, autopilotEnabled, autopilotRules)
+                            const actionState = rowActionState(inv, {
+                              awaitingInvoiceIds,
+                              autopilotEnabled,
+                              autopilotRules,
+                              events,
+                            })
                             return (
                               <tr key={inv.id} onClick={() => setSelected(inv)}>
                                 <td>{inv.invoice_number || '—'}</td>
@@ -601,16 +675,31 @@ export default function Dashboard() {
                                   <span className={`top-invoices-table-reason tone-${reco.tone}`}>{reco.explanation}</span>
                                 </td>
                                 <td>
-                                  <button
-                                    type="button"
-                                    className="row-action"
-                                    onClick={(e) => {
-                                      e.stopPropagation()
-                                      setComposeInvoice(inv)
-                                    }}
-                                  >
-                                    Draft Reminder
-                                  </button>
+                                  {actionState === 'awaiting' ? (
+                                    <button
+                                      type="button"
+                                      className="row-action row-action-passive"
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        scrollToApprovals()
+                                      }}
+                                    >
+                                      Awaiting approval
+                                    </button>
+                                  ) : actionState === 'automated' ? (
+                                    <span className="row-action-label">Autopilot handling</span>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      className="row-action"
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        setComposeInvoice(inv)
+                                      }}
+                                    >
+                                      Draft Reminder
+                                    </button>
+                                  )}
                                 </td>
                               </tr>
                             )
