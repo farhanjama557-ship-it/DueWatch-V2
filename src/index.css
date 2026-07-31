@@ -1480,8 +1480,35 @@ table {
 
 .invoice-table {
   width: 100%;
-  min-width: 720px;
+  /* 840px is the true minimum before fixed-format content (invoice numbers,
+     amounts, dates, the "DAYS OVERDUE" header, "Final Notice" pill) would
+     overflow their cells at the percentages set on the <col> elements below.
+     .list-card has overflow-x:auto so narrow viewports get a scroll bar
+     rather than content bleed. */
+  min-width: 840px;
+  /* Fixed layout: browser sizes columns from <colgroup> once and keeps them
+     stable regardless of which rows are visible — the same bug that hit the
+     Dashboard's Top Invoices table when Reason/Action columns shifted under
+     auto layout. Without this, switching filter tabs (e.g., Paid → all
+     "Days Overdue" cells become "—") collapses that column and blows the
+     others out, making every tab look different. */
+  table-layout: fixed;
 }
+
+/* Column proportions sized so the widest fixed-format content in each
+   column fits comfortably at the 840px min-width:
+   Client (19%=160px): avatar+name; name wraps if long — see td rule below.
+   Invoice # (16%=134px): "INV-2024-001" ≈96px text + 40px cell padding.
+   Amount (15%=126px): "$12,450.00" ≈85px tabular + 40px padding.
+   Due Date (15%=126px): "Nov 15, 2024" ≈84px + 40px padding.
+   Days Overdue (17%=143px): header "DAYS OVERDUE" ≈101px + 40px padding.
+   Status (18%=151px): "Final Notice" pill ≈108px + 40px cell padding. */
+.invoice-table col.col-inv-client  { width: 19%; }
+.invoice-table col.col-inv-number  { width: 16%; }
+.invoice-table col.col-inv-amount  { width: 15%; }
+.invoice-table col.col-inv-date    { width: 15%; }
+.invoice-table col.col-inv-overdue { width: 17%; }
+.invoice-table col.col-inv-status  { width: 18%; }
 
 .invoice-table thead th {
   text-align: left;
@@ -1495,8 +1522,9 @@ table {
   white-space: nowrap;
 }
 
-/* Client column: avatar (28px) + gap (10px) offset before the name text,
-   so the header label needs matching left indent to stay visually aligned. */
+/* Client header: avatar (28px) + gap (10px) offset before the name text,
+   so the label aligns with the names below rather than floating over the
+   avatar. */
 .invoice-table thead th:first-child {
   padding-left: 58px;
 }
@@ -1518,13 +1546,20 @@ table {
   white-space: nowrap;
 }
 
+/* Client name can be long ("Cedar & Vine Interiors") — allow wrapping within
+   the fixed column width rather than forcing horizontal scroll for the whole
+   table. Same approach as .top-invoices-table-client on the Dashboard. */
+.invoice-table tbody td:first-child {
+  white-space: normal;
+}
+
 .invoice-table tbody tr:last-child td {
   border-bottom: none;
 }
 
 .cell-client {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 10px;
   font-weight: 600;
 }
