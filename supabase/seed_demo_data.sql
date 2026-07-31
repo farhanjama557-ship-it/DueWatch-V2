@@ -20,19 +20,23 @@
 -- ============================================================
 
 -- ---------- 1. Clients ----------
-insert into public.clients (user_id, name, email, phone, company)
-select u.id, v.name, v.email, v.phone, v.company
+-- Live table's real columns (per Farhan, differs from schema.sql's
+-- documented definition — see the note at the end of this file):
+-- id, user_id, name, email, addr, created_at. No phone/company columns
+-- exist, so those aren't inserted here.
+insert into public.clients (user_id, name, email)
+select u.id, v.name, v.email
 from (select id from auth.users where email = 'farhanjama557@gmail.com') u
 cross join (values
-  ('Meridian Design Co',        'accounts@meridiandesign.co',   '555-0101', 'Meridian Design Co'),
-  ('Northfield Logistics',      'ap@northfieldlogistics.com',   '555-0102', 'Northfield Logistics'),
-  ('Cedar & Vine Interiors',    'billing@cedarandvine.com',     '555-0103', 'Cedar & Vine Interiors'),
-  ('Bluewave Analytics',        'finance@bluewaveanalytics.io', '555-0104', 'Bluewave Analytics'),
-  ('Harbor Point Consulting',   'ap@harborpointconsulting.com', '555-0105', 'Harbor Point Consulting'),
-  ('Silverline Media Group',    'accounts@silverlinemedia.com', '555-0106', 'Silverline Media Group'),
-  ('Ashford Legal Partners',    'billing@ashfordlegal.com',     '555-0107', 'Ashford Legal Partners'),
-  ('Terra Nova Studio',         'hello@terranovastudio.com',    '555-0108', 'Terra Nova Studio')
-) as v(name, email, phone, company)
+  ('Meridian Design Co',        'accounts@meridiandesign.co'),
+  ('Northfield Logistics',      'ap@northfieldlogistics.com'),
+  ('Cedar & Vine Interiors',    'billing@cedarandvine.com'),
+  ('Bluewave Analytics',        'finance@bluewaveanalytics.io'),
+  ('Harbor Point Consulting',   'ap@harborpointconsulting.com'),
+  ('Silverline Media Group',    'accounts@silverlinemedia.com'),
+  ('Ashford Legal Partners',    'billing@ashfordlegal.com'),
+  ('Terra Nova Studio',         'hello@terranovastudio.com')
+) as v(name, email)
 where not exists (
   select 1 from public.clients c
   where c.user_id = u.id and c.name = v.name
@@ -126,3 +130,14 @@ where not exists (
 -- where u.email = 'farhanjama557@gmail.com'
 --   and e.event_type in ('payment_recorded', 'invoice_marked_paid')
 --   and e.created_at >= date_trunc('month', now());
+
+-- ============================================================
+-- Note: repo/live schema drift
+-- ============================================================
+-- supabase/schema.sql documents public.clients as (id, user_id, name,
+-- email, phone, company, notes, created_at). The live table actually has
+-- (id, user_id, name, email, addr, created_at) — no phone/company/notes.
+-- This script was corrected to match the live table; schema.sql itself
+-- was left untouched (fixing the repo's own schema doc wasn't part of
+-- this request) — worth reconciling separately so the next person
+-- reading schema.sql isn't misled the same way this script was.
