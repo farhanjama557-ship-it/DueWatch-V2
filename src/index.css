@@ -1495,6 +1495,12 @@ table {
   white-space: nowrap;
 }
 
+/* Client column: avatar (28px) + gap (10px) offset before the name text,
+   so the header label needs matching left indent to stay visually aligned. */
+.invoice-table thead th:first-child {
+  padding-left: 58px;
+}
+
 .invoice-table tbody tr {
   cursor: pointer;
   transition: background 0.1s ease;
