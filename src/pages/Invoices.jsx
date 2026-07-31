@@ -1,4 +1,6 @@
 import { useState, useMemo } from 'react'
+import { Link } from 'react-router-dom'
+import { Upload } from 'lucide-react'
 import { useData, isOutstanding, balanceOf, effectiveStatus } from '../context/DataContext'
 import StatusPill from '../components/StatusPill'
 import Avatar from '../components/Avatar'
@@ -50,9 +52,14 @@ export default function Invoices() {
     <div className="brief">
       <div className="list-head">
         <h1 className="brief-greeting">Invoices</h1>
-        <button className="btn-terracotta btn-inline" onClick={() => setShowAdd(true)}>
-          <PlusIcon width={16} height={16} /> New Invoice
-        </button>
+        <div className="list-head-actions">
+          <Link to="/invoices/import" className="btn-outline btn-inline">
+            <Upload width={16} height={16} /> Import
+          </Link>
+          <button className="btn-terracotta btn-inline" onClick={() => setShowAdd(true)}>
+            <PlusIcon width={16} height={16} /> New Invoice
+          </button>
+        </div>
       </div>
 
       <div className="list-controls">
