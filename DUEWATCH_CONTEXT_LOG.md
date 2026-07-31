@@ -324,6 +324,16 @@ Measured the reference at 1728px via Playwright (`getBoundingClientRect`/`getCom
 
 **Open question:** the left/right discrepancy on item 1 (real bugs found in the sidebar and the white-canvas table, not the dark rail as literally described) — flagging rather than assuming; if the right rail does truncate under some real-data scenario this session's testing didn't reproduce, worth a follow-up with the exact client name/text that triggers it.
 
+### 2026-07-31 — Claude Code — Fix Invoices list column header misalignment
+
+**Did:** Farhan flagged that the "CLIENT, INVOICE #, AMOUNT…" column headers on the Invoices list page didn't visually line up with the data below them. Root cause: the Client column data cell renders a 28px Avatar + 10px gap before the name text, putting the actual name text 38px further right than the cell's 20px left-padding. The "CLIENT" header had no corresponding offset, so it visually hovered over the avatar rather than the name text. Fix: added `.invoice-table thead th:first-child { padding-left: 58px; }` (20px base + 28px avatar + 10px gap). All other columns were already correctly aligned — headers and data cells share the same `ta-right` or default-left alignment; only the avatar offset in the first column was breaking the visual match.
+
+**Status:** shipped to branch `claude/duewatch-scaffold-auth-j2ef7c` (commit b5ccc0f). Pending PR merge to get it live.
+
+**Affects:** `src/index.css` (one new rule targeting `.invoice-table thead th:first-child`).
+
+**Open question:** none.
+
 ---
 
 *Next entry goes below this line. Read everything above first.*
