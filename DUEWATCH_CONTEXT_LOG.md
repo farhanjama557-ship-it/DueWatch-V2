@@ -283,6 +283,18 @@ Measured the reference at 1728px via Playwright (`getBoundingClientRect`/`getCom
 
 **Open question:** none blocking. The `--shell-max-w: 1520px` and the mobile icon-rail breakpoint are both disclosed judgment calls (no reference spec covers either) — worth a direct look once deployed, same as every prior pass's undemonstrated-ultrawide-behavior judgment call.
 
+### 2026-07-30 — Codex — Phase 0 canonical client identity foundation
+
+**Did:** Built a draft-only, reversible canonical-client migration package on the isolated `codex/phase-0-canonical-clients` branch. The package adds stable canonical IDs and normalized identity fields, source-provenance mappings, deterministic exact-versus-review-required candidate generation, run/candidate/audit metadata, a read-only report path, guarded execution and rollback functions, staging foreign-key verification SQL, and a transactional PostgreSQL integration test. Exact automatic candidates require normalized email plus an exact normalized name or company match. Phone plus name/company remains review-required. Ambiguous records are never silently merged.
+
+Execution is fail-closed and disabled by default. It requires the environment switch, a clean staging foreign-key attestation (no unknown relationships and no expected relationships missing), passing integration-test evidence with rollback, and the exact run-specific `EXECUTE <run-id>` phrase. Rollback requires `ROLLBACK <run-id>` and restores every captured invoice pointer and source-provenance mapping. The current invoice-creation path now calls the transactional canonical identity resolver rather than relying on browser-cached raw-name matching.
+
+**Status:** JavaScript normalization/classification and invoice-path tests pass locally, JavaScript syntax checks pass, and the production build passes. The PostgreSQL/Supabase integration test is authored but has not been run against a disposable Supabase database; the PR must remain draft until that succeeds. No production migration or record mutation was run.
+
+**Affects:** `docs/phase-0-canonical-clients.md`, `scripts/client-dedupe.mjs`, `src/lib/clientIdentity.js`, `src/lib/clients.js`, `src/components/AddInvoiceModal.jsx`, `supabase/migrations/20260726000000_canonical_clients.sql`, `supabase/tests/canonical_clients_test.sql`, `supabase/verification/phase0_foreign_keys.sql`, `tests/client-identity.test.mjs`, `tests/client-resolution.test.mjs`, `package.json`, and this log. No dashboard-shell file was modified. Legacy `supabase/dedupe.sql` was neither modified nor run.
+
+**Open question:** production-only tables and foreign keys cannot be verified from repository naming. In particular, any live-only payment, approval, activity, or evidence relationships remain unverified until the staging catalog verification succeeds. The repository schema verifies invoice history through unchanged invoice IDs; it does not justify inferring any additional foreign-key behavior.
+
 ---
 
 *Next entry goes below this line. Read everything above first.*
