@@ -1224,6 +1224,40 @@ table {
   color: #fff;
 }
 
+/* A draft already exists for this invoice — links to the real pending
+   approval instead of offering to draft a second, redundant one. Same
+   box as .row-action so the column doesn't reflow; muted instead of
+   primary-colored since it isn't a new call to action. */
+.row-action-passive {
+  flex-shrink: 0;
+  height: 30px;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: var(--surface);
+  border: 0.5px solid var(--border);
+  border-radius: 7px;
+  white-space: nowrap;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.row-action-passive:hover {
+  background: var(--bg);
+  border-color: var(--text-muted);
+}
+
+/* Autopilot already has this invoice covered — a plain, non-interactive
+   label rather than a button that would just duplicate what's already
+   scheduled. */
+.row-action-label {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
 
 .invoice-row-line {
   display: flex;
@@ -1304,6 +1338,18 @@ table {
 .top-invoices-table-client {
   font-weight: 600;
   color: var(--text-primary);
+}
+
+/* Overrides the generic td's nowrap+ellipsis (needed for Amount/Days,
+   which are short fixed-format values) — client names are real, variable-
+   length data and were getting cut mid-word ("Northfield Logis…") at the
+   column's fixed width. Wraps onto a second line instead; the column
+   width (table-layout:fixed) doesn't change either way. */
+.top-invoices-table tbody td.top-invoices-table-client {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  line-height: 1.3;
 }
 
 .top-invoices-table-amount {

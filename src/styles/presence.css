@@ -73,9 +73,10 @@
 .presence-subtitle {
   font-size: 11.5px;
   color: var(--p-gray);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  /* Was nowrap + ellipsis, which cut real status text mid-word (e.g. "Update
+     the cli…" instead of "Update the client's email to retry") in the
+     sidebar's fixed width. Wrapping costs a bit of card height, never width. */
+  line-height: 1.4;
 }
 
 .status-dot {
