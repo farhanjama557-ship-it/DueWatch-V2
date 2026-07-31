@@ -324,15 +324,29 @@ Measured the reference at 1728px via Playwright (`getBoundingClientRect`/`getCom
 
 **Open question:** the left/right discrepancy on item 1 (real bugs found in the sidebar and the white-canvas table, not the dark rail as literally described) — flagging rather than assuming; if the right rail does truncate under some real-data scenario this session's testing didn't reproduce, worth a follow-up with the exact client name/text that triggers it.
 
-### 2026-07-31 — Claude Code — Fix Invoices list column header misalignment
+### 2026-07-31 — Claude Code — Fix Invoices table column alignment (full fix: table-layout fixed + colgroup)
 
-**Did:** Farhan flagged that the "CLIENT, INVOICE #, AMOUNT…" column headers on the Invoices list page didn't visually line up with the data below them. Root cause: the Client column data cell renders a 28px Avatar + 10px gap before the name text, putting the actual name text 38px further right than the cell's 20px left-padding. The "CLIENT" header had no corresponding offset, so it visually hovered over the avatar rather than the name text. Fix: added `.invoice-table thead th:first-child { padding-left: 58px; }` (20px base + 28px avatar + 10px gap). All other columns were already correctly aligned — headers and data cells share the same `ta-right` or default-left alignment; only the avatar offset in the first column was breaking the visual match.
+**Did:** Two-part fix to the Invoices list page table alignment.
 
-**Status:** shipped to branch `claude/duewatch-scaffold-auth-j2ef7c` (commit b5ccc0f). Pending PR merge to get it live.
+Part 1 (commit b5ccc0f, initial): The CLIENT header was hovering over the avatar rather than the name text below it. Added `padding-left: 58px` (= 20px base + 28px avatar + 10px gap) to `.invoice-table thead th:first-child`.
 
-**Affects:** `src/index.css` (one new rule targeting `.invoice-table thead th:first-child`).
+Part 2 (commit 9994ddd, the real fix after Farhan confirmed the issue spans all tabs): Root cause was `table-layout: auto` (the browser default). With auto layout, column widths recompute from visible rows on every render — switching filter tabs (e.g., to "Paid" where Days Overdue is all dashes) collapsed that column and expanded the others, giving each tab a different column layout. This is the identical bug previously fixed on the Dashboard's Top Invoices table.
 
-**Open question:** none.
+Fix mirrors the Top Invoices table pattern exactly:
+- `table-layout: fixed` added to `.invoice-table`
+- `<colgroup>` with 6 named `<col>` elements added to `Invoices.jsx`
+- Column percentages sized so widest fixed-format content fits at the new 840px min-width: Client 19%, Invoice # 16%, Amount 15%, Due Date 15%, Days Overdue 17%, Status 18%
+- `min-width` bumped from 720px → 840px (the true minimum to fit "DAYS OVERDUE" header at 11px uppercase ~101px + padding, and "Final Notice" StatusPill ~108px + padding)
+- Client `td` `white-space: normal` override added so long client names wrap inside the fixed column rather than forcing horizontal scroll
+- CLIENT header `padding-left: 58px` retained from Part 1
+
+Verified before/after with Playwright screenshots across all 4 filter tabs (All, Overdue, Sent, Paid). After fix: all 4 tabs have identical column widths; CLIENT header aligns with name text; Days Overdue header and Final Notice pill render without overflow.
+
+**Status:** shipped to branch `claude/duewatch-scaffold-auth-j2ef7c`. Pending PR merge to go live.
+
+**Affects:** `src/index.css` (`.invoice-table` rule extended with fixed layout, colgroup percentages, client-td wrap override; `padding-left:58px` on `th:first-child` retained), `src/pages/Invoices.jsx` (`<colgroup>` with 6 `<col className="col-inv-*">` elements added).
+
+**Open question:** Unrelated bug noticed but not fixed in this pass: `.brief` has `padding-right: var(--rail-w)` (300px) applied globally, but the Pulse Rail only renders on the Dashboard. On Invoices/Clients/etc., this wastes 300px of horizontal canvas space for no reason. Not breaking (table scrolls), but worth a dedicated fix if the Invoices table ever needs more breathing room.
 
 ---
 
