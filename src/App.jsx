@@ -1,3 +1,4 @@
+import { Suspense, lazy } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { useAuth } from './context/AuthContext'
 import ProtectedRoute from './components/ProtectedRoute'
@@ -12,6 +13,11 @@ import Activity from './pages/Activity'
 import Autopilot from './pages/Autopilot'
 import Settings from './pages/Settings'
 import LandingPage from './landing'
+
+// Lazy-loaded: pulls in exceljs, which is large and only needed by the tiny
+// fraction of visits that actually import a file — keeping it out of the
+// main bundle everyone else downloads.
+const Import = lazy(() => import('./pages/Import'))
 
 // Redirect authenticated users away from auth screens.
 function PublicOnly({ children }) {
@@ -66,6 +72,14 @@ export default function App() {
         }
       >
         <Route path="/invoices" element={<Invoices />} />
+        <Route
+          path="/invoices/import"
+          element={
+            <Suspense fallback={<div className="app-loading">Loading…</div>}>
+              <Import />
+            </Suspense>
+          }
+        />
         <Route path="/clients" element={<Clients />} />
         <Route path="/cash-flow" element={<CashFlow />} />
         <Route path="/activity" element={<Activity />} />
