@@ -324,6 +324,21 @@ Measured the reference at 1728px via Playwright (`getBoundingClientRect`/`getCom
 
 **Open question:** the left/right discrepancy on item 1 (real bugs found in the sidebar and the white-canvas table, not the dark rail as literally described) — flagging rather than assuming; if the right rail does truncate under some real-data scenario this session's testing didn't reproduce, worth a follow-up with the exact client name/text that triggers it.
 
+### 2026-07-31 — Claude Code — Fix Invoices list table column alignment (all filter tabs)
+
+**Did:** Farhan reported the Invoices list page's column headers didn't line up with the data below them, then clarified it affected every filter tab (All, Overdue, Sent, Paid), not just the default view. Two real bugs, both fixed:
+
+1. **CLIENT header misaligned with name text.** Each data row renders a 28px Avatar + 10px gap before the client name, but the "CLIENT" header had no matching indent, so it visually sat over the avatar instead of the name. Fixed with `padding-left: 58px` (20px base + 28px avatar + 10px gap) on `.invoice-table thead th:first-child`.
+2. **Root cause of the cross-tab inconsistency: `table-layout: auto`.** With the browser default, column widths recompute from whichever rows are currently visible — switching to the "Paid" tab (where every Days Overdue cell reads "—") collapsed that column and pushed the others out, so each tab showed different column widths. Fixed by switching `.invoice-table` to `table-layout: fixed` with an explicit 6-column `<colgroup>` added to `Invoices.jsx` (same pattern already in use on the Dashboard's Top Invoices table), with percentages sized so the widest real content in each column fits at the new 840px `min-width` (bumped from 720px): the "DAYS OVERDUE" header text and a "Final Notice" status pill are the tightest fits. Client `td` also got `white-space: normal` so long names (e.g. "Cedar & Vine Interiors") wrap instead of forcing horizontal scroll.
+
+**Verification:** built a throwaway preview harness (mock invoice data covering all 4 filter tabs, `/__invoice-preview` route bypassing auth) and took Playwright screenshots in a real headless-Chromium browser, before and after, for each of the 4 tabs. Before: column widths visibly shifted tab-to-tab, most obviously on "Paid" where the empty Days Overdue column collapsed. After: identical column widths across all 4 tabs, CLIENT header aligned with name text in every row. `npm run build` passed. Harness route and any temporary exports were fully removed before commit — `git status` on `App.jsx` confirmed clean.
+
+**Status:** built and verified via the harness; not yet re-deployed/looked at live in production.
+
+**Affects:** `src/index.css` (`.invoice-table` — `table-layout: fixed`, new colgroup width rules, `min-width` 720px→840px, `thead th:first-child` padding, client `td` wrap override), `src/pages/Invoices.jsx` (new `<colgroup>` with 6 named `<col>` elements).
+
+**Open question:** none.
+
 ---
 
 *Next entry goes below this line. Read everything above first.*
