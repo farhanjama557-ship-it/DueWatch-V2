@@ -68,7 +68,7 @@ function UploadStep({ onFile, error, busy }) {
       <input
         ref={inputRef}
         type="file"
-        accept=".csv,.xlsx,.xls"
+        accept=".csv,.xlsx"
         hidden
         onChange={(e) => handleFiles(e.target.files)}
       />
@@ -81,7 +81,7 @@ function UploadStep({ onFile, error, busy }) {
         <>
           <Upload className="import-dropzone-icon" />
           <p className="import-dropzone-title">Drag a file here, or click to browse</p>
-          <p className="import-dropzone-sub">Accepts .csv, .xlsx, and .xls</p>
+          <p className="import-dropzone-sub">Accepts .csv and .xlsx</p>
         </>
       )}
       {error && (

@@ -86,8 +86,8 @@ async function parseExcelFile(file) {
 export function parseImportFile(file) {
   const ext = (file.name.split('.').pop() || '').toLowerCase()
   if (ext === 'csv') return parseCsvFile(file)
-  if (ext === 'xlsx' || ext === 'xls') return parseExcelFile(file)
+  if (ext === 'xlsx') return parseExcelFile(file)
   return Promise.reject(
-    new Error(`Unsupported file type: .${ext || 'unknown'}. Upload a .csv, .xlsx, or .xls file.`)
+    new Error(`Unsupported file type: .${ext || 'unknown'}. Upload a .csv or .xlsx file.`)
   )
 }

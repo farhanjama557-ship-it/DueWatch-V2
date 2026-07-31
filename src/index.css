@@ -1538,12 +1538,6 @@ table {
   font-variant-numeric: tabular-nums;
 }
 
-.list-head-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
 /* ============================================================
    CSV / Excel Import wizard (PR A — parse, map, preview only;
    no database writes happen anywhere in this file's page)
