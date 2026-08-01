@@ -1895,6 +1895,283 @@ table {
 }
 
 /* ============================================================
+   Phase 1.5A import preview UI — extends the wizard rules above with the
+   screens the old 3-status Import.jsx never had (dates, currency,
+   review/rejected inspection, row detail). This page is not routed yet.
+   ============================================================ */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.import-step-heading {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 4px 0 14px;
+}
+
+.import-step-heading:focus {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.import-file-error {
+  text-align: center;
+  padding: 24px 12px;
+  color: var(--red);
+}
+
+.import-file-error h3 {
+  color: var(--text-primary);
+  margin: 10px 0 4px;
+  font-size: 15px;
+}
+
+.import-raw-preview-table td {
+  font-size: 12.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 160px;
+}
+
+.import-mapper-origin {
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-bottom: 6px;
+}
+
+.import-mapper-origin.origin-suggested { color: var(--blue); }
+.import-mapper-origin.origin-chosen { color: var(--primary-hover); }
+.import-mapper-origin.origin-none { color: var(--text-muted); }
+
+.import-error-block {
+  justify-content: flex-start;
+  margin-top: 10px;
+}
+
+.import-date-group {
+  border: 0.5px solid var(--border);
+  border-radius: 10px;
+  padding: 14px;
+  margin-bottom: 14px;
+}
+
+.import-date-group h4 {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+
+.import-date-group-mixed {
+  background: var(--amber-tint);
+  border-color: var(--amber);
+}
+
+.import-date-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.import-date-mixed-rows {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin: 6px 0;
+  padding-left: 18px;
+}
+
+.import-currency-choice {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 10px 0 16px;
+}
+
+.import-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.import-filter-bar .btn-outline.active {
+  border-color: var(--primary);
+  background: var(--primary-tint);
+  color: var(--primary-hover);
+}
+
+.import-preview-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.import-status-badge.status-ready-with-warnings {
+  background: var(--amber-tint);
+  color: var(--amber);
+}
+
+.import-status-badge.status-review-required {
+  background: var(--blue-tint);
+  color: var(--blue);
+}
+
+.import-status-badge.status-rejected {
+  background: rgba(220, 81, 72, 0.12);
+  color: var(--red);
+}
+
+.import-summary-num.tone-ready-with-warnings { color: var(--amber); }
+.import-summary-num.tone-review-required { color: var(--blue); }
+.import-summary-num.tone-rejected { color: var(--red); }
+
+.import-row-ready-with-warnings td {
+  background: rgba(224, 147, 12, 0.07);
+}
+
+.import-row-review-required td {
+  background: var(--blue-tint);
+}
+
+.import-row-rejected td {
+  background: rgba(220, 81, 72, 0.06);
+}
+
+.import-row-expand-toggle {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--primary-hover);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.import-row-detail {
+  padding: 12px 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.import-detail-block h5 {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.import-detail-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 4px 16px;
+}
+
+.import-detail-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12.5px;
+  border-bottom: 0.5px solid var(--border-soft);
+  padding: 2px 0;
+}
+
+.import-detail-row dt {
+  color: var(--text-muted);
+}
+
+.import-detail-row dd {
+  color: var(--text-primary);
+  text-align: right;
+  word-break: break-word;
+}
+
+.import-detail-issues {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 0;
+  list-style: none;
+}
+
+.import-detail-issue {
+  font-size: 12.5px;
+  border-left: 2px solid var(--border);
+  padding-left: 10px;
+}
+
+.import-detail-issue-meta {
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+
+.import-detail-issue-tech {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.import-issue-group {
+  border: 0.5px solid var(--border);
+  border-radius: 10px;
+  padding: 14px;
+  margin-bottom: 14px;
+}
+
+.import-issue-group h4 {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+
+.import-issue-group-rows {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin: 6px 0;
+  padding-left: 18px;
+}
+
+@media (max-width: 760px) {
+  .import-mapper {
+    grid-template-columns: 1fr;
+  }
+  .import-summary {
+    flex-wrap: wrap;
+    gap: 16px;
+  }
+  .import-preview-footer {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .import-preview-actions {
+    justify-content: flex-start;
+  }
+  .import-detail-list {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ============================================================
    Modal (Add Invoice)
    ============================================================ */
 .modal-overlay {
