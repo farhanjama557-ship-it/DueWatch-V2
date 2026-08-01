@@ -1,0 +1,128 @@
+name: "PR #22 Supabase CI Verification"
+
+# Ephemeral, local-only verification for PR #22 (codex/phase-0-canonical-clients).
+# Runs entirely against a disposable `supabase start` stack on this
+# GitHub-hosted runner. No Supabase account token, no remote project ref, no
+# hosted/production credentials, and no production data are used anywhere in
+# this workflow. The stack is destroyed when the job ends.
+#
+# This workflow intentionally triggers only on pushes to the dedicated
+# verification branch — it is infrastructure to check PR #22, not a
+# general-purpose CI pipeline, and must not run on every branch.
+on:
+  push:
+    branches:
+      - claude/verify-pr22-supabase-ci
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr22-supabase-verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: "Verify PR #22 (canonical clients) against local Supabase"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout verification branch
+        uses: actions/checkout@v4
+
+      - name: Record environment versions
+        run: |
+          mkdir -p pr22-verify-artifact
+          {
+            echo "workflow_run_id: ${{ github.run_id }}"
+            echo "workflow_run_attempt: ${{ github.run_attempt }}"
+            echo "workflow_ref: ${{ github.ref }}"
+            echo "workflow_sha: ${{ github.sha }}"
+            echo "runner_os: $(uname -a)"
+            echo "docker_version: $(docker --version)"
+          } > pr22-verify-artifact/00_versions.txt
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Record Node/npm versions
+        run: |
+          {
+            echo "node_version: $(node --version)"
+            echo "npm_version: $(npm --version)"
+          } >> pr22-verify-artifact/00_versions.txt
+
+      - name: Run existing JavaScript tests (client identity / resolution)
+        run: |
+          set +e
+          npm test > pr22-verify-artifact/js_tests.log 2>&1
+          js_exit=$?
+          cat pr22-verify-artifact/js_tests.log
+          echo "js_test_exit=$js_exit" >> pr22-verify-artifact/EXIT_CODE_SUMMARY.txt
+          exit $js_exit
+
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Record Supabase CLI / Postgres client versions
+        run: |
+          {
+            echo "supabase_cli_version: $(supabase --version)"
+            echo "psql_version: $(psql --version)"
+          } >> pr22-verify-artifact/00_versions.txt
+
+      - name: Start ephemeral local Supabase stack
+        run: supabase start
+
+      - name: Resolve local database URL
+        run: |
+          supabase status -o env > /tmp/supabase_status.env
+          DB_URL=$(grep '^DB_URL=' /tmp/supabase_status.env | cut -d '=' -f2- | tr -d '"')
+          if [ -z "$DB_URL" ]; then
+            echo "Failed to resolve local DB_URL from supabase status" >&2
+            exit 1
+          fi
+          echo "DB_URL=$DB_URL" >> "$GITHUB_ENV"
+          rm -f /tmp/supabase_status.env
+
+      - name: Record local Postgres server version
+        run: |
+          echo "postgres_server_version: $(psql "$DB_URL" -X -t -A -c 'select version();')" \
+            >> pr22-verify-artifact/00_versions.txt
+
+      - name: Apply schema + migration, run integration test, rollback check, FK smoke check
+        run: |
+          chmod +x scripts/ci/verify-pr22-supabase.sh
+          ARTIFACT_DIR=./pr22-verify-artifact scripts/ci/verify-pr22-supabase.sh
+        env:
+          ARTIFACT_DIR: ./pr22-verify-artifact
+
+      - name: Vite production build (regression check)
+        if: always()
+        run: |
+          set +e
+          npm run build > pr22-verify-artifact/build.log 2>&1
+          build_exit=$?
+          cat pr22-verify-artifact/build.log
+          echo "build_exit=$build_exit" >> pr22-verify-artifact/EXIT_CODE_SUMMARY.txt
+          exit $build_exit
+
+      - name: Tear down local Supabase stack
+        if: always()
+        run: supabase stop --no-backup || true
+
+      - name: Upload sanitized verification artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr22-supabase-verification
+          path: pr22-verify-artifact/
+          retention-days: 14
