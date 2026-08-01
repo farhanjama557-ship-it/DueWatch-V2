@@ -28,8 +28,13 @@ pool_mode = "transaction"
 default_pool_size = 20
 max_client_conn = 100
 
+# Disabled: `supabase start` would otherwise auto-apply everything under
+# supabase/migrations/ at container-boot time, before supabase/schema.sql
+# (which is not a timestamped migration) has been applied — breaking the
+# required apply order. The verification workflow applies schema.sql and
+# the Phase 0 migration explicitly, in the correct order, via psql instead.
 [db.migrations]
-enabled = true
+enabled = false
 schema_paths = []
 
 [db.seed]

@@ -1,4 +1,4 @@
-name: PR #22 Supabase CI Verification
+name: "PR #22 Supabase CI Verification"
 
 # Ephemeral, local-only verification for PR #22 (codex/phase-0-canonical-clients).
 # Runs entirely against a disposable `supabase start` stack on this
@@ -24,7 +24,7 @@ concurrency:
 
 jobs:
   verify:
-    name: Verify PR #22 (canonical clients) against local Supabase
+    name: "Verify PR #22 (canonical clients) against local Supabase"
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
