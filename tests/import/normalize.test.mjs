@@ -128,6 +128,49 @@ test('blank currency after an explicit USD default: resolved, no issue', () => {
   assert.equal(r.outcome, OUTCOMES.READY)
 })
 
+// ---- Correction 3: validate the file-level default currency once ----
+
+test('default currency: a lowercase supplied decision ("usd") normalizes to "USD" and applies', () => {
+  const r = oneRowResult({ currency: '' }, { defaultCurrency: 'usd' })
+  assert.equal(r.normalized.currency, 'USD')
+  assert.equal(r.outcome, OUTCOMES.READY)
+})
+
+test('default currency: an unsupported code ("XYZ") is rejected at the file level and blocks the whole file', () => {
+  const s = sheet('Sheet1', [row(1, Object.keys(MAPPING).map((i) => `header${i}`)), dataRow(2, {})])
+  const result = normalizeImportFile({ sheet: s, hasHeaderRow: true, mapping: MAPPING, defaultCurrency: 'XYZ' })
+  assert.equal(result.outcome, OUTCOMES.REJECTED)
+  assert.equal(result.rows.length, 0)
+  assert.ok(result.fileIssues.some((i) => i.code === ISSUE_CODES.UNSUPPORTED_CURRENCY))
+})
+
+test('default currency: an unrecognized currency word ("dollars") is rejected at the file level', () => {
+  const s = sheet('Sheet1', [row(1, Object.keys(MAPPING).map((i) => `header${i}`)), dataRow(2, {})])
+  const result = normalizeImportFile({ sheet: s, hasHeaderRow: true, mapping: MAPPING, defaultCurrency: 'dollars' })
+  assert.equal(result.outcome, OUTCOMES.REJECTED)
+  assert.ok(result.fileIssues.some((i) => i.code === ISSUE_CODES.UNSUPPORTED_CURRENCY))
+})
+
+test('default currency: an empty-string decision is never treated as an approved default — it blocks the file, same as an invalid one', () => {
+  const s = sheet('Sheet1', [row(1, Object.keys(MAPPING).map((i) => `header${i}`)), dataRow(2, {})])
+  const result = normalizeImportFile({ sheet: s, hasHeaderRow: true, mapping: MAPPING, defaultCurrency: '' })
+  assert.equal(result.outcome, OUTCOMES.REJECTED)
+  assert.ok(result.fileIssues.some((i) => i.code === ISSUE_CODES.UNSUPPORTED_CURRENCY))
+})
+
+test('default currency: omitting the decision entirely (null/undefined) is legitimate — no file-level block, rows stay review_required', () => {
+  const r = oneRowResult({ currency: '' }) // no defaultCurrency option at all
+  assert.equal(r.normalized.currency, null)
+  assert.ok(r.issues.some((i) => i.code === ISSUE_CODES.CURRENCY_DECISION_REQUIRED))
+  assert.equal(r.outcome, OUTCOMES.REVIEW_REQUIRED)
+})
+
+test('default currency: no row ever receives an unvalidated default value — an invalid decision never reaches normalized rows', () => {
+  const s = sheet('Sheet1', [row(1, Object.keys(MAPPING).map((i) => `header${i}`)), dataRow(2, { currency: '' }), dataRow(3, { currency: '' })])
+  const result = normalizeImportFile({ sheet: s, hasHeaderRow: true, mapping: MAPPING, defaultCurrency: 'not-a-currency' })
+  assert.equal(result.rows.length, 0, 'the file must be rejected outright, never partially processed with a bad default')
+})
+
 test('all six supported currencies pass through untouched', () => {
   for (const code of ['USD', 'CAD', 'GBP', 'EUR', 'AUD', 'NZD']) {
     const r = oneRowResult({ currency: code })
@@ -211,22 +254,23 @@ test('row limit: 10,001 data rows are rejected outright, not truncated', () => {
   assert.ok(result.fileIssues.some((i) => i.code === ISSUE_CODES.ROW_LIMIT_EXCEEDED))
 })
 
-test('mixed date formats: unambiguous forced-opposite rows resolve fine; the ambiguous row is flagged MIXED_DATE_FORMATS', () => {
+test('mixed date formats: conflicting forced-opposite rows in the same column are ALL affected, including the forced rows themselves (Correction 1)', () => {
   const headerRow = row(1, Object.keys(MAPPING).map((i) => `header${i}`))
   const rows = [
     headerRow,
     dataRow(2, { invoice_number: 'A', invoice_date: '25/03/2025' }), // forced DMY
-    dataRow(3, { invoice_number: 'B', invoice_date: '03/25/2025' }), // forced MDY
+    dataRow(3, { invoice_number: 'B', invoice_date: '03/25/2025' }), // forced MDY — conflicts with row A in the SAME column
     dataRow(4, { invoice_number: 'C', invoice_date: '04/05/2025' }), // ambiguous
   ]
   const result = normalizeImportFile({ sheet: sheet('S', rows), hasHeaderRow: true, mapping: MAPPING })
-  assert.equal(result.rows[0].normalized.invoice_date, '2025-03-25')
-  assert.equal(result.rows[1].normalized.invoice_date, '2025-03-25')
-  assert.ok(!result.rows[0].issues.some((i) => i.code === ISSUE_CODES.MIXED_DATE_FORMATS))
-  const ambiguousIssue = result.rows[2].issues.find((i) => i.code === ISSUE_CODES.MIXED_DATE_FORMATS)
-  assert.ok(ambiguousIssue)
-  assert.equal(ambiguousIssue.requiresUserChoice, true)
-  assert.equal(result.rows[2].outcome, OUTCOMES.REVIEW_REQUIRED)
+  for (const r of result.rows) {
+    const issue = r.issues.find((i) => i.code === ISSUE_CODES.MIXED_DATE_FORMATS)
+    assert.ok(issue, `row ${r.originalRowNumber} should be flagged MIXED_DATE_FORMATS`)
+    assert.equal(issue.requiresUserChoice, true)
+    assert.equal(issue.blocksImport, true)
+    assert.equal(r.normalized.invoice_date, null, 'must not be auto-normalized')
+    assert.equal(r.outcome, OUTCOMES.REVIEW_REQUIRED)
+  }
 })
 
 test('an ambiguous date with no mixed-file evidence uses its own field\'s supplied convention', () => {
@@ -279,6 +323,20 @@ test('per-column dates: conflicting forced evidence WITHIN the same column produ
   assert.equal(issue.field, 'invoice_date')
   assert.equal(issue.columnId, 4)
   assert.equal(issue.rowNumber, result.rows[2].originalRowNumber)
+})
+
+test('per-column dates: a deterministic ISO date in the SAME mixed-convention column stays normalized, unaffected by the numeric-date conflict', () => {
+  const headerRow = row(1, Object.keys(MAPPING).map((i) => `header${i}`))
+  const rows = [
+    headerRow,
+    dataRow(2, { invoice_number: 'A', invoice_date: '25/03/2025' }), // forces DMY
+    dataRow(3, { invoice_number: 'B', invoice_date: '03/25/2025' }), // forces MDY — conflict in this column
+    dataRow(4, { invoice_number: 'C', invoice_date: '2026-06-15' }), // deterministic ISO, same column
+  ]
+  const result = normalizeImportFile({ sheet: sheet('S', rows), hasHeaderRow: true, mapping: MAPPING })
+  assert.equal(result.rows[2].normalized.invoice_date, '2026-06-15')
+  assert.ok(!result.rows[2].issues.some((i) => i.code === ISSUE_CODES.MIXED_DATE_FORMATS))
+  assert.equal(result.rows[2].outcome, OUTCOMES.READY)
 })
 
 test('per-column dates: an unresolved choice in one column does not block a different, resolved column', () => {

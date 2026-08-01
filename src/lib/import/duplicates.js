@@ -24,11 +24,21 @@ function normalizePhoneKeyPart(v) {
   return String(v ?? '').replace(/[^0-9]/g, '')
 }
 
+// Source identifiers (source_client_id, source_invoice_id) are opaque,
+// system-generated IDs, not human names — Correction 4 requires them to
+// stay exact and case-sensitive (only outer whitespace trimmed). The
+// generic human-name normalizer (lowercase + internal-whitespace collapse)
+// must never touch them. source_system itself IS a human-readable label
+// ("QuickBooks", "Xero") and stays case-insensitive via normalizeKeyPart.
+function exactKeyPart(v) {
+  return String(v ?? '').trim()
+}
+
 // Returns a client-reference key string, or null if no reliable reference
 // exists — callers must not manufacture a key when this returns null.
 export function buildClientReference({ source_system, source_client_id, client_email, client_company, client_name, client_phone }) {
   if (source_system && source_client_id) {
-    return `srcclient:${normalizeKeyPart(source_system)}|${normalizeKeyPart(source_client_id)}`
+    return `srcclient:${normalizeKeyPart(source_system)}|${exactKeyPart(source_client_id)}`
   }
   if (client_email) {
     return `email:${normalizeKeyPart(client_email)}`
@@ -51,7 +61,7 @@ export function buildDuplicateKey(values) {
 
   if (source_system && source_invoice_id) {
     return {
-      key: `src:${normalizeKeyPart(source_system)}|${normalizeKeyPart(source_invoice_id)}`,
+      key: `src:${normalizeKeyPart(source_system)}|${exactKeyPart(source_invoice_id)}`,
       incomplete: false,
     }
   }

@@ -25,6 +25,18 @@ function cleanText(raw) {
   return String(raw).trim().replace(/\s+/g, ' ')
 }
 
+// Source identifiers are opaque, system-generated IDs, not human names —
+// only outer whitespace is trimmed; internal whitespace/case are preserved
+// exactly (Correction 4). The generic human-text cleanText() above must
+// never touch these two fields.
+const EXACT_TEXT_FIELD_KEYS = new Set(['source_client_id', 'source_invoice_id'])
+
+function cleanExactId(raw) {
+  if (raw == null) return ''
+  if (raw instanceof Date) return raw.toISOString()
+  return String(raw).trim()
+}
+
 function fieldDef(key) {
   return TARGET_FIELDS.find((f) => f.key === key)
 }
@@ -106,23 +118,54 @@ function requiredValueIssue(rowNumber, columnId, fieldKey) {
 
 function processDateField({ fieldKey, raw, columnId, rowNumber, dateSystem, effectiveConvention, mixedDetected, required }) {
   const issues = []
-  const result = parseDateValue(raw, { convention: effectiveConvention, dateSystem })
   const field = fieldDef(fieldKey)
 
+  // When this mapped date column has conflicting forced MDY/DMY evidence
+  // elsewhere in itself, EVERY nonblank numeric slash/dash date in this
+  // column is affected — including rows whose own value would otherwise
+  // be unambiguously forced one way or the other (e.g. 25/03/2025 and
+  // 03/25/2025 sitting in the same column are each individually
+  // resolvable in isolation, but together they prove this column doesn't
+  // consistently use one convention, so neither may be auto-resolved).
+  // Deterministic ISO/named-month dates never match classifyNumericDate,
+  // so they fall through untouched below, and this check is entirely
+  // scoped to `raw`/`fieldKey` — a different mapped date column is
+  // unaffected regardless of its own mixedDetected state.
+  if (mixedDetected && typeof raw === 'string' && raw.trim()) {
+    const classification = classifyNumericDate(raw.trim())
+    if (classification && (classification.kind === 'ambiguous' || classification.kind === 'forced-mdy' || classification.kind === 'forced-dmy')) {
+      issues.push(
+        makeIssue({
+          code: ISSUE_CODES.MIXED_DATE_FORMATS,
+          severity: 'warning',
+          rowNumber,
+          columnId,
+          field: fieldKey,
+          rawValue: raw,
+          normalizedValue: null,
+          message: `"${field.label}" mixes Month/Day/Year and Day/Month/Year dates within this column — this value cannot be auto-resolved and needs a manual choice.`,
+          blocksPreview: false,
+          blocksImport: true,
+          requiresUserChoice: true,
+        })
+      )
+      return { value: null, issues }
+    }
+  }
+
+  const result = parseDateValue(raw, { convention: effectiveConvention, dateSystem })
+
   if (result.code === 'AMBIGUOUS_DATE_FORMAT') {
-    const useMixedCode = mixedDetected
     issues.push(
       makeIssue({
-        code: useMixedCode ? ISSUE_CODES.MIXED_DATE_FORMATS : ISSUE_CODES.AMBIGUOUS_DATE_FORMAT,
+        code: ISSUE_CODES.AMBIGUOUS_DATE_FORMAT,
         severity: 'warning',
         rowNumber,
         columnId,
         field: fieldKey,
         rawValue: raw,
         normalizedValue: null,
-        message: useMixedCode
-          ? `"${field.label}" is ambiguous and this file mixes Month/Day/Year and Day/Month/Year dates elsewhere — resolve row by row.`
-          : `"${field.label}" is ambiguous ("${raw}") — choose Month/Day/Year or Day/Month/Year for this file.`,
+        message: `"${field.label}" is ambiguous ("${raw}") — choose Month/Day/Year or Day/Month/Year for this column.`,
         blocksPreview: false,
         blocksImport: true,
         requiresUserChoice: true,
@@ -350,6 +393,31 @@ export function normalizeImportFile({
     ])
   }
 
+  // Validate the file-level default-currency decision ONCE, up front.
+  // `null`/`undefined` (no decision made yet) is legitimate and leaves
+  // blank-currency rows individually review_required — it is NOT an
+  // error. But if a decision WAS supplied (including an empty string,
+  // which is never treated as an approved default), it must be a real
+  // supported code or the whole file is blocked — an invalid decision is
+  // never silently copied into normalized rows.
+  let validatedDefaultCurrency = null
+  if (defaultCurrency != null) {
+    const decision = normalizeCurrencyCode(defaultCurrency)
+    if (decision.blank || decision.error === 'UNSUPPORTED_CURRENCY') {
+      return rejectedFileResult([
+        makeIssue({
+          code: ISSUE_CODES.UNSUPPORTED_CURRENCY,
+          severity: 'error',
+          rawValue: defaultCurrency,
+          message: `The supplied file-level default currency ("${defaultCurrency}") is not a supported currency and cannot be applied.`,
+          blocksImport: true,
+          blocksPreview: true,
+        }),
+      ])
+    }
+    validatedDefaultCurrency = decision.value
+  }
+
   const classificationsByField = collectDateClassificationsByField(dataRows, mapping)
   const mixedByField = {}
   const effectiveConventionByField = {}
@@ -368,7 +436,7 @@ export function normalizeImportFile({
       dateSystem,
       effectiveConventionByField,
       mixedByField,
-      defaultCurrency,
+      defaultCurrency: validatedDefaultCurrency,
       sourceSheet: sheet.name,
     })
   )
@@ -425,7 +493,7 @@ function buildRowResult(row, { mapping, headers, dateSystem, effectiveConvention
     const { raw: value, columnId, issues: fieldIssues, skipRequiredCheck } = getFieldRaw(row, mapping, key, rowNumber)
     issues.push(...fieldIssues)
     raw[key] = value
-    let text = cleanText(value)
+    let text = EXACT_TEXT_FIELD_KEYS.has(key) ? cleanExactId(value) : cleanText(value)
     if (key === 'client_email') text = text.toLowerCase()
     normalized[key] = text || null
     if (field.required && !text && !skipRequiredCheck) {

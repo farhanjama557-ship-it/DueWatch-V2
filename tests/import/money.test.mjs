@@ -95,20 +95,29 @@ test('Excel numeric 1200.5 -> "1200.50"', () => {
   assert.equal(parseAmountNumber(1200.5).value, '1200.50')
 })
 
-test('Excel numeric 1.005 (3 fractional digits) is rejected, never rounded to "1.00" or "1.01"', () => {
+// Correction 2 makes single-separator ambiguity symmetrical between '.'
+// and ',': a single dot followed by exactly 3 digits is exactly as
+// ambiguous (thousands vs. decimal) as a single comma followed by exactly
+// 3 digits ("1,200"). "1.005" and "2.675" have that exact shape, so under
+// the corrected grammar they are AMBIGUOUS_AMOUNT_FORMAT, not a silent
+// round AND not an outright INVALID_AMOUNT — never rounded to "1.00"/"1.01"
+// either way.
+test('Excel numeric 1.005 (single dot, exactly 3 fractional digits) is ambiguous like any 3-digit single-separator group, never rounded', () => {
   const result = parseAmountNumber(1.005)
   assert.equal(result.value, null)
-  assert.equal(result.error, 'INVALID_AMOUNT')
+  assert.equal(result.ambiguous, true)
+  assert.equal(result.error, 'AMBIGUOUS_AMOUNT_FORMAT')
 })
 
-test('Excel numeric 2.675 (3 fractional digits) is rejected, never silently rounded', () => {
+test('Excel numeric 2.675 (single dot, exactly 3 fractional digits) is ambiguous, never silently rounded', () => {
   const result = parseAmountNumber(2.675)
   assert.equal(result.value, null)
-  assert.equal(result.error, 'INVALID_AMOUNT')
+  assert.equal(result.ambiguous, true)
+  assert.equal(result.error, 'AMBIGUOUS_AMOUNT_FORMAT')
 })
 
-test('a CSV-text amount with more than 2 fractional digits is rejected the same way, not rounded', () => {
-  const result = parseAmountString('19.999')
+test('a CSV-text amount with a non-3-digit excess of fractional digits is rejected as INVALID_AMOUNT, not rounded', () => {
+  const result = parseAmountString('19.9999')
   assert.equal(result.value, null)
   assert.equal(result.error, 'INVALID_AMOUNT')
 })
@@ -171,4 +180,75 @@ test('parseAmount dispatches on raw type (number vs string vs blank)', () => {
   assert.equal(parseAmount('1,200.00').value, '1200.00')
   assert.deepEqual(parseAmount(null), { value: null, blank: true, ambiguous: false, error: null })
   assert.deepEqual(parseAmount(''), { value: null, blank: true, ambiguous: false, error: null })
+})
+
+// ---- Correction 2: strict amount grammar — reject rather than repair ----
+
+test('strict grammar: every listed malformed example produces INVALID_AMOUNT', () => {
+  const malformed = ['12O0', 'abc1200', '1200abc', '1-200', '--1200', '$USD 1200', '(1200', '1200)', '1,20,0', '12.34.56']
+  for (const input of malformed) {
+    const result = parseAmountString(input)
+    assert.equal(result.value, null, `expected "${input}" to be rejected`)
+    assert.equal(result.error, 'INVALID_AMOUNT', `expected "${input}" -> INVALID_AMOUNT, got ${result.error}`)
+  }
+})
+
+test('strict grammar: every listed valid example parses to the correct exact amount', () => {
+  assert.equal(parseAmountString('$1,234.56').value, '1234.56')
+  assert.equal(parseAmountString('USD 1,234.56').value, '1234.56')
+  assert.equal(parseAmountString('1,234.56 USD').value, '1234.56')
+  assert.equal(parseAmountString('€1.200,00').value, '1200.00')
+  assert.equal(parseAmountString('(500.00)').value, '-500.00')
+  assert.equal(parseAmountString('-500.00').value, '-500.00')
+})
+
+test('strict grammar: single-separator ambiguity is symmetrical between comma and dot', () => {
+  const commaResult = parseAmountString('1,200')
+  assert.equal(commaResult.value, null)
+  assert.equal(commaResult.error, 'AMBIGUOUS_AMOUNT_FORMAT')
+  const dotResult = parseAmountString('1.200')
+  assert.equal(dotResult.value, null)
+  assert.equal(dotResult.error, 'AMBIGUOUS_AMOUNT_FORMAT')
+})
+
+test('strict grammar: recognized £ and lowercase-code prefixes/suffixes are accepted', () => {
+  assert.equal(parseAmountString('£500.00').value, '500.00')
+  assert.equal(parseAmountString('cad 42.50').value, '42.50')
+  assert.equal(parseAmountString('42.50 eur').value, '42.50')
+})
+
+test('strict grammar: repeated currency symbols are rejected, not silently deduplicated', () => {
+  assert.equal(parseAmountString('$$500.00').error, 'INVALID_AMOUNT')
+  assert.equal(parseAmountString('$1,234.56 USD').error, 'INVALID_AMOUNT')
+})
+
+test('strict grammar: an unrecognized currency word is rejected, not stripped', () => {
+  assert.equal(parseAmountString('dollars 1200').error, 'INVALID_AMOUNT')
+  assert.equal(parseAmountString('1200 dollars').error, 'INVALID_AMOUNT')
+})
+
+test('strict grammar: grouped-thousands rule — first group 1-3 digits, every following group exactly 3', () => {
+  assert.equal(parseAmountString('1,234,567.89').value, '1234567.89')
+  assert.equal(parseAmountString('1.234.567,89').value, '1234567.89')
+  assert.equal(parseAmountString('12,34,567').error, 'INVALID_AMOUNT') // second group "34" is not 3 digits
+  assert.equal(parseAmountString('1234,567').error, 'INVALID_AMOUNT') // first group "1234" is over 3 digits
+})
+
+test('strict grammar: leading zeroes are stripped before the magnitude check, zero itself is preserved', () => {
+  assert.equal(parseAmountString('007.50').value, '7.50')
+  assert.equal(parseAmountString('0.00').value, '0.00')
+  assert.equal(parseAmountString('000').value, '0.00')
+  assert.equal(parseAmountString('0').value, '0.00')
+})
+
+test('strict grammar: a value with 11 significant integer digits after stripping leading zeroes is still rejected', () => {
+  assert.equal(parseAmountString('00012345678901.00').error, 'INVALID_AMOUNT') // 12345678901 = 11 digits
+  assert.equal(parseAmountString('000099999999999.00').error, 'INVALID_AMOUNT') // 99999999999 = 11 nines
+})
+
+test('strict grammar: comparisons and normalization after strict parsing remain BigInt/string-exact', () => {
+  const a = parseAmountString('$1,200.00').value
+  const b = parseAmountString('1200.00').value
+  assert.equal(a, b)
+  assert.equal(compareAmounts(a, b), 0)
 })

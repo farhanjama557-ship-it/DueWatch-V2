@@ -9,7 +9,9 @@ test('source system + source invoice ID takes priority over everything else', ()
     invoice_number: 'IGNORED',
     client_email: 'a@example.test',
   })
-  assert.equal(result.key, 'src:quickbooks|inv-9')
+  // source_system is case-insensitive ("quickbooks"); source_invoice_id
+  // stays exact/case-sensitive ("INV-9", not lowercased) — Correction 4.
+  assert.equal(result.key, 'src:quickbooks|INV-9')
   assert.equal(result.incomplete, false)
 })
 
@@ -54,6 +56,50 @@ test('the same invoice number across two different clients is not flagged as a d
   const a = buildDuplicateKey({ client_email: 'alice@example.test', invoice_number: 'INV-1' })
   const b = buildDuplicateKey({ client_email: 'bob@example.test', invoice_number: 'INV-1' })
   assert.notEqual(a.key, b.key)
+})
+
+// ---- Correction 4: source IDs are case-sensitive, source_system is not ----
+
+test('source-invoice-ID path: "quickbooks"+"ABC" matches "QuickBooks"+"ABC" (source_system case-insensitive)', () => {
+  const a = buildDuplicateKey({ source_system: 'quickbooks', source_invoice_id: 'ABC' })
+  const b = buildDuplicateKey({ source_system: 'QuickBooks', source_invoice_id: 'ABC' })
+  assert.equal(a.key, b.key)
+})
+
+test('source-invoice-ID path: "ABC" does not match "abc" (source_invoice_id case-sensitive)', () => {
+  const a = buildDuplicateKey({ source_system: 'quickbooks', source_invoice_id: 'ABC' })
+  const b = buildDuplicateKey({ source_system: 'quickbooks', source_invoice_id: 'abc' })
+  assert.notEqual(a.key, b.key)
+})
+
+test('source-invoice-ID path: surrounding accidental whitespace is trimmed but internal content is exact', () => {
+  const a = buildDuplicateKey({ source_system: 'quickbooks', source_invoice_id: '  ABC  ' })
+  const b = buildDuplicateKey({ source_system: 'quickbooks', source_invoice_id: 'ABC' })
+  assert.equal(a.key, b.key)
+})
+
+test('source-client-ID path: "CLIENT-1" does not match "client-1" (source_client_id case-sensitive)', () => {
+  const a = buildClientReference({ source_system: 'quickbooks', source_client_id: 'CLIENT-1' })
+  const b = buildClientReference({ source_system: 'quickbooks', source_client_id: 'client-1' })
+  assert.notEqual(a, b)
+})
+
+test('source-client-ID path: source_system stays case-insensitive while source_client_id stays exact', () => {
+  const a = buildClientReference({ source_system: 'QuickBooks', source_client_id: 'CLIENT-1' })
+  const b = buildClientReference({ source_system: 'quickbooks', source_client_id: 'CLIENT-1' })
+  assert.equal(a, b)
+})
+
+test('email normalization remains case-insensitive (unaffected by Correction 4)', () => {
+  const a = buildClientReference({ client_email: 'Billing@Example.test' })
+  const b = buildClientReference({ client_email: 'billing@example.test' })
+  assert.equal(a, b)
+})
+
+test('company/name and invoice-number fallback normalization remain unchanged (case-insensitive, whitespace-collapsed)', () => {
+  const a = buildDuplicateKey({ client_company: 'Acme  Co', client_name: 'Jane Doe', invoice_number: 'INV-1' })
+  const b = buildDuplicateKey({ client_company: 'acme co', client_name: 'jane doe', invoice_number: 'inv-1' })
+  assert.equal(a.key, b.key)
 })
 
 test('findDuplicateGroups groups only repeated non-null keys', () => {
