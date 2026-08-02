@@ -187,6 +187,8 @@ echo "pre-migration fixture cleanup exit code: $precleanup_exit" \
 [ "$precleanup_exit" -eq 0 ] || overall_status=1
 
 section "Running grouped transactional integration tests"
+authenticated_clients_select_before_test=$(psql "$DB_URL" -v ON_ERROR_STOP=1 \
+  -X -t -A -c "select has_table_privilege('authenticated', 'public.clients', 'SELECT')::text;")
 psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/tests/canonical_clients_test.sql \
   > "$ARTIFACT_DIR/06_integration_test.log" 2>&1
 integration_exit=$?
@@ -242,11 +244,17 @@ select
     'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1'::uuid,
     'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2'::uuid,
     'cccccccc-cccc-4ccc-8ccc-ccccccccccc3'::uuid)),
-  (select execution_enabled::text from duewatch_ops.client_dedup_config where singleton);
+  (select execution_enabled::text from duewatch_ops.client_dedup_config where singleton),
+  has_table_privilege('authenticated', 'public.clients', 'SELECT')::text;
 SQL
 )
 rollback_query_exit=$?
-IFS=',' read -r leftover_users leftover_clients leftover_sources leftover_runs leftover_candidates leftover_audit exec_enabled_after <<< "$leftover_summary"
+IFS=',' read -r leftover_users leftover_clients leftover_sources leftover_runs leftover_candidates leftover_audit exec_enabled_after authenticated_clients_select_after_test <<< "$leftover_summary"
+test_clients_grant_rolled_back=1
+if [ "${authenticated_clients_select_after_test:-unknown}" \
+     != "${authenticated_clients_select_before_test:-unknown}" ]; then
+  test_clients_grant_rolled_back=0
+fi
 rollback_clean=1
 if [ "$rollback_query_exit" -ne 0 ] \
    || [ "${leftover_users:-1}" != "0" ] \
@@ -255,7 +263,8 @@ if [ "$rollback_query_exit" -ne 0 ] \
    || [ "${leftover_runs:-1}" != "0" ] \
    || [ "${leftover_candidates:-1}" != "0" ] \
    || [ "${leftover_audit:-1}" != "0" ] \
-   || [ "${exec_enabled_after:-true}" != "false" ]; then
+   || [ "${exec_enabled_after:-true}" != "false" ] \
+   || [ "$test_clients_grant_rolled_back" -ne 1 ]; then
   rollback_clean=0
   overall_status=1
 fi
@@ -267,6 +276,9 @@ fi
   echo "leftover_candidates=${leftover_candidates:-?}"
   echo "leftover_audit=${leftover_audit:-?}"
   echo "execution_enabled_after_test=${exec_enabled_after:-?}"
+  echo "authenticated_clients_select_before_test=${authenticated_clients_select_before_test:-?}"
+  echo "authenticated_clients_select_after_test=${authenticated_clients_select_after_test:-?}"
+  echo "test_clients_grant_rolled_back=$test_clients_grant_rolled_back"
   echo "rollback_clean=$rollback_clean"
 } >> "$ARTIFACT_DIR/07_rollback_evidence.log"
 
@@ -295,7 +307,7 @@ echo "$FK_WARNING" >> "$ARTIFACT_DIR/09_fk_smoke_check.log"
 [ "$fk_exit" -eq 0 ] || overall_status=1
 
 echo "$overall_status" > "$ARTIFACT_DIR/OVERALL_EXIT_CODE"
-echo "schema_exit=$schema_exit preseed_exit=$preseed_exit migration_exit=$migration_exit backfill_exit=$backfill_exit precleanup_exit=$precleanup_exit integration_exit=$integration_exit integration_relationships_exit=$integration_relationships_exit tenant_isolation_exit=$tenant_isolation_exit idempotency_exit=$idempotency_exit rollback_clean=$rollback_clean execution_enabled_after_test=${exec_enabled_after:-unknown} legacy_dedupe_exit=$legacy_dedupe_exit fk_exit=$fk_exit" \
+echo "schema_exit=$schema_exit preseed_exit=$preseed_exit migration_exit=$migration_exit backfill_exit=$backfill_exit precleanup_exit=$precleanup_exit integration_exit=$integration_exit integration_relationships_exit=$integration_relationships_exit tenant_isolation_exit=$tenant_isolation_exit idempotency_exit=$idempotency_exit rollback_clean=$rollback_clean authenticated_clients_select_before_test=${authenticated_clients_select_before_test:-unknown} authenticated_clients_select_after_test=${authenticated_clients_select_after_test:-unknown} test_clients_grant_rolled_back=$test_clients_grant_rolled_back execution_enabled_after_test=${exec_enabled_after:-unknown} legacy_dedupe_exit=$legacy_dedupe_exit fk_exit=$fk_exit" \
   >> "$ARTIFACT_DIR/EXIT_CODE_SUMMARY.txt"
 
 exit "$overall_status"

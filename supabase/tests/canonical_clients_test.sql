@@ -472,6 +472,18 @@ begin
 end
 $tenant_isolation$;
 
+\echo 'authenticated clients SELECT before transactional test grant:'
+select has_table_privilege(
+  'authenticated', 'public.clients', 'SELECT'
+) as authenticated_clients_select_before_test_grant;
+
+-- TEST-ONLY PRIVILEGE FIXTURE: this grant exists solely to exercise the
+-- repository's existing clients_all_own RLS policy as the authenticated role.
+-- The complete integration suite is one transaction, and the final rollback
+-- removes this grant. It does not prove hosted staging privileges and must not
+-- be treated or presented as a production permission migration.
+grant select on public.clients to authenticated;
+
 set local role authenticated;
 select set_config(
   'request.jwt.claim.sub',
