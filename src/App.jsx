@@ -6,6 +6,7 @@ import Login from './pages/Login'
 import Signup from './pages/Signup'
 import Dashboard from './pages/Dashboard'
 import Invoices from './pages/Invoices'
+import Import from './pages/Import'
 import Clients from './pages/Clients'
 import CashFlow from './pages/CashFlow'
 import Activity from './pages/Activity'
@@ -66,6 +67,7 @@ export default function App() {
         }
       >
         <Route path="/invoices" element={<Invoices />} />
+        <Route path="/import" element={<Import />} />
         <Route path="/clients" element={<Clients />} />
         <Route path="/cash-flow" element={<CashFlow />} />
         <Route path="/activity" element={<Activity />} />

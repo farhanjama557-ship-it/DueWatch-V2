@@ -23,8 +23,9 @@ export default function ReviewStep({ result, onBack, onGoToDates }) {
   return (
     <div className="brief-card">
       <p className="import-help">
-        {rows.length} row{rows.length === 1 ? '' : 's'} need a decision before they could proceed. Grouped by the
-        reason below.
+        {rows.length === 1
+          ? '1 row needs a decision before it can proceed. Grouped by the reason below.'
+          : `${rows.length} rows need a decision before they can proceed. Grouped by the reason below.`}
       </p>
 
       {[...groups.entries()].map(([code, groupRows]) => {

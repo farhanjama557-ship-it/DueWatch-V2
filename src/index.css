@@ -1382,6 +1382,37 @@ table {
   gap: 16px;
 }
 
+/* Groups the secondary "Import CSV / Excel" action with the primary "New
+   Invoice" action on the Invoices page header. Scoped to this wrapper only
+   — .list-head's own layout (used elsewhere too) is untouched. */
+.invoices-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.invoices-import-link {
+  text-decoration: none;
+}
+
+.invoices-header-actions .btn-outline.btn-inline,
+.invoices-header-actions .btn-terracotta.btn-inline {
+  min-height: 44px;
+}
+
+@media (max-width: 480px) {
+  .invoices-header-actions {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .invoices-header-actions .btn-outline.btn-inline,
+  .invoices-header-actions .btn-terracotta.btn-inline {
+    width: 100%;
+  }
+}
+
 .btn-terracotta.btn-inline,
 .btn-outline.btn-inline {
   width: auto;
@@ -1952,11 +1983,11 @@ table {
   table-layout: fixed;
 }
 
-.import-preview-table col.col-status { width: 17%; }
-.import-preview-table col.col-client { width: 19%; }
-.import-preview-table col.col-invnum { width: 9%; }
-.import-preview-table col.col-due { width: 13%; }
-.import-preview-table col.col-amount { width: 11%; }
+.import-preview-table col.col-status { width: 15%; }
+.import-preview-table col.col-client { width: 18%; }
+.import-preview-table col.col-invnum { width: 14%; }
+.import-preview-table col.col-due { width: 12%; }
+.import-preview-table col.col-amount { width: 10%; }
 .import-preview-table col.col-issues { width: 31%; }
 
 /* Specificity note: .invoice-table tbody td (0,1,2) otherwise beats a bare
