@@ -33,16 +33,18 @@ function AmbiguousFieldGroup({ fieldKey, entries, headers, choice, onChoose }) {
         Column "{headerForColumn(headers, columnId)}" — {entries.length} row{entries.length === 1 ? '' : 's'} affected.
       </p>
       <p className="import-help">Sample values: {uniqueRawValues.join(', ')}</p>
-      <fieldset className="import-date-choice">
+      <fieldset className="import-fieldset-reset">
         <legend className="sr-only">Date order for {fieldLabel(fieldKey)}</legend>
-        <label className="import-header-toggle">
-          <input type="radio" name={`date-${fieldKey}`} checked={choice === 'MDY'} onChange={() => onChoose(fieldKey, 'MDY')} />
-          Month / Day / Year{example ? ` — e.g. ${uniqueRawValues[0]} → ${example.mdy}` : ''}
-        </label>
-        <label className="import-header-toggle">
-          <input type="radio" name={`date-${fieldKey}`} checked={choice === 'DMY'} onChange={() => onChoose(fieldKey, 'DMY')} />
-          Day / Month / Year{example ? ` — e.g. ${uniqueRawValues[0]} → ${example.dmy}` : ''}
-        </label>
+        <div className="import-choice-list">
+          <label className={choice === 'MDY' ? 'import-choice-row selected' : 'import-choice-row'}>
+            <input type="radio" name={`date-${fieldKey}`} checked={choice === 'MDY'} onChange={() => onChoose(fieldKey, 'MDY')} />
+            Month / Day / Year{example ? ` — e.g. ${uniqueRawValues[0]} → ${example.mdy}` : ''}
+          </label>
+          <label className={choice === 'DMY' ? 'import-choice-row selected' : 'import-choice-row'}>
+            <input type="radio" name={`date-${fieldKey}`} checked={choice === 'DMY'} onChange={() => onChoose(fieldKey, 'DMY')} />
+            Day / Month / Year{example ? ` — e.g. ${uniqueRawValues[0]} → ${example.dmy}` : ''}
+          </label>
+        </div>
       </fieldset>
     </div>
   )
@@ -105,7 +107,7 @@ export default function DatesStep({ rows, headers, dateConvention, onConfirm, on
       ))}
 
       <div className="import-preview-footer">
-        <button className="btn-outline btn-inline" onClick={onBack}>
+        <button className="btn-outline btn-inline import-btn-back" onClick={onBack}>
           <ArrowLeft width={16} height={16} aria-hidden="true" /> Back
         </button>
         <button className="btn-terracotta btn-inline" disabled={!allChosen} onClick={() => onConfirm(pending)}>

@@ -25,6 +25,11 @@ import ReviewStep from '../components/import/ReviewStep.jsx'
 import RejectedStep from '../components/import/RejectedStep.jsx'
 import CompleteStep from '../components/import/CompleteStep.jsx'
 
+// Wide working screens get more room for tables/mapping grids; every other
+// step is a narrower, focused decision screen. Purely a width choice — no
+// behavior or step logic depends on this set.
+const WIDE_STEPS = new Set(['mapping', 'preview', 'review', 'rejected'])
+
 const STEP_TITLES = {
   upload: 'Upload a file',
   parsing: 'Reading your file',
@@ -211,14 +216,16 @@ export default function Import() {
     goTo('preview')
   }
 
+  const widthVariant = WIDE_STEPS.has(step) ? 'import-shell--wide' : 'import-shell--narrow'
+
   return (
-    <div className="brief import-shell">
+    <div className={`brief import-shell ${widthVariant}`}>
       <div className="list-head">
         <div>
           <h1 className="brief-greeting">Invoices</h1>
           <h2 className="import-title">Import preview from CSV or Excel</h2>
         </div>
-        <Link to="/invoices" className="btn-outline btn-inline import-cancel-link">
+        <Link to="/invoices" className="import-cancel-link">
           <X width={16} height={16} /> Cancel
         </Link>
       </div>

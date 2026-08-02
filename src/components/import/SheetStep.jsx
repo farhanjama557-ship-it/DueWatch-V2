@@ -22,7 +22,7 @@ export default function SheetStep({ sheets, selectedIndex, onSelect, onContinue,
         })}
       </fieldset>
       <div className="import-preview-footer">
-        <button className="btn-outline btn-inline" onClick={onBack}>
+        <button className="btn-outline btn-inline import-btn-back" onClick={onBack}>
           <ArrowLeft width={16} height={16} aria-hidden="true" /> Back
         </button>
         <button className="btn-terracotta btn-inline" onClick={onContinue}>

@@ -53,7 +53,7 @@ export default function RowTable({ rows, headers, totalCount, emptyMessage }) {
 
   return (
     <div>
-      <div className="list-card import-preview-table-wrap">
+      <div className="import-data-well import-preview-table-wrap">
         <table className="invoice-table import-preview-table">
           <colgroup>
             <col className="col-status" />

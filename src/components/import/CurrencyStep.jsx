@@ -15,19 +15,22 @@ export default function CurrencyStep({ rows, selectedCurrency, onSelect, onConfi
         those rows should use. Rows that already had an explicit currency are unchanged.
       </p>
 
-      <fieldset className="import-currency-choice">
+      <fieldset className="import-fieldset-reset">
         <legend className="sr-only">Default currency</legend>
-        {SUPPORTED_CURRENCIES.map((code) => (
-          <label key={code} className="import-header-toggle">
-            <input type="radio" name="default-currency" checked={selectedCurrency === code} onChange={() => onSelect(code)} />
-            {code}
-          </label>
-        ))}
+        <div className="import-choice-grid">
+          {SUPPORTED_CURRENCIES.map((code) => (
+            <label key={code} className={selectedCurrency === code ? 'import-choice-row selected' : 'import-choice-row'}>
+              <input type="radio" name="default-currency" checked={selectedCurrency === code} onChange={() => onSelect(code)} />
+              {code}
+            </label>
+          ))}
+        </div>
       </fieldset>
 
       {sample.length > 0 && (
         <>
-          <div className="list-card import-preview-table-wrap">
+          <p className="import-well-label">Affected rows</p>
+          <div className="import-data-well import-preview-table-wrap">
             <table className="invoice-table">
               <thead>
                 <tr>
@@ -50,7 +53,7 @@ export default function CurrencyStep({ rows, selectedCurrency, onSelect, onConfi
       )}
 
       <div className="import-preview-footer">
-        <button className="btn-outline btn-inline" onClick={onBack}>
+        <button className="btn-outline btn-inline import-btn-back" onClick={onBack}>
           <ArrowLeft width={16} height={16} aria-hidden="true" /> Back
         </button>
         <button className="btn-terracotta btn-inline" onClick={() => onConfirm(selectedCurrency)}>

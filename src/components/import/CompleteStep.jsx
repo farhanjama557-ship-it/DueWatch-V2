@@ -3,9 +3,9 @@ import { OUTCOME_META, OUTCOME_FILTERS } from '../../lib/importUiCopy.js'
 export default function CompleteStep({ summary, onStartOver }) {
   return (
     <div className="brief-card" aria-live="polite">
-      <div className="import-summary">
+      <div className="import-outcome-cards" role="group" aria-label="Preview outcome summary">
         {OUTCOME_FILTERS.map((outcome) => (
-          <div className="import-summary-item" key={outcome}>
+          <div className="import-outcome-card" key={outcome}>
             <span className={`import-summary-num tone-${outcome.replace(/_/g, '-')}`}>{summary[outcome]}</span>
             <span className="import-summary-label">{OUTCOME_META[outcome].label}</span>
           </div>

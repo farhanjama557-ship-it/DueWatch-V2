@@ -1539,18 +1539,76 @@ table {
 }
 
 /* ============================================================
-   CSV / Excel Import wizard (PR A — parse, map, preview only;
-   no database writes happen anywhere in this file's page)
+   CSV / Excel Import wizard — Phase 1.5A preview UI.
+   Parse, map, preview only; no database writes happen anywhere on this
+   page, and the page is not routed into the shipped app yet. Every rule
+   below is scoped to .import-shell (or an .import-* component class) so
+   nothing here affects Dashboard/Invoices/Clients/auth or any other page
+   that shares .brief/.brief-card/.btn-terracotta/.btn-outline.
    ============================================================ */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---- Shell: centering + width variants ---------------------- */
+
+/* .brief reserves padding-right: var(--rail-w) (300px) for a dashboard
+   rail this unrouted page has none of; reclaimed here (only on the one
+   element carrying both classes) rather than touching .brief itself, so
+   every other page's rail layout is untouched. */
+.import-shell {
+  padding-right: 0;
+  margin-inline: auto;
+  padding-left: 16px;
+  padding-right: 16px;
+}
+
+.import-shell--narrow {
+  max-width: 760px;
+}
+
+.import-shell--wide {
+  max-width: 960px;
+}
+
+@media (min-width: 761px) {
+  .import-shell {
+    padding-left: 0;
+    padding-right: 0;
+  }
+}
+
+/* ---- Page title / step heading / progress -------------------- */
+
 .import-title {
   font-size: 20px;
   font-weight: 700;
   color: var(--text-primary);
 }
 
-.import-cancel-link {
-  width: auto;
-  text-decoration: none;
+.import-step-heading {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 4px 0 16px;
+}
+
+/* The heading is focused programmatically for screen-reader/keyboard
+   context on every step transition, not because a user interacted with
+   it — a strong ring here reads as an alert on every ordinary screen. No
+   visible ring on this static, non-interactive heading; real interactive
+   controls (buttons, links, radio rows, selects, toggles, the drop zone)
+   keep a clearly visible focus-visible ring below. */
+.import-step-heading:focus {
+  outline: none;
 }
 
 .import-steps {
@@ -1558,6 +1616,7 @@ table {
   align-items: center;
   gap: 20px;
   margin: 18px 0 20px;
+  flex-wrap: wrap;
 }
 
 .import-step {
@@ -1569,16 +1628,26 @@ table {
   color: var(--text-muted);
 }
 
-.import-step.active {
+.import-step-upcoming {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.import-step-completed {
+  color: var(--text-secondary);
+}
+
+.import-step-current {
   color: var(--primary-hover);
+  font-weight: 700;
 }
 
 .import-step-num {
   width: 20px;
   height: 20px;
   border-radius: 50%;
-  background: var(--border);
-  color: var(--text-secondary);
+  background: var(--border-soft);
+  color: var(--text-muted);
   font-size: 11px;
   display: inline-flex;
   align-items: center;
@@ -1586,9 +1655,45 @@ table {
   flex-shrink: 0;
 }
 
-.import-step.active .import-step-num {
+.import-step-completed .import-step-num {
+  background: var(--border);
+  color: var(--text-secondary);
+}
+
+.import-step-current .import-step-num {
   background: var(--primary);
   color: #fff;
+}
+
+@media (max-width: 760px) {
+  .import-steps {
+    gap: 10px 14px;
+  }
+  .import-step {
+    font-size: 11.5px;
+    gap: 6px;
+  }
+}
+
+/* ---- Header/file-context hierarchy: Cancel, Start over, Back, Primary */
+
+/* Cancel — top-right, muted ghost text, not a bordered button. */
+.import-cancel-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: auto;
+  text-decoration: none;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 4px;
+  border-radius: 6px;
+}
+
+.import-cancel-link:hover {
+  color: var(--text-secondary);
+  background: var(--border-soft);
 }
 
 .import-filename {
@@ -1597,15 +1702,477 @@ table {
   gap: 8px;
   font-size: 12.5px;
   color: var(--text-secondary);
-  margin-bottom: 12px;
+  margin-bottom: 16px;
 }
 
+/* Start over — a deliberate text action, terracotta, no button chrome;
+   deliberately quieter than Cancel (smaller, no hover background) and far
+   quieter than the primary action. */
 .import-restart {
   margin-left: auto;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
   color: var(--primary-hover);
   font-weight: 600;
   font-size: 12.5px;
 }
+
+.import-restart:hover {
+  text-decoration: underline;
+}
+
+/* Back — bottom-left, text/ghost, dark neutral (not terracotta, not a
+   bordered secondary button) so it reads as a quiet way back rather than
+   a competing action next to Primary. */
+.import-shell .import-btn-back {
+  width: auto;
+  height: auto;
+  background: none;
+  border: none;
+  padding: 10px 4px;
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.import-shell .import-btn-back:hover {
+  background: var(--border-soft);
+  border-color: transparent;
+}
+
+/* Primary — filled dark Duewatch treatment, used for every forward action
+   (Continue, Confirm dates, Confirm currency, Finish preview, Try another
+   file). Scoped to .import-shell only — the shared .btn-terracotta class
+   keeps its terracotta treatment everywhere else in the app. */
+.import-shell .btn-terracotta {
+  background: #231f1b;
+  border-radius: 10px;
+}
+
+.import-shell .btn-terracotta:hover {
+  background: #35302b;
+}
+
+.import-shell .btn-terracotta:disabled,
+.import-shell .btn-outline:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.import-shell .btn-terracotta:disabled:hover {
+  background: #231f1b;
+}
+
+.import-shell .btn-outline:disabled:hover {
+  background: var(--surface);
+  border-color: var(--border);
+}
+
+.import-preview-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin-top: 8px;
+}
+
+@media (max-width: 760px) {
+  .import-preview-footer {
+    flex-direction: column-reverse;
+    align-items: stretch;
+    gap: 10px;
+  }
+  .import-shell .import-btn-back {
+    text-align: center;
+  }
+}
+
+/* ---- Focus-visible: every real interactive control ------------ */
+
+.import-shell a:focus-visible,
+.import-shell button:focus-visible,
+.import-shell select:focus-visible,
+.import-shell input:focus-visible,
+.import-dropzone:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+.import-choice-row:focus-within {
+  outline: 2px solid var(--blue);
+  outline-offset: 1px;
+}
+
+/* ---- Cards / surfaces ------------------------------------------ */
+
+.import-shell .brief-card {
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 0;
+}
+
+.import-help {
+  font-size: 14px;
+  color: var(--text-secondary);
+  margin-bottom: 14px;
+}
+
+.import-well-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+.import-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: var(--red);
+  font-size: 13px;
+  font-weight: 600;
+  margin-top: 14px;
+}
+
+.import-error-block {
+  justify-content: flex-start;
+  margin-top: 10px;
+}
+
+.import-file-error {
+  text-align: center;
+  padding: 24px 12px;
+  color: var(--red);
+}
+
+.import-file-error h3 {
+  color: var(--text-primary);
+  margin: 10px 0 4px;
+  font-size: 15px;
+}
+
+/* ---- Choice rows: header confirmation, date order, currency ---- */
+
+/* Resets only the native <fieldset> box/legend chrome; the semantic
+   <fieldset>/<legend>/native radios stay in the DOM and keep native
+   keyboard/screen-reader behavior — only the visual border is removed. */
+.import-fieldset-reset {
+  border: 0;
+  padding: 0;
+  margin: 0 0 16px;
+}
+
+.import-fieldset-reset legend {
+  padding: 0;
+  margin-bottom: 8px;
+}
+
+.import-choice-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.import-choice-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+  gap: 8px;
+}
+
+.import-choice-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+.import-choice-row:hover {
+  border-color: var(--text-muted);
+}
+
+.import-choice-row.selected {
+  border-color: var(--primary-hover);
+  background: var(--primary-tint);
+}
+
+/* ---- Data wells: raw preview, currency affected-rows, tables ---- */
+
+.import-data-well {
+  background: #f7f7f5;
+  border-radius: 12px;
+  padding: 16px;
+  overflow-x: auto;
+}
+
+.import-data-well table {
+  background: transparent;
+}
+
+.import-data-well thead th {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  border-bottom: 1px solid var(--border);
+}
+
+.import-data-well tbody td {
+  font-size: 14px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.import-data-well tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.import-preview-table-wrap {
+  margin-bottom: 8px;
+}
+
+/* Own colgroup, not the six invoice-list columns .invoice-table's fixed
+   widths assume — without this, table-layout:fixed (inherited from
+   .invoice-table) sizes every column from row 1's cell widths, and row 1's
+   Issues cell is usually empty (a "Ready" row has none), starving every
+   other row's real issue text of any room to wrap into. */
+.import-preview-table {
+  min-width: 780px;
+  table-layout: fixed;
+}
+
+.import-preview-table col.col-status { width: 17%; }
+.import-preview-table col.col-client { width: 19%; }
+.import-preview-table col.col-invnum { width: 9%; }
+.import-preview-table col.col-due { width: 13%; }
+.import-preview-table col.col-amount { width: 11%; }
+.import-preview-table col.col-issues { width: 31%; }
+
+/* Specificity note: .invoice-table tbody td (0,1,2) otherwise beats a bare
+   .import-issues (0,1,0) rule, so the base table's white-space:nowrap wins
+   and issue text silently overflows instead of wrapping. This selector
+   matches that specificity so the override actually applies. */
+.invoice-table tbody td.import-issues {
+  white-space: normal;
+}
+
+/* Safe truncation for fixed-width table cells (Client, Invoice #) instead
+   of letting long values (e.g. "Northfield Logistics Group") spill past
+   their column boundary into the next cell. The full value is always
+   still available via the native title tooltip and in the expanded row
+   detail panel below the table — nothing is hidden, just not force-fit
+   into a narrow cell. */
+.import-cell-truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 0; /* forces the browser to respect the fixed column width, not the content's natural width */
+}
+
+.import-date-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+
+.import-date-label {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-right: 4px;
+}
+
+.import-row-error td {
+  background: rgba(220, 81, 72, 0.06);
+}
+
+.import-row-warning td {
+  background: rgba(224, 147, 12, 0.07);
+}
+
+.import-row-ready-with-warnings td {
+  background: rgba(224, 147, 12, 0.07);
+}
+
+.import-row-review-required td {
+  background: var(--blue-tint);
+}
+
+.import-row-rejected td {
+  background: rgba(220, 81, 72, 0.06);
+}
+
+.import-status-badge {
+  display: inline-flex;
+  padding: 3px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 700;
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.import-status-badge.status-ready {
+  background: rgba(34, 165, 101, 0.14);
+  color: var(--green);
+}
+
+.import-status-badge.status-warning,
+.import-status-badge.status-ready-with-warnings {
+  background: var(--amber-tint);
+  color: var(--amber);
+}
+
+.import-status-badge.status-error,
+.import-status-badge.status-rejected {
+  background: rgba(220, 81, 72, 0.12);
+  color: var(--red);
+}
+
+.import-status-badge.status-review-required {
+  background: var(--blue-tint);
+  color: var(--blue);
+}
+
+.import-issues {
+  font-size: 12.5px;
+}
+
+.import-issue {
+  margin-bottom: 2px;
+}
+
+.import-issue.error {
+  color: var(--red);
+}
+
+.import-issue.warning {
+  color: var(--amber);
+}
+
+.import-row-expand-toggle {
+  background: none;
+  border: none;
+  padding: 2px 4px;
+  color: var(--primary-hover);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: underline;
+  min-height: 28px;
+}
+
+.import-row-detail-panel {
+  margin-top: 10px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #f7f7f5;
+}
+
+.import-row-detail-caption {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 10px;
+}
+
+.import-row-detail {
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.import-detail-block h5 {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.import-detail-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 4px 16px;
+}
+
+.import-detail-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--border-soft);
+  padding: 4px 0;
+}
+
+.import-detail-row dt {
+  color: var(--text-muted);
+}
+
+.import-detail-row dd {
+  color: var(--text-primary);
+  text-align: right;
+  word-break: break-word;
+}
+
+.import-detail-issues {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 0;
+  list-style: none;
+}
+
+.import-detail-issue {
+  font-size: 13px;
+  border-left: 2px solid var(--border);
+  padding-left: 10px;
+}
+
+.import-detail-issue-meta {
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+
+.import-detail-issue-tech {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+/* Truthful horizontal-scroll hint for tables whose min-width can exceed a
+   narrow viewport (raw header preview, currency affected-row list, preview
+   table). Hidden by default — shown only under the mobile breakpoint
+   below, where overflow-x:auto can otherwise scroll silently with no
+   visible affordance that more columns exist off-screen. Never implies
+   data was omitted — the columns are all still there, just off-screen. */
+.import-scroll-hint {
+  display: none;
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+/* ---- Upload dropzone -------------------------------------------- */
 
 .import-dropzone {
   border: 1.5px dashed var(--border);
@@ -1650,32 +2217,7 @@ table {
   margin-top: 4px;
 }
 
-.import-error {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  color: var(--red);
-  font-size: 13px;
-  font-weight: 600;
-  margin-top: 14px;
-}
-
-.import-help {
-  font-size: 12.5px;
-  color: var(--text-secondary);
-  margin-bottom: 14px;
-}
-
-.import-header-toggle {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin-bottom: 10px;
-}
+/* ---- Sheet selection --------------------------------------------- */
 
 .import-sheet-list {
   display: flex;
@@ -1688,16 +2230,23 @@ table {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 14px;
-  border: 0.5px solid var(--border);
+  min-height: 44px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
   border-radius: 10px;
   cursor: pointer;
-  font-size: 13.5px;
+  font-size: 14px;
   color: var(--text-primary);
+  background: var(--surface);
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+.import-sheet-option:hover {
+  border-color: var(--text-muted);
 }
 
 .import-sheet-option.selected {
-  border-color: var(--primary);
+  border-color: var(--primary-hover);
   background: var(--primary-tint);
 }
 
@@ -1711,44 +2260,68 @@ table {
   font-size: 12px;
 }
 
+/* ---- Mapping screen ------------------------------------------------ */
+
 .import-mapper {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 14px;
   margin-bottom: 16px;
   overflow-x: auto;
 }
 
 .import-mapper-col {
-  border: 0.5px solid var(--border);
-  border-radius: 10px;
-  padding: 10px;
-  min-width: 150px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  min-width: 160px;
+  background: var(--surface);
 }
 
 .import-mapper-header {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.03em;
-  color: var(--text-muted);
-  margin-bottom: 6px;
+  color: var(--text-primary);
+  margin-bottom: 8px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
+.import-mapper-required {
+  color: var(--red);
+  font-weight: 700;
+  text-transform: none;
+  letter-spacing: normal;
+  font-size: 11px;
+}
+
 .import-mapper-col select {
   width: 100%;
-  height: 34px;
-  padding: 0 8px;
-  font-size: 12.5px;
+  height: 40px;
+  padding: 0 10px;
+  font-size: 13px;
   color: var(--text-primary);
   background: var(--surface);
-  border: 0.5px solid var(--border);
-  border-radius: 7px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
   margin-bottom: 8px;
 }
+
+.import-mapper-origin {
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-bottom: 8px;
+  opacity: 0.85;
+}
+
+.import-mapper-origin.origin-suggested { color: var(--blue); }
+.import-mapper-origin.origin-chosen { color: var(--primary-hover); }
+.import-mapper-origin.origin-none { color: var(--text-muted); }
 
 .import-mapper-samples {
   display: flex;
@@ -1757,128 +2330,130 @@ table {
 }
 
 .import-mapper-sample {
-  font-size: 12px;
-  color: var(--text-secondary);
+  font-size: 12.5px;
+  color: var(--text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.import-summary {
-  display: flex;
-  gap: 28px;
-  margin-bottom: 18px;
+/* ---- Date / issue groups -------------------------------------------- */
+
+.import-date-group {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 24px;
 }
 
-.import-summary-item {
+.import-date-group h4 {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 6px;
+}
+
+.import-date-group-mixed {
+  background: var(--amber-tint);
+  border-color: var(--amber);
+}
+
+.import-date-mixed-rows {
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  margin: 6px 0;
+  padding-left: 18px;
+}
+
+.import-issue-group {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 24px;
+}
+
+.import-issue-group h4 {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 6px;
+}
+
+.import-issue-group-rows {
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  margin: 6px 0;
+  padding-left: 18px;
+}
+
+/* ---- Outcome summary + filters -------------------------------------- */
+
+.import-summary-total {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  margin-bottom: 20px;
+}
+
+.import-outcome-cards {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 24px;
+  flex-wrap: wrap;
+}
+
+.import-outcome-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 130px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
 }
 
 .import-summary-num {
-  font-size: 22px;
+  font-size: 24px;
   font-weight: 800;
   color: var(--text-primary);
+  line-height: 1.2;
 }
 
-.import-summary-num.tone-green { color: var(--green); }
-.import-summary-num.tone-amber { color: var(--amber); }
-.import-summary-num.tone-red { color: var(--red); }
+.import-summary-num.tone-green,
+.import-summary-num.tone-ready { color: var(--green); }
+.import-summary-num.tone-amber,
+.import-summary-num.tone-ready-with-warnings { color: var(--amber); }
+.import-summary-num.tone-review-required { color: var(--blue); }
+.import-summary-num.tone-red,
+.import-summary-num.tone-rejected { color: var(--red); }
 
 .import-summary-label {
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.03em;
 }
 
-.import-preview-table-wrap {
-  margin-bottom: 12px;
-}
-
-/* Own colgroup, not the six invoice-list columns .invoice-table's fixed
-   widths assume — without this, table-layout:fixed (inherited from
-   .invoice-table) sizes every column from row 1's cell widths, and row 1's
-   Issues cell is usually empty (a "Ready" row has none), starving every
-   other row's real issue text of any room to wrap into. */
-.import-preview-table {
-  min-width: 780px;
-  table-layout: fixed;
-}
-
-.import-preview-table col.col-status { width: 17%; }
-.import-preview-table col.col-client { width: 19%; }
-.import-preview-table col.col-invnum { width: 9%; }
-.import-preview-table col.col-due { width: 13%; }
-.import-preview-table col.col-amount { width: 11%; }
-.import-preview-table col.col-issues { width: 31%; }
-
-/* Specificity note: .invoice-table tbody td (0,1,2) otherwise beats a bare
-   .import-issues (0,1,0) rule, so the base table's white-space:nowrap wins
-   and issue text silently overflows instead of wrapping. This selector
-   matches that specificity so the override actually applies. */
-.invoice-table tbody td.import-issues {
-  white-space: normal;
-}
-
-.import-row-error td {
-  background: rgba(220, 81, 72, 0.06);
-}
-
-.import-row-warning td {
-  background: rgba(224, 147, 12, 0.07);
-}
-
-.import-status-badge {
-  display: inline-flex;
-  padding: 3px 7px;
-  border-radius: 999px;
-  font-size: 10.5px;
-  font-weight: 700;
-  white-space: nowrap;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.import-status-badge.status-ready {
-  background: rgba(34, 165, 101, 0.14);
-  color: var(--green);
-}
-
-.import-status-badge.status-warning {
-  background: var(--amber-tint);
-  color: var(--amber);
-}
-
-.import-status-badge.status-error {
-  background: rgba(220, 81, 72, 0.12);
-  color: var(--red);
-}
-
-.import-issues {
-  font-size: 12px;
-}
-
-.import-issue {
-  margin-bottom: 2px;
-}
-
-.import-issue.error {
-  color: var(--red);
-}
-
-.import-issue.warning {
-  color: var(--amber);
-}
-
-.import-preview-footer {
+.import-filter-bar {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 20px;
-  margin-top: 6px;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.import-filter-bar .btn-outline.active {
+  border-color: var(--primary);
+  background: var(--primary-tint);
+  color: var(--primary-hover);
+}
+
+.import-preview-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  justify-content: flex-end;
 }
 
 .import-disabled-cta {
@@ -1897,379 +2472,11 @@ table {
   margin-top: 6px;
 }
 
-/* ============================================================
-   Phase 1.5A import preview UI — extends the wizard rules above with the
-   screens the old 3-status Import.jsx never had (dates, currency,
-   review/rejected inspection, row detail). This page is not routed yet.
-   ============================================================ */
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
-}
-
-.import-step-heading {
-  font-size: 15px;
-  font-weight: 700;
-  color: var(--text-primary);
-  margin: 4px 0 14px;
-}
-
-/* Neutral focus ring, deliberately not terracotta/red — those colors are
-   reserved for the primary action and real error/rejected states, so a
-   focus ring in that hue made every ordinary step transition look like it
-   had landed on an alert. --blue is otherwise only used for informational
-   accents (Suggested-by-Duewatch, Review-required), which is exactly the
-   neutral register a focus ring belongs in. */
-.import-step-heading:focus {
-  outline: 2px solid var(--blue);
-  outline-offset: 3px;
-  border-radius: 4px;
-}
-
-/* Constrains the importer's own working width on large desktops so
-   tables/cards don't stretch edge-to-edge into empty space. Scoped via
-   this compound class only — .brief's own rule (padding-right: var(--rail-w),
-   reserved for a dashboard rail this unrouted page has none of) is
-   untouched for every other page; overriding it here, on the one element
-   that carries both classes, reclaims that dead 300px column instead of
-   compensating around it. Below the breakpoint the rule is a no-op and
-   normal responsive behavior continues. */
-.import-shell {
-  max-width: 900px;
-  padding-right: 0;
-}
-
-/* Disabled importer actions must look disabled — .btn-terracotta/.btn-outline
-   have no global :disabled treatment (the only prior rule was scoped to the
-   legacy .import-disabled-cta wrapper), so an inert Continue/Confirm button
-   was visually identical to a clickable one. Scoped to .import-shell only;
-   no other page's buttons are affected. */
-.import-shell .btn-terracotta:disabled,
-.import-shell .btn-outline:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-  pointer-events: none;
-}
-
-.import-shell .btn-terracotta:disabled:hover {
-  background: var(--primary);
-}
-
-.import-shell .btn-outline:disabled:hover {
-  background: var(--surface);
-  border-color: var(--border);
-}
-
-.import-file-error {
-  text-align: center;
-  padding: 24px 12px;
-  color: var(--red);
-}
-
-.import-file-error h3 {
-  color: var(--text-primary);
-  margin: 10px 0 4px;
-  font-size: 15px;
-}
-
-.import-raw-preview-table td {
-  font-size: 12.5px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 160px;
-}
-
-.import-mapper-origin {
-  font-size: 10.5px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  margin-bottom: 6px;
-}
-
-.import-mapper-origin.origin-suggested { color: var(--blue); }
-.import-mapper-origin.origin-chosen { color: var(--primary-hover); }
-.import-mapper-origin.origin-none { color: var(--text-muted); }
-
-.import-error-block {
-  justify-content: flex-start;
-  margin-top: 10px;
-}
-
-.import-date-group {
-  border: 0.5px solid var(--border);
-  border-radius: 10px;
-  padding: 14px;
-  margin-bottom: 14px;
-}
-
-.import-date-group h4 {
-  font-size: 13.5px;
-  font-weight: 700;
-  color: var(--text-primary);
-  margin-bottom: 4px;
-}
-
-.import-date-group-mixed {
-  background: var(--amber-tint);
-  border-color: var(--amber);
-}
-
-.import-date-choice {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-top: 8px;
-}
-
-.import-date-mixed-rows {
-  font-size: 12px;
-  color: var(--text-secondary);
-  margin: 6px 0;
-  padding-left: 18px;
-}
-
-.import-currency-choice {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  margin: 10px 0 16px;
-}
-
-.import-filter-bar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 14px;
-}
-
-.import-filter-bar .btn-outline.active {
-  border-color: var(--primary);
-  background: var(--primary-tint);
-  color: var(--primary-hover);
-}
-
-.import-preview-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
-  justify-content: flex-end;
-}
-
-.import-status-badge.status-ready-with-warnings {
-  background: var(--amber-tint);
-  color: var(--amber);
-}
-
-.import-status-badge.status-review-required {
-  background: var(--blue-tint);
-  color: var(--blue);
-}
-
-.import-status-badge.status-rejected {
-  background: rgba(220, 81, 72, 0.12);
-  color: var(--red);
-}
-
-.import-summary-num.tone-ready { color: var(--green); }
-.import-summary-num.tone-ready-with-warnings { color: var(--amber); }
-.import-summary-num.tone-review-required { color: var(--blue); }
-.import-summary-num.tone-rejected { color: var(--red); }
-
-.import-row-ready-with-warnings td {
-  background: rgba(224, 147, 12, 0.07);
-}
-
-.import-row-review-required td {
-  background: var(--blue-tint);
-}
-
-.import-row-rejected td {
-  background: rgba(220, 81, 72, 0.06);
-}
-
-.import-row-expand-toggle {
-  background: none;
-  border: none;
-  padding: 0;
-  color: var(--primary-hover);
-  font-size: 11.5px;
-  font-weight: 600;
-  cursor: pointer;
-  text-decoration: underline;
-}
-
-.import-row-detail {
-  padding: 12px 4px;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-.import-detail-block h5 {
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  color: var(--text-muted);
-  margin-bottom: 6px;
-}
-
-.import-detail-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 4px 16px;
-}
-
-.import-detail-row {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  font-size: 12.5px;
-  border-bottom: 0.5px solid var(--border-soft);
-  padding: 2px 0;
-}
-
-.import-detail-row dt {
-  color: var(--text-muted);
-}
-
-.import-detail-row dd {
-  color: var(--text-primary);
-  text-align: right;
-  word-break: break-word;
-}
-
-.import-detail-issues {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 0;
-  list-style: none;
-}
-
-.import-detail-issue {
-  font-size: 12.5px;
-  border-left: 2px solid var(--border);
-  padding-left: 10px;
-}
-
-.import-detail-issue-meta {
-  color: var(--text-muted);
-  font-size: 11.5px;
-}
-
-.import-detail-issue-tech {
-  font-size: 11px;
-  color: var(--text-muted);
-  margin-top: 2px;
-}
-
-.import-issue-group {
-  border: 0.5px solid var(--border);
-  border-radius: 10px;
-  padding: 14px;
-  margin-bottom: 14px;
-}
-
-.import-issue-group h4 {
-  font-size: 13.5px;
-  font-weight: 700;
-  color: var(--text-primary);
-  margin-bottom: 4px;
-}
-
-.import-issue-group-rows {
-  font-size: 12px;
-  color: var(--text-secondary);
-  margin: 6px 0;
-  padding-left: 18px;
-}
-
-/* Safe truncation for fixed-width table cells (Client, Invoice #) instead
-   of letting long values (e.g. "Northfield Logistics Group") spill past
-   their column boundary into the next cell. The full value is always
-   still available via the native title tooltip and in the expanded row
-   detail panel below the table — nothing is hidden, just not force-fit
-   into a narrow cell. */
-.import-cell-truncate {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 0; /* forces the browser to respect the fixed column width, not the content's natural width */
-}
-
-.import-date-stack {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  font-size: 12px;
-  line-height: 1.4;
-}
-
-.import-date-label {
-  color: var(--text-muted);
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  margin-right: 4px;
-}
-
-.import-mapper-required {
-  color: var(--red);
-  font-weight: 700;
-  text-transform: none;
-  letter-spacing: normal;
-}
-
-/* Truthful horizontal-scroll hint for tables whose min-width can exceed a
-   narrow viewport (raw header preview, currency affected-row list). Hidden
-   by default — shown only under the mobile breakpoint below, where the
-   .list-card wrapper's overflow-x:auto can otherwise scroll silently with
-   no visible affordance that more columns exist off-screen. Never implies
-   data was omitted — the columns are all still there, just off-screen. */
-.import-scroll-hint {
-  display: none;
-  font-size: 11px;
-  color: var(--text-muted);
-  margin-top: 4px;
-}
-
-.import-row-detail-panel {
-  margin-top: 10px;
-  padding: 14px 16px;
-  border: 0.5px solid var(--border);
-  border-radius: 10px;
-  background: var(--bg);
-}
-
-.import-row-detail-caption {
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--text-primary);
-  margin-bottom: 8px;
-}
+/* ---- Mobile ------------------------------------------------------- */
 
 @media (max-width: 760px) {
   .import-mapper {
     grid-template-columns: 1fr;
-  }
-  .import-summary {
-    flex-wrap: wrap;
-    gap: 16px;
-  }
-  .import-preview-footer {
-    flex-direction: column;
-    align-items: stretch;
   }
   .import-preview-actions {
     justify-content: flex-start;
@@ -2280,15 +2487,19 @@ table {
   .import-scroll-hint {
     display: block;
   }
-  .import-steps {
-    flex-wrap: wrap;
-    gap: 10px 14px;
+  .import-outcome-cards {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
   }
-  .import-step {
-    font-size: 11.5px;
-    gap: 6px;
+  .import-choice-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .import-shell .btn-terracotta.btn-inline,
+  .import-shell .btn-outline.btn-inline {
+    min-height: 44px;
   }
 }
+
 
 /* ============================================================
    Modal (Add Invoice)

@@ -46,7 +46,7 @@ export default function RejectedStep({ result, onBack }) {
       })}
 
       <div className="import-preview-footer">
-        <button className="btn-outline btn-inline" onClick={onBack}>
+        <button className="btn-outline btn-inline import-btn-back" onClick={onBack}>
           <ArrowLeft width={16} height={16} aria-hidden="true" /> Back to preview
         </button>
       </div>

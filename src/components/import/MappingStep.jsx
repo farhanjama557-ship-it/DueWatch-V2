@@ -78,7 +78,7 @@ export default function MappingStep({ headers, sampleRows, mapping, mappingOrigi
       )}
 
       <div className="import-preview-footer">
-        <button className="btn-outline btn-inline" onClick={onBack}>
+        <button className="btn-outline btn-inline import-btn-back" onClick={onBack}>
           <ArrowLeft width={16} height={16} aria-hidden="true" /> Back
         </button>
         <button className="btn-terracotta btn-inline" disabled={!validation.valid} onClick={onContinue}>

@@ -1,3 +1,5 @@
+import { Check } from 'lucide-react'
+
 // Visual progress indicator across the linear part of the importer journey.
 // Terminal/side states (parsing, file_error, review, rejected, complete)
 // map onto the phase they belong to rather than getting their own dot.
@@ -34,15 +36,21 @@ export default function StepProgress({ step, showSheetPhase, showDatesPhase, sho
     return true
   })
   const activePhase = STEP_TO_PHASE[step] || 'upload'
+  const activeIndex = phases.findIndex((p) => p.key === activePhase)
 
   return (
     <nav className="import-steps" aria-label="Import progress">
-      {phases.map((p, i) => (
-        <div key={p.key} className={p.key === activePhase ? 'import-step active' : 'import-step'} aria-current={p.key === activePhase ? 'step' : undefined}>
-          <span className="import-step-num">{i + 1}</span>
-          <span>{p.label}</span>
-        </div>
-      ))}
+      {phases.map((p, i) => {
+        const isCurrent = p.key === activePhase
+        const isCompleted = activeIndex >= 0 && i < activeIndex
+        const state = isCurrent ? 'current' : isCompleted ? 'completed' : 'upcoming'
+        return (
+          <div key={p.key} className={`import-step import-step-${state}`} aria-current={isCurrent ? 'step' : undefined}>
+            <span className="import-step-num">{isCompleted ? <Check width={11} height={11} aria-hidden="true" /> : i + 1}</span>
+            <span>{p.label}</span>
+          </div>
+        )
+      })}
     </nav>
   )
 }

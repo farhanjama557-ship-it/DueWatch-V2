@@ -16,13 +16,13 @@ export default function PreviewStep({ result, headers, onBack, onFinish, onInspe
 
   return (
     <div className="brief-card">
-      <div className="import-summary" role="group" aria-label="Preview outcome summary">
-        <div className="import-summary-item">
-          <span className="import-summary-num">{result.summary.total}</span>
-          <span className="import-summary-label">rows read</span>
-        </div>
+      <div className="import-summary-total">
+        <span className="import-summary-num">{result.summary.total}</span>
+        <span className="import-summary-label">rows read</span>
+      </div>
+      <div className="import-outcome-cards" role="group" aria-label="Preview outcome summary">
         {OUTCOME_FILTERS.map((outcome) => (
-          <div className="import-summary-item" key={outcome}>
+          <div className="import-outcome-card" key={outcome}>
             <span className={`import-summary-num tone-${outcome.replace(/_/g, '-')}`}>{result.summary[outcome]}</span>
             <span className="import-summary-label">{OUTCOME_META[outcome].label}</span>
           </div>
@@ -47,7 +47,7 @@ export default function PreviewStep({ result, headers, onBack, onFinish, onInspe
       <RowTable rows={filteredRows} headers={headers} totalCount={result.rows.length} emptyMessage="No rows match this filter." />
 
       <div className="import-preview-footer">
-        <button className="btn-outline btn-inline" onClick={onBack}>
+        <button className="btn-outline btn-inline import-btn-back" onClick={onBack}>
           <ArrowLeft width={16} height={16} aria-hidden="true" /> Back
         </button>
         <div className="import-preview-actions">

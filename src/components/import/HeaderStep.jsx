@@ -18,20 +18,22 @@ export default function HeaderStep({ sheet, hasHeaderRow, onChoose, onContinue, 
 
   return (
     <div className="brief-card">
-      <fieldset className="import-header-choice">
+      <fieldset className="import-fieldset-reset">
         <legend className="import-help">Does the first row contain column headers?</legend>
-        <label className="import-header-toggle">
-          <input type="radio" name="header-choice" checked={hasHeaderRow === true} onChange={() => onChoose(true)} />
-          First row contains column headers
-        </label>
-        <label className="import-header-toggle">
-          <input type="radio" name="header-choice" checked={hasHeaderRow === false} onChange={() => onChoose(false)} />
-          This file has no header row
-        </label>
+        <div className="import-choice-list">
+          <label className={hasHeaderRow === true ? 'import-choice-row selected' : 'import-choice-row'}>
+            <input type="radio" name="header-choice" checked={hasHeaderRow === true} onChange={() => onChoose(true)} />
+            First row contains column headers
+          </label>
+          <label className={hasHeaderRow === false ? 'import-choice-row selected' : 'import-choice-row'}>
+            <input type="radio" name="header-choice" checked={hasHeaderRow === false} onChange={() => onChoose(false)} />
+            This file has no header row
+          </label>
+        </div>
       </fieldset>
 
-      <p className="import-help">Raw preview of the first {previewRows.length} rows:</p>
-      <div className="list-card import-preview-table-wrap">
+      <p className="import-well-label">Raw preview of the first {previewRows.length} rows</p>
+      <div className="import-data-well import-preview-table-wrap">
         <table className="invoice-table import-raw-preview-table">
           <tbody>
             {previewRows.map((row) => (
@@ -47,7 +49,7 @@ export default function HeaderStep({ sheet, hasHeaderRow, onChoose, onContinue, 
       <p className="import-scroll-hint">Scroll horizontally to see every column.</p>
 
       <div className="import-preview-footer">
-        <button className="btn-outline btn-inline" onClick={onBack}>
+        <button className="btn-outline btn-inline import-btn-back" onClick={onBack}>
           <ArrowLeft width={16} height={16} aria-hidden="true" /> Back
         </button>
         <button className="btn-terracotta btn-inline" onClick={onContinue} disabled={hasHeaderRow == null}>
