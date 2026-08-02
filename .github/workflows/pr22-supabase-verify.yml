@@ -6,12 +6,13 @@ name: "PR #22 Supabase CI Verification"
 # hosted/production credentials, and no production data are used anywhere in
 # this workflow. The stack is destroyed when the job ends.
 #
-# This workflow intentionally triggers only on pushes to the dedicated
+# This workflow intentionally triggers only on pushes to PR #22 and its dedicated
 # verification branch — it is infrastructure to check PR #22, not a
 # general-purpose CI pipeline, and must not run on every branch.
 on:
   push:
     branches:
+      - codex/phase-0-canonical-clients
       - claude/verify-pr22-supabase-ci
   workflow_dispatch: {}
 

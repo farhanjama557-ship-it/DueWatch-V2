@@ -66,3 +66,56 @@ test('external IDs remain case-sensitive', () => {
     { sourceIdentities: [{ source: 'stripe', externalId: 'cus_abc' }] },
   ), { classification: 'none', ruleCode: null })
 })
+
+test('source names are case-insensitive and external IDs trim outer whitespace', () => {
+  assert.deepEqual(classifyClientPair(
+    { sourceIdentities: [{ source: ' Stripe ', externalId: '  cus_123  ' }] },
+    { sourceIdentities: [{ source: 'STRIPE', externalId: 'cus_123' }] },
+  ), { classification: 'exact', ruleCode: 'external_id' })
+})
+
+test('external IDs preserve internal whitespace', () => {
+  assert.deepEqual(classifyClientPair(
+    { sourceIdentities: [{ source: 'stripe', externalId: 'cus  123' }] },
+    { sourceIdentities: [{ source: 'stripe', externalId: 'cus 123' }] },
+  ), { classification: 'none', ruleCode: null })
+})
+
+test('external IDs never use human-text normalization', () => {
+  assert.equal(normalizeClientText('CUS-123'), 'cus 123')
+  assert.deepEqual(classifyClientPair(
+    { sourceIdentities: [{ source: 'stripe', externalId: 'CUS-123' }] },
+    { sourceIdentities: [{ source: 'stripe', externalId: 'cus 123' }] },
+  ), { classification: 'none', ruleCode: null })
+})
+
+test('email and human-text normalization remain case and whitespace aware', () => {
+  assert.deepEqual(classifyClientPair(
+    { name: 'Northbend   Studio', email: ' BILLING@EXAMPLE.COM ' },
+    { name: 'northbend-studio', email: 'billing@example.com' },
+  ), { classification: 'exact', ruleCode: 'email_with_name_or_company' })
+})
+
+test('phone alone is review-required and never exact', () => {
+  assert.deepEqual(classifyClientPair(
+    { name: 'Accounts East', phone: '+1 (212) 555-0100' },
+    { name: 'Accounts West', phone: '1 212 555 0100' },
+  ), { classification: 'review_required', ruleCode: 'phone_only' })
+})
+
+test('phone plus matching name follows the review-required contract', () => {
+  assert.deepEqual(classifyClientPair(
+    { name: 'Northbend Studio', phone: '+1 (212) 555-0100' },
+    { name: ' northbend-studio ', phone: '1 212 555 0100' },
+  ), {
+    classification: 'review_required',
+    ruleCode: 'phone_with_name_or_company',
+  })
+})
+
+test('company and name alone remain review-required', () => {
+  assert.deepEqual(classifyClientPair(
+    { name: 'Acme Holdings', company: 'Acme Holdings' },
+    { name: ' acme-holdings ', company: 'ACME HOLDINGS' },
+  ), { classification: 'review_required', ruleCode: 'name_only' })
+})

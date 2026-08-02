@@ -3,6 +3,7 @@
 -- rolls back, including the temporary execution-enable switch.
 begin;
 
+\echo 'TEST GROUP START: integration_relationships'
 do $test$
 declare
   u uuid := gen_random_uuid();
@@ -359,5 +360,284 @@ begin
   end if;
 end
 $test$;
+
+\echo 'TEST GROUP PASS: integration_relationships'
+\echo 'TEST GROUP START: tenant_isolation'
+
+do $tenant_isolation$
+declare
+  tenant_a constant uuid := 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1';
+  tenant_b constant uuid := 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2';
+  client_a uuid;
+  client_b uuid;
+  duplicate_a uuid;
+  duplicate_b uuid;
+  run_a uuid;
+  run_b uuid;
+begin
+  insert into auth.users(id, email) values
+    (tenant_a, 'phase0-tenant-a@example.test'),
+    (tenant_b, 'phase0-tenant-b@example.test');
+
+  perform set_config('request.jwt.claim.sub', tenant_a::text, true);
+  perform set_config('request.jwt.claim.role', 'authenticated', true);
+  client_a := public.resolve_or_create_client(
+    p_user_id => tenant_a,
+    p_name => 'Shared Client',
+    p_email => 'SHARED@TENANTS.EXAMPLE.TEST',
+    p_phone => '+1 (212) 555-0199',
+    p_company => 'Shared Company',
+    p_source => ' Stripe ',
+    p_external_id => '  cus_Shared  ',
+    p_provenance => '{"tenant":"a"}'::jsonb
+  );
+
+  perform set_config('request.jwt.claim.sub', tenant_b::text, true);
+  client_b := public.resolve_or_create_client(
+    p_user_id => tenant_b,
+    p_name => ' shared-client ',
+    p_email => 'shared@tenants.example.test',
+    p_phone => '1 212 555 0199',
+    p_company => ' shared-company ',
+    p_source => 'STRIPE',
+    p_external_id => 'cus_Shared',
+    p_provenance => '{"tenant":"b"}'::jsonb
+  );
+
+  if client_a = client_b then
+    raise exception 'Cross-tenant resolution returned one shared client UUID';
+  end if;
+  if not exists(select 1 from public.clients where id = client_a and user_id = tenant_a)
+    or not exists(select 1 from public.clients where id = client_b and user_id = tenant_b) then
+    raise exception 'Resolved client ownership was not tenant-scoped';
+  end if;
+  if (select count(*) from public.client_source_identities
+      where source = 'stripe' and external_id = 'cus_Shared') <> 2
+    or not exists(select 1 from public.client_source_identities
+      where user_id = tenant_a and client_id = client_a
+        and source = 'stripe' and external_id = 'cus_Shared')
+    or not exists(select 1 from public.client_source_identities
+      where user_id = tenant_b and client_id = client_b
+        and source = 'stripe' and external_id = 'cus_Shared') then
+    raise exception 'Identical source identities did not remain tenant-scoped';
+  end if;
+
+  perform set_config('request.jwt.claim.sub', tenant_a::text, true);
+  begin
+    perform public.resolve_or_create_client(tenant_b, 'Forbidden Client');
+    raise exception 'Expected cross-tenant resolver rejection';
+  exception when others then
+    if sqlerrm not like '%another user%' then raise; end if;
+  end;
+
+  insert into public.clients(user_id, name, email, phone, company, created_at)
+  values(
+    tenant_a, 'SHARED CLIENT', 'shared@tenants.example.test',
+    '12125550199', 'SHARED COMPANY', '2099-01-01 00:00:00+00'
+  ) returning id into duplicate_a;
+  insert into public.clients(user_id, name, email, phone, company, created_at)
+  values(
+    tenant_b, 'Shared Client', 'SHARED@TENANTS.EXAMPLE.TEST',
+    '+1 212 555 0199', 'Shared Company', '2099-01-01 00:00:01+00'
+  ) returning id into duplicate_b;
+
+  run_a := duewatch_ops.prepare_client_dedup(tenant_a);
+  run_b := duewatch_ops.prepare_client_dedup(tenant_b);
+
+  if not exists(select 1 from public.client_merge_candidates
+      where run_id = run_a and user_id = tenant_a
+        and primary_client_id = client_a and duplicate_client_id = duplicate_a)
+    or not exists(select 1 from public.client_merge_candidates
+      where run_id = run_b and user_id = tenant_b
+        and primary_client_id = client_b and duplicate_client_id = duplicate_b) then
+    raise exception 'Expected tenant-local candidates were not generated';
+  end if;
+  if exists(
+    select 1
+    from public.client_merge_candidates mc
+    join public.clients primary_client on primary_client.id = mc.primary_client_id
+    join public.clients duplicate_client on duplicate_client.id = mc.duplicate_client_id
+    where (mc.run_id = run_a and (
+      mc.user_id <> tenant_a
+      or primary_client.user_id <> tenant_a
+      or duplicate_client.user_id <> tenant_a
+    )) or (mc.run_id = run_b and (
+      mc.user_id <> tenant_b
+      or primary_client.user_id <> tenant_b
+      or duplicate_client.user_id <> tenant_b
+    ))
+  ) then
+    raise exception 'Candidate generation crossed tenant ownership';
+  end if;
+end
+$tenant_isolation$;
+
+set local role authenticated;
+select set_config(
+  'request.jwt.claim.sub',
+  'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',
+  true
+);
+do $tenant_rls$
+begin
+  if exists(select 1 from public.clients
+      where user_id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2'::uuid)
+    or exists(select 1 from public.client_source_identities
+      where user_id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2'::uuid)
+    or exists(select 1 from public.client_dedup_runs
+      where user_id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2'::uuid)
+    or exists(select 1 from public.client_merge_candidates
+      where user_id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2'::uuid) then
+    raise exception 'Tenant A could read Tenant B client identity data';
+  end if;
+  if not exists(select 1 from public.clients
+      where user_id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1'::uuid)
+    or not exists(select 1 from public.client_source_identities
+      where user_id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1'::uuid)
+    or not exists(select 1 from public.client_merge_candidates
+      where user_id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1'::uuid) then
+    raise exception 'Tenant A could not read its own identity data';
+  end if;
+end
+$tenant_rls$;
+reset role;
+
+\echo 'TEST GROUP PASS: tenant_isolation'
+\echo 'TEST GROUP START: resolver_idempotency'
+
+do $resolver_idempotency$
+declare
+  tenant_id constant uuid := 'cccccccc-cccc-4ccc-8ccc-ccccccccccc3';
+  source_first uuid;
+  source_second uuid;
+  source_case_variant uuid;
+  source_space_variant uuid;
+  email_first uuid;
+  email_second uuid;
+  request_first uuid;
+  request_second uuid;
+  unrelated_client uuid;
+  unrelated_snapshot jsonb;
+  candidate_run uuid;
+begin
+  insert into auth.users(id, email)
+  values(tenant_id, 'phase0-idempotency@example.test');
+  perform set_config('request.jwt.claim.sub', tenant_id::text, true);
+  perform set_config('request.jwt.claim.role', 'authenticated', true);
+
+  insert into public.clients(user_id, name, email, created_at)
+  values(
+    tenant_id, 'Unrelated Client', 'unrelated@unrelated.example.test',
+    '2026-02-01 00:00:00+00'
+  ) returning id into unrelated_client;
+  select to_jsonb(c) into unrelated_snapshot
+  from public.clients c where c.id = unrelated_client;
+
+  source_first := public.resolve_or_create_client(
+    p_user_id => tenant_id,
+    p_name => 'Source Client',
+    p_email => 'source@source-idempotency.example.test',
+    p_company => 'Source Company',
+    p_source => ' Stripe ',
+    p_external_id => '  customer  ABC  ',
+    p_provenance => '{"attempt":1}'::jsonb
+  );
+  source_second := public.resolve_or_create_client(
+    p_user_id => tenant_id,
+    p_name => 'Ignored Retry Name',
+    p_email => 'ignored@retry.example.test',
+    p_company => 'Ignored Retry Company',
+    p_source => 'STRIPE',
+    p_external_id => 'customer  ABC',
+    p_provenance => '{"attempt":2}'::jsonb
+  );
+  if source_first <> source_second then
+    raise exception 'Source identity retry returned a different canonical UUID';
+  end if;
+  if (select count(*) from public.clients
+      where user_id = tenant_id
+        and normalized_email = 'source@source-idempotency.example.test') <> 1
+    or (select count(*) from public.client_source_identities
+      where user_id = tenant_id and source = 'stripe'
+        and external_id = 'customer  ABC') <> 1 then
+    raise exception 'Source identity retry created duplicate client/provenance rows';
+  end if;
+
+  source_case_variant := public.resolve_or_create_client(
+    tenant_id, 'Source Client', 'source@source-idempotency.example.test', null,
+    'Source Company', 'stripe', 'customer  abc', '{"variant":"case"}'::jsonb
+  );
+  source_space_variant := public.resolve_or_create_client(
+    tenant_id, 'Source Client', 'source@source-idempotency.example.test', null,
+    'Source Company', 'stripe', 'customer ABC', '{"variant":"space"}'::jsonb
+  );
+  if source_case_variant <> source_first or source_space_variant <> source_first then
+    raise exception 'Distinct source-ID spellings did not attach to the same exact email identity';
+  end if;
+  if (select count(*) from public.client_source_identities
+      where user_id = tenant_id and source = 'stripe'
+        and client_id = source_first) <> 3 then
+    raise exception 'Case/internal-whitespace source IDs were not preserved distinctly';
+  end if;
+
+  email_first := public.resolve_or_create_client(
+    tenant_id, 'Email Client', ' BILLING@EMAIL-IDEMPOTENCY.EXAMPLE.TEST ', null,
+    'Email Company'
+  );
+  email_second := public.resolve_or_create_client(
+    tenant_id, ' email-client ', 'billing@email-idempotency.example.test', null,
+    'email company'
+  );
+  if email_first <> email_second then
+    raise exception 'Normalized email retry returned a different canonical UUID';
+  end if;
+  if (select count(*) from public.clients
+      where user_id = tenant_id
+        and normalized_email = 'billing@email-idempotency.example.test') <> 1 then
+    raise exception 'Normalized email retry created a duplicate client';
+  end if;
+
+  request_first := public.resolve_or_create_client(
+    tenant_id, 'Request Client', 'requests@request-idempotency.example.test', null,
+    'Request Company', 'csv', 'request-001', '{"request":1}'::jsonb
+  );
+  request_second := public.resolve_or_create_client(
+    tenant_id, 'Request Client', 'REQUESTS@REQUEST-IDEMPOTENCY.EXAMPLE.TEST', null,
+    'Request Company', 'CSV', 'request-002', '{"request":2}'::jsonb
+  );
+  if request_first <> request_second then
+    raise exception 'Separate request identifiers did not resolve the same exact email identity';
+  end if;
+  if (select count(*) from public.client_source_identities
+      where user_id = tenant_id and source = 'csv'
+        and external_id in ('request-001', 'request-002')
+        and client_id = request_first) <> 2 then
+    raise exception 'Separate request provenance did not attach once to the canonical client';
+  end if;
+
+  begin
+    insert into public.client_source_identities(
+      user_id, client_id, source, external_id, provenance
+    ) values (
+      tenant_id, email_first, 'stripe', 'customer  ABC', '{}'::jsonb
+    );
+    raise exception 'Expected duplicate provenance uniqueness violation';
+  exception when unique_violation then
+    null;
+  end;
+
+  candidate_run := duewatch_ops.prepare_client_dedup(tenant_id);
+  if exists(select 1 from public.client_merge_candidates
+      where run_id = candidate_run) then
+    raise exception 'Idempotent resolution created duplicate merge candidates';
+  end if;
+  if (select to_jsonb(c) from public.clients c where c.id = unrelated_client)
+      <> unrelated_snapshot then
+    raise exception 'Resolver retries mutated an unrelated client';
+  end if;
+end
+$resolver_idempotency$;
+
+\echo 'TEST GROUP PASS: resolver_idempotency'
 
 rollback;
