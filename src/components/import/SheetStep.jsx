@@ -1,7 +1,7 @@
-import { FileSpreadsheet } from 'lucide-react'
+import { ArrowLeft, FileSpreadsheet } from 'lucide-react'
 import { describeSheet } from '../../lib/importUiAdapter.js'
 
-export default function SheetStep({ sheets, selectedIndex, onSelect, onContinue }) {
+export default function SheetStep({ sheets, selectedIndex, onSelect, onContinue, onBack }) {
   return (
     <div className="brief-card">
       <p className="import-help">This file has multiple sheets. Every sheet with data is shown below — choose the one to preview.</p>
@@ -21,9 +21,14 @@ export default function SheetStep({ sheets, selectedIndex, onSelect, onContinue 
           )
         })}
       </fieldset>
-      <button className="btn-terracotta btn-inline" onClick={onContinue}>
-        Continue
-      </button>
+      <div className="import-preview-footer">
+        <button className="btn-outline btn-inline" onClick={onBack}>
+          <ArrowLeft width={16} height={16} aria-hidden="true" /> Back
+        </button>
+        <button className="btn-terracotta btn-inline" onClick={onContinue}>
+          Continue
+        </button>
+      </div>
     </div>
   )
 }

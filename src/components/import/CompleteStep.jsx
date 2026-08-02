@@ -3,7 +3,6 @@ import { OUTCOME_META, OUTCOME_FILTERS } from '../../lib/importUiCopy.js'
 export default function CompleteStep({ summary, onStartOver }) {
   return (
     <div className="brief-card" aria-live="polite">
-      <h3>Preview complete</h3>
       <div className="import-summary">
         {OUTCOME_FILTERS.map((outcome) => (
           <div className="import-summary-item" key={outcome}>

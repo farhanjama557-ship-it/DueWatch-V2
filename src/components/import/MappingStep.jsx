@@ -1,4 +1,4 @@
-import { AlertTriangle } from 'lucide-react'
+import { AlertTriangle, ArrowLeft } from 'lucide-react'
 import { TARGET_FIELDS, IGNORE_KEY, fieldLabel } from '../../lib/import/fields.js'
 
 function originLabel(origin) {
@@ -7,7 +7,11 @@ function originLabel(origin) {
   return 'Not mapped'
 }
 
-export default function MappingStep({ headers, sampleRows, mapping, mappingOrigin, validation, onMappingChange, onContinue }) {
+function isRequiredField(fieldKey) {
+  return TARGET_FIELDS.find((f) => f.key === fieldKey)?.required ?? false
+}
+
+export default function MappingStep({ headers, sampleRows, mapping, mappingOrigin, validation, onMappingChange, onContinue, onBack }) {
   return (
     <div className="brief-card">
       <p className="import-help">
@@ -24,6 +28,7 @@ export default function MappingStep({ headers, sampleRows, mapping, mappingOrigi
             <div className="import-mapper-col" key={colIndex}>
               <label className="import-mapper-header" htmlFor={selectId}>
                 {header || `Column ${colIndex + 1}`}
+                {isRequiredField(fieldKey) && <span className="import-mapper-required"> Required</span>}
               </label>
               <select
                 id={selectId}
@@ -34,7 +39,6 @@ export default function MappingStep({ headers, sampleRows, mapping, mappingOrigi
                 {TARGET_FIELDS.map((f) => (
                   <option key={f.key} value={f.key}>
                     {f.label}
-                    {f.required ? ' (required)' : ''}
                   </option>
                 ))}
               </select>
@@ -73,9 +77,14 @@ export default function MappingStep({ headers, sampleRows, mapping, mappingOrigi
         </p>
       )}
 
-      <button className="btn-terracotta btn-inline" disabled={!validation.valid} onClick={onContinue}>
-        Continue
-      </button>
+      <div className="import-preview-footer">
+        <button className="btn-outline btn-inline" onClick={onBack}>
+          <ArrowLeft width={16} height={16} aria-hidden="true" /> Back
+        </button>
+        <button className="btn-terracotta btn-inline" disabled={!validation.valid} onClick={onContinue}>
+          Continue
+        </button>
+      </div>
     </div>
   )
 }

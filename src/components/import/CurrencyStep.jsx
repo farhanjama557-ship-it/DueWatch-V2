@@ -1,9 +1,10 @@
+import { ArrowLeft } from 'lucide-react'
 import { SUPPORTED_CURRENCIES } from '../../lib/import/money.js'
 import { rowsWithIssueCode, clientIdentityLabel } from '../../lib/importUiCopy.js'
 
 const SAMPLE_COUNT = 5
 
-export default function CurrencyStep({ rows, selectedCurrency, onSelect, onConfirm }) {
+export default function CurrencyStep({ rows, selectedCurrency, onSelect, onConfirm, onBack }) {
   const affected = rowsWithIssueCode(rows, 'CURRENCY_DECISION_REQUIRED')
   const sample = affected.slice(0, SAMPLE_COUNT)
 
@@ -25,29 +26,37 @@ export default function CurrencyStep({ rows, selectedCurrency, onSelect, onConfi
       </fieldset>
 
       {sample.length > 0 && (
-        <div className="list-card import-preview-table-wrap">
-          <table className="invoice-table">
-            <thead>
-              <tr>
-                <th>Client</th>
-                <th>Invoice #</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sample.map((row) => (
-                <tr key={row.originalRowNumber}>
-                  <td>{clientIdentityLabel(row.normalized)}</td>
-                  <td className="cell-muted">{row.normalized.invoice_number || '—'}</td>
+        <>
+          <div className="list-card import-preview-table-wrap">
+            <table className="invoice-table">
+              <thead>
+                <tr>
+                  <th>Client</th>
+                  <th>Invoice #</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {sample.map((row) => (
+                  <tr key={row.originalRowNumber}>
+                    <td>{clientIdentityLabel(row.normalized)}</td>
+                    <td className="cell-muted">{row.normalized.invoice_number || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="import-scroll-hint">Scroll horizontally to see every column.</p>
+        </>
       )}
 
-      <button className="btn-terracotta btn-inline" onClick={() => onConfirm(selectedCurrency)}>
-        Confirm {selectedCurrency}
-      </button>
+      <div className="import-preview-footer">
+        <button className="btn-outline btn-inline" onClick={onBack}>
+          <ArrowLeft width={16} height={16} aria-hidden="true" /> Back
+        </button>
+        <button className="btn-terracotta btn-inline" onClick={() => onConfirm(selectedCurrency)}>
+          Confirm {selectedCurrency}
+        </button>
+      </div>
     </div>
   )
 }

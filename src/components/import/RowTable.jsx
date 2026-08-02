@@ -1,4 +1,4 @@
-import { Fragment, useState } from 'react'
+import { useState } from 'react'
 import { PREVIEW_DISPLAY_CAP } from '../../lib/import/limits.js'
 import { OUTCOME_META, formatMoneyWithCurrency, clientIdentityLabel, issueDisplayMessage } from '../../lib/importUiCopy.js'
 import { formatShortDate } from '../../lib/format.js'
@@ -20,12 +20,32 @@ function issuesSummary(row) {
   return `${first} (+${row.issues.length - 1} more)`
 }
 
+function DateStack({ invoiceDate, dueDate }) {
+  return (
+    <div className="import-date-stack">
+      <div>
+        <span className="import-date-label">Inv</span> {invoiceDate ? formatShortDate(invoiceDate) : '—'}
+      </div>
+      <div>
+        <span className="import-date-label">Due</span> {dueDate ? formatShortDate(dueDate) : '—'}
+      </div>
+    </div>
+  )
+}
+
 // Renders at most PREVIEW_DISPLAY_CAP of `rows` — the caller is
 // responsible for filtering over the FULL row set first; this component
 // only ever slices for render, never for the counts it's given.
+//
+// The expanded row-detail panel is rendered OUTSIDE the table, not as a
+// colSpan sibling <tr>, so it is never constrained by the table's own
+// min-width/fixed-column layout (which stays horizontally scrollable on
+// narrow screens) — a detail panel inheriting that coordinate space is
+// what caused unreadable, wildly-offset label/value pairs on mobile.
 export default function RowTable({ rows, headers, totalCount, emptyMessage }) {
   const [expandedKey, setExpandedKey] = useState(null)
   const visible = rows.slice(0, PREVIEW_DISPLAY_CAP)
+  const expandedRow = visible.find((r) => r.originalRowNumber === expandedKey) || null
 
   if (rows.length === 0) {
     return <p className="import-help">{emptyMessage || 'No rows match this filter.'}</p>
@@ -48,7 +68,7 @@ export default function RowTable({ rows, headers, totalCount, emptyMessage }) {
               <th>Outcome</th>
               <th>Client</th>
               <th>Invoice #</th>
-              <th>Invoice / Due Date</th>
+              <th>Dates</th>
               <th className="ta-right">Amount</th>
               <th>Issues</th>
             </tr>
@@ -57,44 +77,47 @@ export default function RowTable({ rows, headers, totalCount, emptyMessage }) {
             {visible.map((row) => {
               const key = row.originalRowNumber
               const expanded = expandedKey === key
+              const client = clientIdentityLabel(row.normalized)
+              const invoiceNumber = row.normalized.invoice_number || '—'
               return (
-                <Fragment key={key}>
-                  <tr className={`import-row-${row.outcome.replace(/_/g, '-')}`}>
-                    <td><OutcomeBadge outcome={row.outcome} /></td>
-                    <td>{clientIdentityLabel(row.normalized)}</td>
-                    <td className="cell-muted">{row.normalized.invoice_number || '—'}</td>
-                    <td className="cell-muted">
-                      {row.normalized.invoice_date ? formatShortDate(row.normalized.invoice_date) : '—'}
-                      {' / '}
-                      {row.normalized.due_date ? formatShortDate(row.normalized.due_date) : '—'}
-                    </td>
-                    <td className="ta-right cell-amount">{formatMoneyWithCurrency(row.normalized.amount, row.normalized.currency)}</td>
-                    <td className="import-issues">
-                      {issuesSummary(row)}{' '}
-                      <button
-                        type="button"
-                        className="import-row-expand-toggle"
-                        aria-expanded={expanded}
-                        aria-controls={`import-row-detail-${key}`}
-                        onClick={() => setExpandedKey(expanded ? null : key)}
-                      >
-                        {expanded ? 'Hide details' : 'Details'}
-                      </button>
-                    </td>
-                  </tr>
-                  {expanded && (
-                    <tr>
-                      <td colSpan={6} id={`import-row-detail-${key}`}>
-                        <RowDetail row={row} headers={headers} />
-                      </td>
-                    </tr>
-                  )}
-                </Fragment>
+                <tr key={key} className={`import-row-${row.outcome.replace(/_/g, '-')}`}>
+                  <td><OutcomeBadge outcome={row.outcome} /></td>
+                  <td className="import-cell-truncate" title={client}>{client}</td>
+                  <td className="cell-muted import-cell-truncate" title={invoiceNumber}>{invoiceNumber}</td>
+                  <td className="cell-muted">
+                    <DateStack invoiceDate={row.normalized.invoice_date} dueDate={row.normalized.due_date} />
+                  </td>
+                  <td className="ta-right cell-amount">{formatMoneyWithCurrency(row.normalized.amount, row.normalized.currency)}</td>
+                  <td className="import-issues">
+                    {issuesSummary(row)}{' '}
+                    <button
+                      type="button"
+                      className="import-row-expand-toggle"
+                      aria-expanded={expanded}
+                      aria-controls={`import-row-detail-${key}`}
+                      onClick={() => setExpandedKey(expanded ? null : key)}
+                    >
+                      {expanded ? 'Hide details' : 'Details'}
+                    </button>
+                  </td>
+                </tr>
               )
             })}
           </tbody>
         </table>
       </div>
+      <p className="import-scroll-hint">Scroll horizontally to see every column.</p>
+
+      {expandedRow && (
+        <div className="import-row-detail-panel" id={`import-row-detail-${expandedKey}`}>
+          <p className="import-row-detail-caption">
+            Details for row {expandedRow.originalRowNumber} — {clientIdentityLabel(expandedRow.normalized)}
+            {expandedRow.normalized.invoice_number ? ` (${expandedRow.normalized.invoice_number})` : ''}
+          </p>
+          <RowDetail row={expandedRow} headers={headers} />
+        </div>
+      )}
+
       {rows.length > PREVIEW_DISPLAY_CAP && (
         <p className="import-help">
           Showing the first {PREVIEW_DISPLAY_CAP} of {rows.length} matching rows. All {totalCount ?? rows.length} rows

@@ -1,3 +1,5 @@
+import { ArrowLeft } from 'lucide-react'
+
 const RAW_PREVIEW_ROWS = 3
 
 // Local, display-only cell unwrapping — identical in spirit to the
@@ -10,7 +12,7 @@ function cellText(cell) {
   return String(cell.raw)
 }
 
-export default function HeaderStep({ sheet, hasHeaderRow, onChoose, onContinue }) {
+export default function HeaderStep({ sheet, hasHeaderRow, onChoose, onContinue, onBack }) {
   const previewRows = sheet.rows.slice(0, RAW_PREVIEW_ROWS)
   const columnCount = previewRows.reduce((max, r) => Math.max(max, r.cells.length), 0)
 
@@ -42,10 +44,16 @@ export default function HeaderStep({ sheet, hasHeaderRow, onChoose, onContinue }
           </tbody>
         </table>
       </div>
+      <p className="import-scroll-hint">Scroll horizontally to see every column.</p>
 
-      <button className="btn-terracotta btn-inline" onClick={onContinue} disabled={hasHeaderRow == null}>
-        Continue to Mapping
-      </button>
+      <div className="import-preview-footer">
+        <button className="btn-outline btn-inline" onClick={onBack}>
+          <ArrowLeft width={16} height={16} aria-hidden="true" /> Back
+        </button>
+        <button className="btn-terracotta btn-inline" onClick={onContinue} disabled={hasHeaderRow == null}>
+          Continue to Mapping
+        </button>
+      </div>
     </div>
   )
 }

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { AlertTriangle } from 'lucide-react'
+import { AlertTriangle, ArrowLeft } from 'lucide-react'
 import { fieldLabel } from '../../lib/import/fields.js'
 import { classifyNumericDate, resolveAmbiguousNumericDate } from '../../lib/import/dates.js'
 import { groupDateIssuesByField, DATE_DECISION_FIELDS } from '../../lib/importUiCopy.js'
@@ -73,7 +73,7 @@ function MixedFieldGroup({ fieldKey, entries, headers }) {
   )
 }
 
-export default function DatesStep({ rows, headers, dateConvention, onConfirm }) {
+export default function DatesStep({ rows, headers, dateConvention, onConfirm, onBack }) {
   const ambiguousByField = useMemo(() => groupDateIssuesByField(rows, ['AMBIGUOUS_DATE_FORMAT']), [rows])
   const mixedByField = useMemo(() => groupDateIssuesByField(rows, ['MIXED_DATE_FORMATS']), [rows])
   const [pending, setPending] = useState(dateConvention)
@@ -105,6 +105,9 @@ export default function DatesStep({ rows, headers, dateConvention, onConfirm }) 
       ))}
 
       <div className="import-preview-footer">
+        <button className="btn-outline btn-inline" onClick={onBack}>
+          <ArrowLeft width={16} height={16} aria-hidden="true" /> Back
+        </button>
         <button className="btn-terracotta btn-inline" disabled={!allChosen} onClick={() => onConfirm(pending)}>
           {fieldsNeedingChoice.length > 0 ? 'Confirm dates' : 'Continue'}
         </button>

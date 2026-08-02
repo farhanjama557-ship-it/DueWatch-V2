@@ -1807,12 +1807,12 @@ table {
   table-layout: fixed;
 }
 
-.import-preview-table col.col-status { width: 12%; }
-.import-preview-table col.col-client { width: 16%; }
-.import-preview-table col.col-invnum { width: 12%; }
-.import-preview-table col.col-due { width: 12%; }
-.import-preview-table col.col-amount { width: 12%; }
-.import-preview-table col.col-issues { width: 36%; }
+.import-preview-table col.col-status { width: 17%; }
+.import-preview-table col.col-client { width: 19%; }
+.import-preview-table col.col-invnum { width: 9%; }
+.import-preview-table col.col-due { width: 13%; }
+.import-preview-table col.col-amount { width: 11%; }
+.import-preview-table col.col-issues { width: 31%; }
 
 /* Specificity note: .invoice-table tbody td (0,1,2) otherwise beats a bare
    .import-issues (0,1,0) rule, so the base table's white-space:nowrap wins
@@ -1832,11 +1832,14 @@ table {
 
 .import-status-badge {
   display: inline-flex;
-  padding: 3px 9px;
+  padding: 3px 7px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 700;
   white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .import-status-badge.status-ready {
@@ -1918,10 +1921,50 @@ table {
   margin: 4px 0 14px;
 }
 
+/* Neutral focus ring, deliberately not terracotta/red — those colors are
+   reserved for the primary action and real error/rejected states, so a
+   focus ring in that hue made every ordinary step transition look like it
+   had landed on an alert. --blue is otherwise only used for informational
+   accents (Suggested-by-Duewatch, Review-required), which is exactly the
+   neutral register a focus ring belongs in. */
 .import-step-heading:focus {
-  outline: 2px solid var(--primary);
-  outline-offset: 2px;
+  outline: 2px solid var(--blue);
+  outline-offset: 3px;
   border-radius: 4px;
+}
+
+/* Constrains the importer's own working width on large desktops so
+   tables/cards don't stretch edge-to-edge into empty space. Scoped via
+   this compound class only — .brief's own rule (padding-right: var(--rail-w),
+   reserved for a dashboard rail this unrouted page has none of) is
+   untouched for every other page; overriding it here, on the one element
+   that carries both classes, reclaims that dead 300px column instead of
+   compensating around it. Below the breakpoint the rule is a no-op and
+   normal responsive behavior continues. */
+.import-shell {
+  max-width: 900px;
+  padding-right: 0;
+}
+
+/* Disabled importer actions must look disabled — .btn-terracotta/.btn-outline
+   have no global :disabled treatment (the only prior rule was scoped to the
+   legacy .import-disabled-cta wrapper), so an inert Continue/Confirm button
+   was visually identical to a clickable one. Scoped to .import-shell only;
+   no other page's buttons are affected. */
+.import-shell .btn-terracotta:disabled,
+.import-shell .btn-outline:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.import-shell .btn-terracotta:disabled:hover {
+  background: var(--primary);
+}
+
+.import-shell .btn-outline:disabled:hover {
+  background: var(--surface);
+  border-color: var(--border);
 }
 
 .import-file-error {
@@ -2037,6 +2080,7 @@ table {
   color: var(--red);
 }
 
+.import-summary-num.tone-ready { color: var(--green); }
 .import-summary-num.tone-ready-with-warnings { color: var(--amber); }
 .import-summary-num.tone-review-required { color: var(--blue); }
 .import-summary-num.tone-rejected { color: var(--red); }
@@ -2151,6 +2195,70 @@ table {
   padding-left: 18px;
 }
 
+/* Safe truncation for fixed-width table cells (Client, Invoice #) instead
+   of letting long values (e.g. "Northfield Logistics Group") spill past
+   their column boundary into the next cell. The full value is always
+   still available via the native title tooltip and in the expanded row
+   detail panel below the table — nothing is hidden, just not force-fit
+   into a narrow cell. */
+.import-cell-truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 0; /* forces the browser to respect the fixed column width, not the content's natural width */
+}
+
+.import-date-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.import-date-label {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-right: 4px;
+}
+
+.import-mapper-required {
+  color: var(--red);
+  font-weight: 700;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+/* Truthful horizontal-scroll hint for tables whose min-width can exceed a
+   narrow viewport (raw header preview, currency affected-row list). Hidden
+   by default — shown only under the mobile breakpoint below, where the
+   .list-card wrapper's overflow-x:auto can otherwise scroll silently with
+   no visible affordance that more columns exist off-screen. Never implies
+   data was omitted — the columns are all still there, just off-screen. */
+.import-scroll-hint {
+  display: none;
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+.import-row-detail-panel {
+  margin-top: 10px;
+  padding: 14px 16px;
+  border: 0.5px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+}
+
+.import-row-detail-caption {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+}
+
 @media (max-width: 760px) {
   .import-mapper {
     grid-template-columns: 1fr;
@@ -2168,6 +2276,17 @@ table {
   }
   .import-detail-list {
     grid-template-columns: 1fr;
+  }
+  .import-scroll-hint {
+    display: block;
+  }
+  .import-steps {
+    flex-wrap: wrap;
+    gap: 10px 14px;
+  }
+  .import-step {
+    font-size: 11.5px;
+    gap: 6px;
   }
 }
 

@@ -212,7 +212,7 @@ export default function Import() {
   }
 
   return (
-    <div className="brief">
+    <div className="brief import-shell">
       <div className="list-head">
         <div>
           <h1 className="brief-greeting">Invoices</h1>
@@ -259,6 +259,7 @@ export default function Import() {
           selectedIndex={s.sheetIndex}
           onSelect={handleSelectSheet}
           onContinue={() => goTo('headers')}
+          onBack={goBack}
         />
       )}
 
@@ -268,6 +269,7 @@ export default function Import() {
           hasHeaderRow={s.hasHeaderRow}
           onChoose={handleChooseHeaderRow}
           onContinue={handleHeaderContinue}
+          onBack={goBack}
         />
       )}
 
@@ -280,6 +282,7 @@ export default function Import() {
           validation={mappingValidation}
           onMappingChange={handleMappingChange}
           onContinue={handleContinueFromMapping}
+          onBack={goBack}
         />
       )}
 
@@ -289,6 +292,7 @@ export default function Import() {
           headers={s.sheetView.headers}
           dateConvention={s.dateConvention}
           onConfirm={handleConfirmDates}
+          onBack={goBack}
         />
       )}
 
@@ -298,6 +302,7 @@ export default function Import() {
           selectedCurrency={s.selectedCurrency}
           onSelect={(code) => patch({ selectedCurrency: code })}
           onConfirm={handleConfirmCurrency}
+          onBack={goBack}
         />
       )}
 
