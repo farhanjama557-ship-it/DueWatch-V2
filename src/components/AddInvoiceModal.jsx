@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import { useData } from '../context/DataContext'
 import { logEvent } from '../lib/events'
+import { resolveClientForInvoice } from '../lib/clients'
 import { CloseIcon } from './icons'
 
 // today / date + N days as YYYY-MM-DD (local).
@@ -72,22 +73,19 @@ export default function AddInvoiceModal({ open, onClose }) {
 
     setSaving(true)
 
-    // Reuse an existing client by name (case-insensitive), else create one.
-    let clientId = clients.find(
-      (c) => (c.name || '').trim().toLowerCase() === name.toLowerCase()
-    )?.id
-
-    if (!clientId) {
-      const { data: newClient, error: cErr } = await supabase
-        .from('clients')
-        .insert({ user_id: user.id, name })
-        .select('id')
-        .single()
-      if (cErr) {
-        setSaving(false)
-        return setError(`Could not create client: ${cErr.message}`)
-      }
-      clientId = newClient.id
+    // Resolve/create inside PostgreSQL under a transaction advisory lock.
+    // This removes the race in the old cached raw-name lookup and fails
+    // closed when existing records make the identity ambiguous.
+    let clientId
+    try {
+      clientId = await resolveClientForInvoice({
+        supabase,
+        userId: user.id,
+        name,
+      })
+    } catch (cErr) {
+      setSaving(false)
+      return setError(`Could not resolve client: ${cErr.message}`)
     }
 
     const { data: newInvoice, error: iErr } = await supabase
