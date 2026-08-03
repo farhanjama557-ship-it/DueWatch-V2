@@ -336,6 +336,24 @@ Execution is fail-closed and disabled by default. It requires the environment sw
 
 **Open question:** production-only tables and foreign keys cannot be verified from repository naming. In particular, any live-only payment, approval, activity, or evidence relationships remain unverified until the staging catalog verification succeeds. The repository schema verifies invoice history through unchanged invoice IDs; it does not justify inferring any additional foreign-key behavior.
 
+### 2026-08-03 — Claude Code — Phase 1.5A complete; Phase 1.5B begins (Checkpoint 1)
+
+**Did:** Milestone marker only — no code in this entry's commit besides this log append.
+
+**Phase 1.5A is complete and merged.** PR #22 (`Phase 0: add canonical client identity foundation`) merged into `main` as `ff51c183ce337b102a6a40844d1dfc34b38501cb`. PR #26 (`Phase 1.5A: Safe CSV and Excel import preview`) merged into `main` as `3a3c968cd131ae3b6e810d1302b040314f5e9646`, on top of PR #22. Phase 1.5A's boundary was deliberately narrow: parsing, normalization, mapping, preview, and review only — the importer engine (`src/lib/import/*`) had zero persistence at completion, enforced by a dedicated test (`tests/import/safety.test.mjs`) asserting it has no Supabase/DataContext/network/filesystem access and never imports `Import.jsx`, `App.jsx`, or any SQL/migration file. Combined test suite at merge: 247/247 passing.
+
+**Phase 1.5B begins now, on a new branch:** `claude/phase-1-5b-safe-persistence-core`, branched fresh from `origin/main` at `3a3c968cd131ae3b6e810d1302b040314f5e9646` (not a continuation of the Phase 1.5A branch).
+
+**Checkpoint 1 goal:** a safe, server-authoritative persistence core — the smallest durable model that can take normalized, eligible importer rows and persist canonical clients and invoices in bounded batches with durable, truthful outcomes, plus a minimum recovery proof (lost-response retry, cancel-between-batches, failed-batch rollback, refresh reconstruction, same-key/different-payload rejection, concurrent-worker safety, cross-tenant rejection, unknown-code denial). This checkpoint is about correctness, not experience.
+
+**Explicitly deferred, not part of Checkpoint 1 (or any near-term checkpoint):** the airport/suitcase visual treatment, processing animations, live decorative cards, saved mappings, source fingerprinting, import-source personalities, subscription gating, scheduled imports, Passport/Flight Board UI, broad Import History UI, AI classification, and automatic fuzzy client matching. No fake progress, no optimistic success, no marketing work belongs in this or the next few checkpoints — that visual/experience work is explicitly sequenced for later, once the persistence core itself is proven safe.
+
+**Status:** milestone marker only; Checkpoint 1 implementation follows in subsequent commits on the same branch.
+
+**Affects:** this log only, in this commit. Subsequent commits on `claude/phase-1-5b-safe-persistence-core` will affect `supabase/migrations/`, `supabase/tests/`, `src/lib/importPersistence/`, `src/lib/testEnv.js`, and minimal importer wiring.
+
+**Open question:** none.
+
 ---
 
 *Next entry goes below this line. Read everything above first.*
