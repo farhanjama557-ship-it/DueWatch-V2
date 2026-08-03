@@ -362,6 +362,137 @@ end
 $test$;
 
 \echo 'TEST GROUP PASS: integration_relationships'
+\echo 'TEST GROUP START: invoice_client_tenant_invariant'
+
+do $invoice_tenant_fixture$
+declare
+  tenant_a constant uuid := 'faaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1';
+  tenant_b constant uuid := 'fbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2';
+begin
+  insert into auth.users(id, email) values
+    (tenant_a, 'phase0-invoice-tenant-a@example.test'),
+    (tenant_b, 'phase0-invoice-tenant-b@example.test');
+
+  insert into public.clients(id, user_id, name) values
+    ('f1000000-0000-4000-8000-000000000001', tenant_a, 'Tenant A Client'),
+    ('f2000000-0000-4000-8000-000000000002', tenant_b, 'Tenant B Client');
+end
+$invoice_tenant_fixture$;
+
+-- TEST-ONLY grants exercise the existing invoices_all_own policy. The full
+-- suite is transactional and the final rollback removes these grants.
+grant select, insert, update, delete on public.invoices to authenticated;
+
+set local role authenticated;
+select set_config(
+  'request.jwt.claim.sub',
+  'faaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',
+  true
+);
+do $authenticated_invoice_tenant_checks$
+declare
+  tenant_a constant uuid := 'faaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1';
+  tenant_b constant uuid := 'fbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2';
+  client_a constant uuid := 'f1000000-0000-4000-8000-000000000001';
+  client_b constant uuid := 'f2000000-0000-4000-8000-000000000002';
+  same_tenant_invoice uuid;
+begin
+  insert into public.invoices(user_id, client_id, inv_num, amount)
+  values(tenant_a, client_a, 'TENANT-SAME', 10)
+  returning id into same_tenant_invoice;
+
+  begin
+    insert into public.invoices(user_id, client_id, inv_num, amount)
+    values(tenant_a, client_b, 'TENANT-CROSS-INSERT', 10);
+    raise exception 'Expected authenticated cross-tenant insert rejection';
+  exception when foreign_key_violation then
+    null;
+  end;
+
+  begin
+    update public.invoices set client_id = client_b
+    where id = same_tenant_invoice;
+    raise exception 'Expected authenticated cross-tenant client update rejection';
+  exception when foreign_key_violation then
+    null;
+  end;
+
+  begin
+    update public.invoices set user_id = tenant_b
+    where id = same_tenant_invoice;
+    raise exception 'Expected authenticated cross-tenant user update rejection';
+  exception when insufficient_privilege then
+    null;
+  end;
+
+  insert into public.invoices(user_id, client_id, inv_num, amount)
+  values(tenant_a, null, 'TENANT-NULL-CLIENT', 10);
+end
+$authenticated_invoice_tenant_checks$;
+reset role;
+
+do $owner_invoice_tenant_checks$
+declare
+  tenant_a constant uuid := 'faaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1';
+  tenant_b constant uuid := 'fbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2';
+  client_a constant uuid := 'f1000000-0000-4000-8000-000000000001';
+  client_b constant uuid := 'f2000000-0000-4000-8000-000000000002';
+  delete_invoice uuid;
+  owner_invoice uuid;
+begin
+  begin
+    insert into public.invoices(user_id, client_id, inv_num, amount)
+    values(tenant_a, client_b, 'OWNER-CROSS-INSERT', 10);
+    raise exception 'Expected owner cross-tenant insert rejection';
+  exception when foreign_key_violation then
+    null;
+  end;
+
+  insert into public.invoices(user_id, client_id, inv_num, amount)
+  values(tenant_a, client_a, 'OWNER-UPDATE', 10)
+  returning id into owner_invoice;
+  begin
+    update public.invoices set user_id = tenant_b where id = owner_invoice;
+    raise exception 'Expected owner cross-tenant user update rejection';
+  exception when foreign_key_violation then
+    null;
+  end;
+
+  begin
+    insert into public.clients(id, user_id, name)
+    values(client_a, tenant_b, 'Colliding Client UUID');
+    raise exception 'Expected global client UUID collision rejection';
+  exception when unique_violation then
+    null;
+  end;
+
+  insert into public.invoices(user_id, client_id, inv_num, amount)
+  values(tenant_a, client_a, 'DELETE-SETS-NULL', 10)
+  returning id into delete_invoice;
+  delete from public.clients where id = client_a;
+
+  if not exists(
+    select 1 from public.invoices
+    where id = delete_invoice and user_id = tenant_a and client_id is null
+  ) then
+    raise exception 'Deleting a client did not preserve the invoice with null client_id';
+  end if;
+
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.invoices'::regclass
+      and conname = 'invoices_user_id_client_id_fkey'
+      and contype = 'f'
+      and convalidated
+      and pg_get_constraintdef(oid)
+        like 'FOREIGN KEY (user_id, client_id) REFERENCES clients(user_id, id)%ON DELETE SET NULL (client_id)%'
+  ) then
+    raise exception 'Expected validated composite invoice/client constraint';
+  end if;
+end
+$owner_invoice_tenant_checks$;
+
+\echo 'TEST GROUP PASS: invoice_client_tenant_invariant'
 \echo 'TEST GROUP START: tenant_isolation'
 
 do $tenant_isolation$

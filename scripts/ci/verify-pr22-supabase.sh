@@ -82,6 +82,80 @@ if [ "$schema_exit" -ne 0 ] || [ "$preseed_exit" -ne 0 ] || [ "$migration_exit" 
   exit "$overall_status"
 fi
 
+section "Proving invoice/client correction preflight fails closed"
+psql "$DB_URL" -v ON_ERROR_STOP=1 -X \
+  -f supabase/tests/invoice_client_tenant_preflight_setup.sql \
+  -f supabase/migrations/20260803021842_enforce_invoice_client_tenant_ownership.sql \
+  > "$ARTIFACT_DIR/03a_tenant_preflight_expected_failure.log" 2>&1
+tenant_preflight_process_exit=$?
+tenant_preflight_exit=1
+if [ "$tenant_preflight_process_exit" -ne 0 ] \
+   && grep -q 'Cannot enforce invoice/client tenant ownership: cross-tenant relationships exist' \
+      "$ARTIFACT_DIR/03a_tenant_preflight_expected_failure.log"; then
+  tenant_preflight_exit=0
+fi
+
+tenant_preflight_cleanup=$(psql "$DB_URL" -v ON_ERROR_STOP=1 -X -t -A -F',' <<'SQL'
+select
+  (select count(*) from auth.users where id in (
+    'eaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1'::uuid,
+    'ebbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2'::uuid
+  )),
+  (select count(*) from public.clients where id =
+    'e1000000-0000-4000-8000-000000000001'::uuid),
+  (select count(*) from public.invoices where id =
+    'e2000000-0000-4000-8000-000000000002'::uuid),
+  (select count(*) from pg_constraint
+    where conrelid = 'public.invoices'::regclass
+      and conname = 'invoices_client_id_fkey');
+SQL
+)
+IFS=',' read -r preflight_users preflight_clients preflight_invoices preflight_original_fk <<< "$tenant_preflight_cleanup"
+if [ "$tenant_preflight_exit" -ne 0 ] \
+   || [ "${preflight_users:-1}" != "0" ] \
+   || [ "${preflight_clients:-1}" != "0" ] \
+   || [ "${preflight_invoices:-1}" != "0" ] \
+   || [ "${preflight_original_fk:-0}" != "1" ]; then
+  tenant_preflight_exit=1
+  overall_status=1
+fi
+{
+  echo "expected_failure_process_exit=$tenant_preflight_process_exit"
+  echo "preflight_fixture_users_after=$preflight_users"
+  echo "preflight_fixture_clients_after=$preflight_clients"
+  echo "preflight_fixture_invoices_after=$preflight_invoices"
+  echo "original_fk_restored_after_rollback=$preflight_original_fk"
+  echo "tenant_preflight_exit=$tenant_preflight_exit"
+} >> "$ARTIFACT_DIR/03a_tenant_preflight_expected_failure.log"
+
+section "Applying invoice/client tenant correction migration"
+psql "$DB_URL" -v ON_ERROR_STOP=1 -X \
+  -f supabase/migrations/20260803021842_enforce_invoice_client_tenant_ownership.sql \
+  > "$ARTIFACT_DIR/03b_tenant_correction_apply.log" 2>&1
+tenant_correction_exit=$?
+echo "tenant correction migration exit code: $tenant_correction_exit" \
+  | tee -a "$ARTIFACT_DIR/03b_tenant_correction_apply.log"
+[ "$tenant_correction_exit" -eq 0 ] || overall_status=1
+
+section "Re-running invoice/client tenant correction migration"
+psql "$DB_URL" -v ON_ERROR_STOP=1 -X \
+  -f supabase/migrations/20260803021842_enforce_invoice_client_tenant_ownership.sql \
+  > "$ARTIFACT_DIR/03c_tenant_correction_rerun.log" 2>&1
+tenant_correction_rerun_exit=$?
+echo "tenant correction re-run exit code: $tenant_correction_rerun_exit" \
+  | tee -a "$ARTIFACT_DIR/03c_tenant_correction_rerun.log"
+[ "$tenant_correction_rerun_exit" -eq 0 ] || overall_status=1
+
+if [ "$tenant_preflight_exit" -ne 0 ] \
+   || [ "$tenant_correction_exit" -ne 0 ] \
+   || [ "$tenant_correction_rerun_exit" -ne 0 ]; then
+  echo "Invoice/client tenant correction verification failed; skipping downstream tests." >&2
+  echo "$overall_status" > "$ARTIFACT_DIR/OVERALL_EXIT_CODE"
+  echo "tenant_preflight_exit=$tenant_preflight_exit tenant_correction_exit=$tenant_correction_exit tenant_correction_rerun_exit=$tenant_correction_rerun_exit" \
+    >> "$ARTIFACT_DIR/EXIT_CODE_SUMMARY.txt"
+  exit "$overall_status"
+fi
+
 section "Verifying migration backfill and identity boundaries"
 psql "$DB_URL" -v ON_ERROR_STOP=1 -X <<'SQL' \
   > "$ARTIFACT_DIR/04_migration_backfill.log" 2>&1
@@ -196,15 +270,19 @@ echo "integration test exit code: $integration_exit" | tee -a "$ARTIFACT_DIR/06_
 [ "$integration_exit" -eq 0 ] || overall_status=1
 
 integration_relationships_exit=1
+invoice_client_tenant_exit=1
 tenant_isolation_exit=1
 idempotency_exit=1
 grep -q 'TEST GROUP PASS: integration_relationships' "$ARTIFACT_DIR/06_integration_test.log" \
   && integration_relationships_exit=0
+grep -q 'TEST GROUP PASS: invoice_client_tenant_invariant' "$ARTIFACT_DIR/06_integration_test.log" \
+  && invoice_client_tenant_exit=0
 grep -q 'TEST GROUP PASS: tenant_isolation' "$ARTIFACT_DIR/06_integration_test.log" \
   && tenant_isolation_exit=0
 grep -q 'TEST GROUP PASS: resolver_idempotency' "$ARTIFACT_DIR/06_integration_test.log" \
   && idempotency_exit=0
 if [ "$integration_relationships_exit" -ne 0 ] \
+   || [ "$invoice_client_tenant_exit" -ne 0 ] \
    || [ "$tenant_isolation_exit" -ne 0 ] \
    || [ "$idempotency_exit" -ne 0 ]; then
   overall_status=1
@@ -221,13 +299,24 @@ select
   (select count(*) from auth.users where id in (
     'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1'::uuid,
     'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2'::uuid,
-    'cccccccc-cccc-4ccc-8ccc-ccccccccccc3'::uuid
+    'cccccccc-cccc-4ccc-8ccc-ccccccccccc3'::uuid,
+    'faaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1'::uuid,
+    'fbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2'::uuid
   ) or email = 'phase0-test@example.test'),
   (select count(*) from public.clients where user_id in (
     'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1'::uuid,
     'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2'::uuid,
-    'cccccccc-cccc-4ccc-8ccc-ccccccccccc3'::uuid
+    'cccccccc-cccc-4ccc-8ccc-ccccccccccc3'::uuid,
+    'faaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1'::uuid,
+    'fbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2'::uuid
   ) or email = 'billing@example.test'),
+  (select count(*) from public.invoices where user_id in (
+    'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1'::uuid,
+    'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2'::uuid,
+    'cccccccc-cccc-4ccc-8ccc-ccccccccccc3'::uuid,
+    'faaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1'::uuid,
+    'fbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2'::uuid
+  )),
   (select count(*) from public.client_source_identities where user_id in (
     'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1'::uuid,
     'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2'::uuid,
@@ -249,7 +338,7 @@ select
 SQL
 )
 rollback_query_exit=$?
-IFS=',' read -r leftover_users leftover_clients leftover_sources leftover_runs leftover_candidates leftover_audit exec_enabled_after authenticated_clients_select_after_test <<< "$leftover_summary"
+IFS=',' read -r leftover_users leftover_clients leftover_invoices leftover_sources leftover_runs leftover_candidates leftover_audit exec_enabled_after authenticated_clients_select_after_test <<< "$leftover_summary"
 test_clients_grant_rolled_back=1
 if [ "${authenticated_clients_select_after_test:-unknown}" \
      != "${authenticated_clients_select_before_test:-unknown}" ]; then
@@ -259,6 +348,7 @@ rollback_clean=1
 if [ "$rollback_query_exit" -ne 0 ] \
    || [ "${leftover_users:-1}" != "0" ] \
    || [ "${leftover_clients:-1}" != "0" ] \
+   || [ "${leftover_invoices:-1}" != "0" ] \
    || [ "${leftover_sources:-1}" != "0" ] \
    || [ "${leftover_runs:-1}" != "0" ] \
    || [ "${leftover_candidates:-1}" != "0" ] \
@@ -271,6 +361,7 @@ fi
 {
   echo "leftover_users=${leftover_users:-?}"
   echo "leftover_clients=${leftover_clients:-?}"
+  echo "leftover_invoices=${leftover_invoices:-?}"
   echo "leftover_source_identities=${leftover_sources:-?}"
   echo "leftover_runs=${leftover_runs:-?}"
   echo "leftover_candidates=${leftover_candidates:-?}"
@@ -307,7 +398,7 @@ echo "$FK_WARNING" >> "$ARTIFACT_DIR/09_fk_smoke_check.log"
 [ "$fk_exit" -eq 0 ] || overall_status=1
 
 echo "$overall_status" > "$ARTIFACT_DIR/OVERALL_EXIT_CODE"
-echo "schema_exit=$schema_exit preseed_exit=$preseed_exit migration_exit=$migration_exit backfill_exit=$backfill_exit precleanup_exit=$precleanup_exit integration_exit=$integration_exit integration_relationships_exit=$integration_relationships_exit tenant_isolation_exit=$tenant_isolation_exit idempotency_exit=$idempotency_exit rollback_clean=$rollback_clean authenticated_clients_select_before_test=${authenticated_clients_select_before_test:-unknown} authenticated_clients_select_after_test=${authenticated_clients_select_after_test:-unknown} test_clients_grant_rolled_back=$test_clients_grant_rolled_back execution_enabled_after_test=${exec_enabled_after:-unknown} legacy_dedupe_exit=$legacy_dedupe_exit fk_exit=$fk_exit" \
+echo "schema_exit=$schema_exit preseed_exit=$preseed_exit migration_exit=$migration_exit tenant_preflight_exit=$tenant_preflight_exit tenant_correction_exit=$tenant_correction_exit tenant_correction_rerun_exit=$tenant_correction_rerun_exit backfill_exit=$backfill_exit precleanup_exit=$precleanup_exit integration_exit=$integration_exit integration_relationships_exit=$integration_relationships_exit invoice_client_tenant_exit=$invoice_client_tenant_exit tenant_isolation_exit=$tenant_isolation_exit idempotency_exit=$idempotency_exit rollback_clean=$rollback_clean authenticated_clients_select_before_test=${authenticated_clients_select_before_test:-unknown} authenticated_clients_select_after_test=${authenticated_clients_select_after_test:-unknown} test_clients_grant_rolled_back=$test_clients_grant_rolled_back execution_enabled_after_test=${exec_enabled_after:-unknown} legacy_dedupe_exit=$legacy_dedupe_exit fk_exit=$fk_exit" \
   >> "$ARTIFACT_DIR/EXIT_CODE_SUMMARY.txt"
 
 exit "$overall_status"
