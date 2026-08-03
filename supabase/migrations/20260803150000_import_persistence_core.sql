@@ -168,6 +168,11 @@ create table if not exists public.import_runs (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
   idempotency_key text not null,
+  -- Hash of the exact p_rows payload that created this run (see
+  -- start_import_run). A retry with the SAME idempotency_key must submit
+  -- the SAME rows; a mismatch fails closed rather than silently returning
+  -- a run whose stored rows don't match what the caller just sent.
+  request_payload_hash text not null,
   status text not null default 'pending'
     check (status in ('pending', 'in_progress', 'completed', 'partially_completed', 'failed', 'cancelled')),
   total_rows integer not null default 0,
@@ -434,6 +439,8 @@ declare
   v_total integer := 0;
   v_eligible_count integer := 0;
   v_blocked_count integer := 0;
+  v_request_hash text;
+  v_existing_hash text;
 begin
   if (select auth.uid()) is null or (select auth.uid()) <> p_user_id then
     raise exception 'Cannot start an import run for another user';
@@ -442,11 +449,27 @@ begin
     raise exception 'idempotency key is required';
   end if;
 
+  -- jsonb::text is a deterministic, canonical rendering of the same jsonb
+  -- value (Postgres normalizes whitespace/structure on the way into jsonb
+  -- storage) — this hash only ever needs to compare against itself on a
+  -- later call with the exact same key, not match any hash computed
+  -- elsewhere, so this canonicalization is sufficient.
+  v_request_hash := encode(sha256(convert_to(p_rows::text, 'UTF8')), 'hex');
+
   -- Idempotent run creation: the same key for the same user always
-  -- returns the same run, never creates a second one.
-  select id into v_existing_run_id from public.import_runs
+  -- returns the same run for the same payload, never creates a second
+  -- one. A retry with the SAME key but a DIFFERENT payload fails closed
+  -- instead of silently returning stale results for data the caller
+  -- never actually got persisted.
+  select id, request_payload_hash into v_existing_run_id, v_existing_hash
+  from public.import_runs
   where user_id = p_user_id and idempotency_key = p_idempotency_key;
   if v_existing_run_id is not null then
+    if v_existing_hash <> v_request_hash then
+      raise exception
+        'Idempotency key % was already used to start a different import; refusing to overwrite it',
+        p_idempotency_key;
+    end if;
     return v_existing_run_id;
   end if;
 
@@ -458,9 +481,9 @@ begin
   -- it can be inserted. eligible_rows/blocked_rows start at 0 and are
   -- corrected by the UPDATE after the loop below, once they're known.
   insert into public.import_runs(
-    id, user_id, idempotency_key, status, total_rows, started_at
+    id, user_id, idempotency_key, request_payload_hash, status, total_rows, started_at
   ) values (
-    v_run_id, p_user_id, p_idempotency_key, 'in_progress', v_total, now()
+    v_run_id, p_user_id, p_idempotency_key, v_request_hash, 'in_progress', v_total, now()
   );
 
   for v_row in select * from jsonb_array_elements(p_rows) loop
