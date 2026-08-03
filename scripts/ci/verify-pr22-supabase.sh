@@ -102,9 +102,9 @@ select
     'ebbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2'::uuid
   )),
   (select count(*) from public.clients where id =
-    'e1000000-0000-4000-8000-000000000001'::uuid),
+    '0f100000-0000-4000-8000-000000000001'::uuid),
   (select count(*) from public.invoices where id =
-    'e2000000-0000-4000-8000-000000000002'::uuid),
+    '0f200000-0000-4000-8000-000000000002'::uuid),
   (select count(*) from pg_constraint
     where conrelid = 'public.invoices'::regclass
       and conname = 'invoices_client_id_fkey');
