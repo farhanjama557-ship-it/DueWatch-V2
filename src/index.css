@@ -1857,6 +1857,13 @@ table {
   margin-bottom: 8px;
 }
 
+.import-execute-status {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 14px;
+}
+
 .import-error {
   display: flex;
   align-items: center;

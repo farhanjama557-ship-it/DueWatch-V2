@@ -6,7 +6,7 @@ import RowTable from './RowTable.jsx'
 
 const FILTER_ALL = 'all'
 
-export default function PreviewStep({ result, headers, onBack, onFinish, onInspectReview, onInspectRejected }) {
+export default function PreviewStep({ result, headers, onBack, onFinish, onInspectReview, onInspectRejected, onStartImport }) {
   const [filter, setFilter] = useState(FILTER_ALL)
 
   const filteredRows = useMemo(() => {
@@ -64,6 +64,15 @@ export default function PreviewStep({ result, headers, onBack, onFinish, onInspe
           <button className="btn-terracotta btn-inline" onClick={onFinish}>
             Finish preview
           </button>
+          {onStartImport && (
+            <button
+              className="btn-terracotta btn-inline"
+              onClick={onStartImport}
+              disabled={result.summary[OUTCOMES.READY] + result.summary[OUTCOMES.READY_WITH_WARNINGS] === 0}
+            >
+              Start Import
+            </button>
+          )}
         </div>
       </div>
     </div>

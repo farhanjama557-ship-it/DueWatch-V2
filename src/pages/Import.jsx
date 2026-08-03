@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { X } from 'lucide-react'
+import { useAuth } from '../context/AuthContext'
 import {
   parseUpload,
   buildSheetView,
@@ -11,6 +12,11 @@ import {
 } from '../lib/importUiAdapter.js'
 import { IGNORE_KEY } from '../lib/import/fields.js'
 import { needsDateDecisionStep, needsCurrencyStep } from '../lib/importUiCopy.js'
+import {
+  buildRunRequestRows,
+  buildImportIdempotencyKey,
+  runImportToCompletion,
+} from '../lib/importPersistence/importPersistenceClient.js'
 import StepProgress from '../components/import/StepProgress.jsx'
 import UploadStep from '../components/import/UploadStep.jsx'
 import ParsingStep from '../components/import/ParsingStep.jsx'
@@ -24,6 +30,7 @@ import PreviewStep from '../components/import/PreviewStep.jsx'
 import ReviewStep from '../components/import/ReviewStep.jsx'
 import RejectedStep from '../components/import/RejectedStep.jsx'
 import CompleteStep from '../components/import/CompleteStep.jsx'
+import ExecuteStep from '../components/import/ExecuteStep.jsx'
 
 // Wide working screens get more room for tables/mapping grids; every other
 // step is a narrower, focused decision screen. Purely a width choice — no
@@ -43,6 +50,7 @@ const STEP_TITLES = {
   review: 'Rows needing review',
   rejected: 'Rejected rows',
   complete: 'Preview complete',
+  execute: 'Importing',
 }
 
 const INITIAL_STATE = {
@@ -62,11 +70,17 @@ const INITIAL_STATE = {
 }
 
 export default function Import() {
+  const { user } = useAuth()
   const [step, setStep] = useState('upload')
   const [history, setHistory] = useState(['upload'])
   const [s, setS] = useState(INITIAL_STATE)
   const [liveMessage, setLiveMessage] = useState('')
   const stepHeadingRef = useRef(null)
+
+  const [executePhase, setExecutePhase] = useState('idle')
+  const [executeProgress, setExecuteProgress] = useState(null)
+  const [executeError, setExecuteError] = useState(null)
+  const cancelRequestedRef = useRef(false)
 
   // Move focus to the new step's heading on every transition so keyboard
   // and screen-reader users land somewhere meaningful instead of staying
@@ -216,6 +230,48 @@ export default function Import() {
     goTo('preview')
   }
 
+  // Preview stays exactly as it was — this is a distinct, explicit action
+  // that begins real persistence. Nothing about the preview flow above
+  // changes because this exists.
+  async function handleStartImport() {
+    if (!user?.id) {
+      setExecuteError(new Error('You must be signed in to start an import.'))
+      setExecutePhase('error')
+      goTo('execute')
+      return
+    }
+    cancelRequestedRef.current = false
+    setExecuteError(null)
+    setExecuteProgress(null)
+    setExecutePhase('starting')
+    goTo('execute')
+    try {
+      const requestRows = buildRunRequestRows(s.normalizeResult.rows)
+      const idempotencyKey = await buildImportIdempotencyKey(user.id, requestRows)
+      const finalProgress = await runImportToCompletion({
+        userId: user.id,
+        idempotencyKey,
+        rows: requestRows,
+        onProgress: (p) => {
+          setExecuteProgress(p)
+          setExecutePhase(p.batchFailedReason ? 'batch_failed' : p.status)
+        },
+        isCancelRequested: () => cancelRequestedRef.current,
+      })
+      setExecuteProgress(finalProgress)
+      setExecutePhase(
+        finalProgress.batchFailedReason ? 'batch_failed' : finalProgress.stalled ? 'stalled' : finalProgress.status
+      )
+    } catch (err) {
+      setExecuteError(err)
+      setExecutePhase('error')
+    }
+  }
+
+  function handleCancelImport() {
+    cancelRequestedRef.current = true
+  }
+
   const widthVariant = WIDE_STEPS.has(step) ? 'import-shell--wide' : 'import-shell--narrow'
 
   return (
@@ -245,7 +301,7 @@ export default function Import() {
         {STEP_TITLES[step]}
       </h3>
 
-      {s.fileMeta && step !== 'upload' && step !== 'parsing' && step !== 'file_error' && (
+      {s.fileMeta && step !== 'upload' && step !== 'parsing' && step !== 'file_error' && step !== 'execute' && (
         <p className="import-filename">
           {s.fileMeta.name}
           <button className="import-restart" onClick={resetAll}>
@@ -321,6 +377,7 @@ export default function Import() {
           onFinish={() => goTo('complete')}
           onInspectReview={() => goTo('review')}
           onInspectRejected={() => goTo('rejected')}
+          onStartImport={handleStartImport}
         />
       )}
 
@@ -334,6 +391,16 @@ export default function Import() {
 
       {step === 'complete' && s.normalizeResult && (
         <CompleteStep summary={s.normalizeResult.summary} onStartOver={resetAll} />
+      )}
+
+      {step === 'execute' && (
+        <ExecuteStep
+          phase={executePhase}
+          progress={executeProgress}
+          error={executeError}
+          onCancel={handleCancelImport}
+          canCancel={executePhase === 'starting' || executePhase === 'in_progress'}
+        />
       )}
     </div>
   )
