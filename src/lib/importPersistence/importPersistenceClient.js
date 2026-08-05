@@ -8,11 +8,12 @@ import { supabase } from '../supabase.js'
 
 export { buildRunRequestRows, buildImportIdempotencyKey } from './requestShape.js'
 
-export async function startImportRun({ userId, idempotencyKey, rows }) {
+export async function startImportRun({ userId, idempotencyKey, rows, warningsAcknowledged }) {
   const { data, error } = await supabase.rpc('start_import_run', {
     p_user_id: userId,
     p_idempotency_key: idempotencyKey,
     p_rows: rows,
+    p_warnings_acknowledged: warningsAcknowledged === true,
   })
   if (error) throw error
   if (!data) throw new Error('start_import_run returned no run id')
@@ -35,28 +36,40 @@ export async function requestImportCancellation(runId) {
 
 // Truthful progress read directly from server state — never from local
 // counters — so this is exactly what powers both live progress display and
-// resuming after a refresh: the same read either way.
+// resuming after a refresh: the same read either way. blockedRows in
+// particular MUST be a live count against import_rows, not
+// import_runs.blocked_rows (that column only reflects blocking decisions
+// made at start_import_run time; rows can also become blocked later,
+// during batch execution — e.g. AMBIGUOUS_CLIENT_IDENTITY or
+// INVOICE_MATERIAL_CONFLICT — and a stale read would under-report them).
 export async function getRunProgress(runId) {
   const { data: run, error: runError } = await supabase
     .from('import_runs')
-    .select('id, status, total_rows, eligible_rows, blocked_rows, cancel_requested_at')
+    .select('id, status, total_rows, eligible_rows, cancel_requested_at')
     .eq('id', runId)
     .single()
   if (runError) throw runError
 
-  const { count: committedRows, error: countError } = await supabase
+  const { count: committedRows, error: committedError } = await supabase
     .from('import_rows')
     .select('id', { count: 'exact', head: true })
     .eq('run_id', runId)
     .eq('server_status', 'committed')
-  if (countError) throw countError
+  if (committedError) throw committedError
+
+  const { count: blockedRows, error: blockedError } = await supabase
+    .from('import_rows')
+    .select('id', { count: 'exact', head: true })
+    .eq('run_id', runId)
+    .eq('server_status', 'blocked')
+  if (blockedError) throw blockedError
 
   return {
     runId: run.id,
     status: run.status,
     totalRows: run.total_rows,
-    eligibleRows: run.eligible_rows,
-    blockedRows: run.blocked_rows,
+    eligibleAtSubmission: run.eligible_rows,
+    blockedRows: blockedRows ?? 0,
     committedRows: committedRows ?? 0,
     cancelRequested: run.cancel_requested_at != null,
   }
@@ -70,8 +83,16 @@ const TERMINAL_RUN_STATUSES = new Set(['completed', 'partially_completed', 'canc
 // on a batch_failed result rather than silently retrying the same failing
 // batch forever; stops on cancellation once the server actually reports
 // cancelled, never optimistically before that.
-export async function runImportToCompletion({ userId, idempotencyKey, rows, batchSize, onProgress, isCancelRequested }) {
-  const runId = await startImportRun({ userId, idempotencyKey, rows })
+export async function runImportToCompletion({
+  userId,
+  idempotencyKey,
+  rows,
+  warningsAcknowledged,
+  batchSize,
+  onProgress,
+  isCancelRequested,
+}) {
+  const runId = await startImportRun({ userId, idempotencyKey, rows, warningsAcknowledged })
   let progress = await getRunProgress(runId)
   onProgress?.(progress)
   if (TERMINAL_RUN_STATUSES.has(progress.status)) {

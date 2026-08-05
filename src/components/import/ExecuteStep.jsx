@@ -39,8 +39,8 @@ export default function ExecuteStep({ phase, progress, error, onCancel, canCance
             <span className="import-summary-label">blocked</span>
           </div>
           <div className="import-outcome-card">
-            <span className="import-summary-num">{progress.eligibleRows}</span>
-            <span className="import-summary-label">eligible total</span>
+            <span className="import-summary-num">{progress.eligibleAtSubmission}</span>
+            <span className="import-summary-label">eligible at submission</span>
           </div>
           <div className="import-outcome-card">
             <span className="import-summary-num">{progress.totalRows}</span>

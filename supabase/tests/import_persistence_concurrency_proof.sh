@@ -31,8 +31,8 @@ select set_config('request.jwt.claim.sub', '$USER_ID', false);
 select set_config('request.jwt.claim.role', 'authenticated', false);
 select public.start_import_run('$USER_ID'::uuid, 'concurrency-proof-key', \$j\$[
   {"row_number": 1, "outcome": "ready", "issue_codes": [],
-   "normalized": {"client_name": "Concurrency Co", "invoice_number": "CONC-1",
-     "invoice_date": "2026-01-01", "amount": "10.00"}}
+   "normalized": {"client_name": "Concurrency Co", "client_email": "concurrency@example.test",
+     "invoice_number": "CONC-1", "invoice_date": "2026-01-01", "amount": "10.00"}}
 ]\$j\$::jsonb);
 SQL
 

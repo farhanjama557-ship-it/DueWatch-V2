@@ -1857,6 +1857,15 @@ table {
   margin-bottom: 8px;
 }
 
+.import-warnings-ack {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin: 4px 0 14px;
+}
+
 .import-execute-status {
   font-size: 15px;
   font-weight: 600;

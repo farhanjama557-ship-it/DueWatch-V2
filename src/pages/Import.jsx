@@ -233,7 +233,7 @@ export default function Import() {
   // Preview stays exactly as it was — this is a distinct, explicit action
   // that begins real persistence. Nothing about the preview flow above
   // changes because this exists.
-  async function handleStartImport() {
+  async function handleStartImport(warningsAcknowledged) {
     if (!user?.id) {
       setExecuteError(new Error('You must be signed in to start an import.'))
       setExecutePhase('error')
@@ -247,11 +247,12 @@ export default function Import() {
     goTo('execute')
     try {
       const requestRows = buildRunRequestRows(s.normalizeResult.rows)
-      const idempotencyKey = await buildImportIdempotencyKey(user.id, requestRows)
+      const idempotencyKey = await buildImportIdempotencyKey(user.id, requestRows, warningsAcknowledged)
       const finalProgress = await runImportToCompletion({
         userId: user.id,
         idempotencyKey,
         rows: requestRows,
+        warningsAcknowledged,
         onProgress: (p) => {
           setExecuteProgress(p)
           setExecutePhase(p.batchFailedReason ? 'batch_failed' : p.status)

@@ -76,3 +76,10 @@ test('buildImportIdempotencyKey changes across users for identical rows', async 
 test('buildImportIdempotencyKey throws without a userId', async () => {
   await assert.rejects(() => buildImportIdempotencyKey(null, []))
 })
+
+test('buildImportIdempotencyKey changes when warningsAcknowledged toggles', async () => {
+  const rows = buildRunRequestRows([previewRow()])
+  const unacknowledged = await buildImportIdempotencyKey('user-1', rows, false)
+  const acknowledged = await buildImportIdempotencyKey('user-1', rows, true)
+  assert.notEqual(unacknowledged, acknowledged)
+})
