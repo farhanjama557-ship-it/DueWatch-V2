@@ -1642,6 +1642,16 @@ table {
   max-width: 960px;
 }
 
+.import-shell--upload {
+  max-width: 1180px;
+}
+
+@media (max-width: 1040px) {
+  .import-shell--upload {
+    max-width: 640px;
+  }
+}
+
 @media (min-width: 761px) {
   .import-shell {
     padding-left: 0;
@@ -2233,6 +2243,113 @@ table {
   font-size: 11px;
   color: var(--text-muted);
   margin-top: 4px;
+}
+
+/* ---- Upload step: two-column intro + illustration ---------------- */
+/* The illustration is a static decorative asset (src/assets/duewatch-import-hero.svg)
+   shown only on the initial upload screen; it carries no product state. */
+
+.import-upload-intro {
+  display: grid;
+  grid-template-columns: 44% 56%;
+  column-gap: 48px;
+  row-gap: 18px;
+  align-items: start;
+  grid-template-areas:
+    "headline art"
+    "body art"
+    "upload art"
+    "trust art";
+}
+
+.import-upload-headline {
+  grid-area: headline;
+  margin: 0;
+  font-size: 28px;
+  line-height: 1.15;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.import-upload-body {
+  grid-area: body;
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--text-muted);
+  max-width: 46ch;
+}
+
+.import-upload-control {
+  grid-area: upload;
+  min-width: 0;
+}
+
+.import-upload-trust {
+  grid-area: trust;
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+.import-upload-art {
+  grid-area: art;
+  align-self: center;
+  min-width: 0;
+  display: flex;
+  justify-content: center;
+}
+
+.import-upload-hero-img {
+  display: block;
+  width: 100%;
+  max-width: 680px;
+  height: auto;
+  aspect-ratio: 1440 / 900;
+  opacity: 0;
+  transform: translateY(6px);
+  animation: import-hero-in 0.4s ease forwards;
+}
+
+@keyframes import-hero-in {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .import-upload-hero-img {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (max-width: 1040px) {
+  .import-upload-intro {
+    grid-template-columns: 1fr;
+    row-gap: 24px;
+    grid-template-areas:
+      "headline"
+      "body"
+      "art"
+      "upload"
+      "trust";
+  }
+
+  .import-upload-art {
+    justify-content: center;
+  }
+}
+
+@media (max-width: 600px) {
+  .import-upload-hero-img {
+    max-width: 100%;
+    max-height: 220px;
+    width: 100%;
+    object-fit: contain;
+  }
 }
 
 /* ---- Upload dropzone -------------------------------------------- */
