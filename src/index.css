@@ -1512,7 +1512,21 @@ table {
 .invoice-table {
   width: 100%;
   min-width: 720px;
+  /* Header and body must share one column definition, not two — with the
+     default auto layout the browser recomputes each column's width from
+     whichever rows happen to be visible, so switching tabs (a "Paid" tab
+     with two short rows vs "All" with seven) reflowed the columns to
+     different widths on every switch. Fixed layout + the colgroup below
+     locks one shared width per column regardless of tab or content. */
+  table-layout: fixed;
 }
+
+.invoice-table col.col-client { width: 34%; }
+.invoice-table col.col-invnum { width: 12%; }
+.invoice-table col.col-amount { width: 14%; }
+.invoice-table col.col-due { width: 14%; }
+.invoice-table col.col-overdue { width: 13%; }
+.invoice-table col.col-status { width: 13%; }
 
 .invoice-table thead th {
   text-align: left;
@@ -1524,6 +1538,17 @@ table {
   padding: 12px 20px;
   border-bottom: 0.5px solid var(--border);
   white-space: nowrap;
+}
+
+/* .invoice-table thead th (0,1,2) otherwise beats the bare .ta-right (0,1,0)
+   class on the same header cells, which is why "Amount"/"Days Overdue"/
+   "Status" rendered flush left while their column's own values render
+   flush right immediately below them — same column, two different
+   alignments. This selector's own specificity (0,2,2) beats the base rule
+   so a header cell's own alignment class wins on the header exactly like
+   it already does in the body. */
+.invoice-table thead th.ta-right {
+  text-align: right;
 }
 
 .invoice-table tbody tr {
@@ -1552,6 +1577,13 @@ table {
   align-items: center;
   gap: 10px;
   font-weight: 600;
+}
+
+/* Overrides the generic td's nowrap — under table-layout:fixed a long real
+   client name needs to wrap onto a second line instead of spilling into
+   the next column (the column's own width never changes either way). */
+.invoice-table tbody td:has(.cell-client) {
+  white-space: normal;
 }
 
 .cell-muted {
