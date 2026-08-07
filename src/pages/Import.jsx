@@ -11,6 +11,7 @@ import {
 } from '../lib/importUiAdapter.js'
 import { IGNORE_KEY } from '../lib/import/fields.js'
 import { needsDateDecisionStep, needsCurrencyStep } from '../lib/importUiCopy.js'
+import importHeroImg from '../assets/duewatch-import-hero.svg'
 import StepProgress from '../components/import/StepProgress.jsx'
 import UploadStep from '../components/import/UploadStep.jsx'
 import ParsingStep from '../components/import/ParsingStep.jsx'
@@ -216,7 +217,7 @@ export default function Import() {
     goTo('preview')
   }
 
-  const widthVariant = WIDE_STEPS.has(step) ? 'import-shell--wide' : 'import-shell--narrow'
+  const widthVariant = step === 'upload' ? 'import-shell--upload' : WIDE_STEPS.has(step) ? 'import-shell--wide' : 'import-shell--narrow'
 
   return (
     <div className={`brief import-shell ${widthVariant}`}>
@@ -254,7 +255,22 @@ export default function Import() {
         </p>
       )}
 
-      {step === 'upload' && <UploadStep onFile={handleFileSelected} />}
+      {step === 'upload' && (
+        <div className="import-upload-intro">
+          <p className="import-upload-headline">Bring your invoice export.</p>
+          <p className="import-upload-body">
+            Upload a CSV or Excel file from your bookkeeping software. DueWatch will organize the fields, flag
+            anything uncertain, and show you a preview before anything proceeds.
+          </p>
+          <div className="import-upload-art">
+            <img src={importHeroImg} alt="" aria-hidden="true" className="import-upload-hero-img" />
+          </div>
+          <div className="import-upload-control">
+            <UploadStep onFile={handleFileSelected} />
+          </div>
+          <p className="import-upload-trust">Nothing is saved during preview.</p>
+        </div>
+      )}
 
       {step === 'parsing' && <ParsingStep />}
 
