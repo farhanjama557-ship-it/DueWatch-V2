@@ -95,6 +95,14 @@ export default function Invoices() {
           </p>
         ) : (
           <table className="invoice-table">
+            <colgroup>
+              <col className="col-client" />
+              <col className="col-invnum" />
+              <col className="col-amount" />
+              <col className="col-due" />
+              <col className="col-overdue" />
+              <col className="col-status" />
+            </colgroup>
             <thead>
               <tr>
                 <th>Client</th>
