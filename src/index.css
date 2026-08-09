@@ -1505,13 +1505,26 @@ table {
   overflow-x: auto;
 }
 
+/* Caps the invoices list card (not .list-card generally — Activity.jsx
+   shares that class and isn't part of this) to match .invoice-table's own
+   max-width, so the card's border doesn't stretch past the table and leave
+   a dead gap on very large screens. */
+.list-card:has(.invoice-table) {
+  max-width: 1200px;
+}
+
 .list-pad {
   padding: 24px 20px;
 }
 
 .invoice-table {
   width: 100%;
-  min-width: 720px;
+  min-width: 780px;
+  /* Caps how wide the table (and so each column) is allowed to stretch on
+     very large screens — uncapped, a 1920px viewport spread every column
+     across ~1600px, and the narrow numeric columns floated in mostly-empty
+     lanes that read as unrelated rather than deliberately proportioned. */
+  max-width: 1200px;
   /* Header and body must share one column definition, not two — with the
      default auto layout the browser recomputes each column's width from
      whichever rows happen to be visible, so switching tabs (a "Paid" tab
@@ -1521,11 +1534,11 @@ table {
   table-layout: fixed;
 }
 
-.invoice-table col.col-client { width: 34%; }
+.invoice-table col.col-client { width: 30%; }
 .invoice-table col.col-invnum { width: 12%; }
-.invoice-table col.col-amount { width: 14%; }
-.invoice-table col.col-due { width: 14%; }
-.invoice-table col.col-overdue { width: 13%; }
+.invoice-table col.col-amount { width: 16%; }
+.invoice-table col.col-due { width: 15%; }
+.invoice-table col.col-overdue { width: 14%; }
 .invoice-table col.col-status { width: 13%; }
 
 .invoice-table thead th {
@@ -1535,9 +1548,27 @@ table {
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--text-muted);
-  padding: 12px 20px;
+  padding: 14px 24px;
   border-bottom: 0.5px solid var(--border);
   white-space: nowrap;
+}
+
+/* Amount is right-aligned and Due Date sits immediately after it — with
+   equal padding on both sides that boundary was the tightest gap in the
+   row (a bold right-aligned number right next to a left-aligned date).
+   Widening Amount's own right padding and Due Date's own left padding
+   gives that specific boundary deliberate, "obvious" separation without
+   touching every other column's rhythm. nth-child targets the column by
+   position (Client, Invoice #, Amount, Due Date, Days Overdue, Status)
+   rather than adding new classNames to Invoices.jsx for a CSS-only fix. */
+.invoice-table thead th:nth-child(3),
+.invoice-table tbody td:nth-child(3) {
+  padding-right: 38px;
+}
+
+.invoice-table thead th:nth-child(4),
+.invoice-table tbody td:nth-child(4) {
+  padding-left: 38px;
 }
 
 /* .invoice-table thead th (0,1,2) otherwise beats the bare .ta-right (0,1,0)
@@ -1563,7 +1594,7 @@ table {
 .invoice-table tbody td {
   font-size: 14px;
   color: var(--text-primary);
-  padding: 12px 20px;
+  padding: 14px 24px;
   border-bottom: 0.5px solid var(--border-soft, var(--border));
   white-space: nowrap;
 }
