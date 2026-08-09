@@ -782,5 +782,172 @@ end
 $resolver_idempotency$;
 
 \echo 'TEST GROUP PASS: resolver_idempotency'
+\echo 'TEST GROUP START: source_identity_rls'
+
+-- Regression coverage for the hosted-staging finding: resolve_or_create_client
+-- runs security invoker, so an authenticated caller's own insert/upsert into
+-- client_source_identities is subject to RLS directly. Every other group in
+-- this suite that calls the resolver only fakes the request.jwt.claim.* GUCs
+-- while staying connected as the schema owner/superuser, which bypasses RLS
+-- entirely - exactly how this gap reached hosted staging undetected. This
+-- group is the only one that actually runs the resolver under
+-- `set local role authenticated`, so it genuinely exercises
+-- client_source_identities_insert_own/_update_own.
+do $source_identity_rls_fixture$
+begin
+  insert into auth.users(id, email) values
+    ('a5a5a5a5-a5a5-4a5a-8a5a-a5a5a5a5a501', 'phase0-source-rls-a@example.test'),
+    ('b5b5b5b5-b5b5-4b5b-8b5b-b5b5b5b5b502', 'phase0-source-rls-b@example.test');
+end
+$source_identity_rls_fixture$;
+
+-- TEST-ONLY PRIVILEGE FIXTURE: a hosted Supabase project grants authenticated
+-- broad table privileges by default; this disposable local schema does not
+-- replicate that platform default, so the test grants it explicitly in order
+-- to exercise the insert/update RLS policies as a genuine `authenticated`-role
+-- session. clients insert is also needed here: the resolver's own
+-- `insert into public.clients` runs against the existing, unmodified
+-- clients_all_own policy when there is no matching client yet. The complete
+-- integration suite is one transaction, and the final rollback removes
+-- these grants.
+grant select, insert, update on public.client_source_identities to authenticated;
+grant insert on public.clients to authenticated;
+
+set local role authenticated;
+select set_config(
+  'request.jwt.claim.sub', 'b5b5b5b5-b5b5-4b5b-8b5b-b5b5b5b5b502', true
+);
+select set_config('request.jwt.claim.role', 'authenticated', true);
+do $source_identity_rls_tenant_b_fixture$
+declare
+  tenant_b constant uuid := 'b5b5b5b5-b5b5-4b5b-8b5b-b5b5b5b5b502';
+begin
+  -- Tenant B's own row, created while genuinely authenticated as tenant B -
+  -- the target of the cross-tenant attempts below.
+  perform public.resolve_or_create_client(
+    p_user_id => tenant_b,
+    p_name => 'RLS Fixture Client B',
+    p_source => 'rls_test',
+    p_external_id => 'ext-b001',
+    p_provenance => '{"owner":"b"}'::jsonb
+  );
+end
+$source_identity_rls_tenant_b_fixture$;
+
+select set_config(
+  'request.jwt.claim.sub', 'a5a5a5a5-a5a5-4a5a-8a5a-a5a5a5a5a501', true
+);
+do $source_identity_rls_tenant_a$
+declare
+  tenant_a constant uuid := 'a5a5a5a5-a5a5-4a5a-8a5a-a5a5a5a5a501';
+  tenant_b constant uuid := 'b5b5b5b5-b5b5-4b5b-8b5b-b5b5b5b5b502';
+  first_id uuid;
+  second_id uuid;
+  stored_provenance jsonb;
+  updated_rows integer;
+begin
+  -- 1. An authenticated user can create a source identity for itself through
+  -- the resolver. On hosted staging this insert failed closed with "new row
+  -- violates row-level security policy" before the fix.
+  first_id := public.resolve_or_create_client(
+    p_user_id => tenant_a,
+    p_name => 'RLS Fixture Client A',
+    p_source => 'rls_test',
+    p_external_id => 'ext-a001',
+    p_provenance => '{"attempt":1}'::jsonb
+  );
+  if pg_typeof(first_id) is distinct from 'uuid'::regtype then
+    raise exception 'resolve_or_create_client return type changed from uuid';
+  end if;
+  if not exists(
+    select 1 from public.client_source_identities
+    where user_id = tenant_a and client_id = first_id
+      and source = 'rls_test' and external_id = 'ext-a001'
+  ) then
+    raise exception 'Authenticated insert of its own source identity did not persist';
+  end if;
+
+  -- 2a. Calling the resolver again with the same (user_id, source,
+  -- external_id) stays idempotent - it returns the same client and creates
+  -- no duplicate, exercising the select-own policy's short-circuit lookup.
+  second_id := public.resolve_or_create_client(
+    p_user_id => tenant_a,
+    p_name => 'RLS Fixture Client A',
+    p_source => 'rls_test',
+    p_external_id => 'ext-a001',
+    p_provenance => '{"attempt":2}'::jsonb
+  );
+  if second_id <> first_id then
+    raise exception 'Repeated source identity did not resolve to the same client';
+  end if;
+
+  -- 2b. The resolver's own `select ... if found then return` means a
+  -- same-process repeated call above never reaches its
+  -- `on conflict ... do update` line - that line only fires for the race
+  -- window the advisory lock guards against (a second session inserting the
+  -- same key between this session's lookup and its insert). Exercise that
+  -- exact statement shape directly, as the resolver would run it, to prove
+  -- the update half of the upsert succeeds under RLS and needs
+  -- client_source_identities_update_own.
+  insert into public.client_source_identities(
+    user_id, client_id, source, external_id, provenance
+  ) values (
+    tenant_a, first_id, 'rls_test', 'ext-a001', '{"attempt":2}'::jsonb
+  ) on conflict(user_id, source, external_id) do update
+    set provenance = public.client_source_identities.provenance
+      || excluded.provenance;
+
+  select provenance, count(*) over () into stored_provenance, updated_rows
+  from public.client_source_identities
+  where user_id = tenant_a and source = 'rls_test' and external_id = 'ext-a001';
+  if updated_rows <> 1 then
+    raise exception 'Conflict/update path created a duplicate row instead of updating in place';
+  end if;
+  if stored_provenance <> '{"attempt":2}'::jsonb then
+    raise exception 'Repeated source identity did not update its provenance via the conflict path';
+  end if;
+
+  -- 3. Cross-tenant insert remains blocked: tenant A cannot create a source
+  -- identity row owned by tenant B, even though table privileges now permit
+  -- insert - the policy's `with check` still enforces auth.uid() = user_id.
+  begin
+    insert into public.client_source_identities(
+      user_id, client_id, source, external_id, provenance
+    ) values (
+      tenant_b, first_id, 'rls_test', 'ext-cross-insert', '{}'::jsonb
+    );
+    raise exception 'Expected cross-tenant source identity insert rejection';
+  exception when insufficient_privilege then
+    null;
+  end;
+
+  -- 4. Cross-tenant update remains blocked: tenant A's update of tenant B's
+  -- row matches zero rows under RLS (the `using` clause hides tenant B's row
+  -- from tenant A entirely), so tenant B's row is left untouched.
+  update public.client_source_identities
+  set provenance = '{"hacked":true}'::jsonb
+  where user_id = tenant_b and source = 'rls_test' and external_id = 'ext-b001';
+  get diagnostics updated_rows = row_count;
+  if updated_rows <> 0 then
+    raise exception 'Cross-tenant update unexpectedly matched % row(s)', updated_rows;
+  end if;
+end
+$source_identity_rls_tenant_a$;
+reset role;
+
+do $source_identity_rls_tenant_b_unchanged$
+begin
+  if not exists(
+    select 1 from public.client_source_identities
+    where user_id = 'b5b5b5b5-b5b5-4b5b-8b5b-b5b5b5b5b502'::uuid
+      and source = 'rls_test' and external_id = 'ext-b001'
+      and provenance = '{"owner":"b"}'::jsonb
+  ) then
+    raise exception 'Tenant B row was modified by the blocked cross-tenant update';
+  end if;
+end
+$source_identity_rls_tenant_b_unchanged$;
+
+\echo 'TEST GROUP PASS: source_identity_rls'
 
 rollback;
