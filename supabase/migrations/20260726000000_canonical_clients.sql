@@ -105,6 +105,32 @@ drop policy if exists "client_source_identities_select_own"
 create policy "client_source_identities_select_own"
   on public.client_source_identities for select to authenticated
   using ((select auth.uid()) is not null and (select auth.uid()) = user_id);
+
+-- resolve_or_create_client() runs security invoker, so an authenticated
+-- caller's own insert/upsert into this table is subject to RLS directly.
+-- Table privileges already permit insert/update, but with RLS enabled and
+-- only a select-own policy present, RLS denied every insert by default —
+-- the hosted-staging failure on the source-identity path. These two
+-- policies scope insert/update to the caller's own rows, matching the
+-- select-own policy and the table's tenant-scoped
+-- unique(user_id, source, external_id) constraint.
+drop policy if exists "client_source_identities_insert_own"
+  on public.client_source_identities;
+create policy "client_source_identities_insert_own"
+  on public.client_source_identities
+  for insert
+  to authenticated
+  with check ((select auth.uid()) is not null and (select auth.uid()) = user_id);
+
+drop policy if exists "client_source_identities_update_own"
+  on public.client_source_identities;
+create policy "client_source_identities_update_own"
+  on public.client_source_identities
+  for update
+  to authenticated
+  using ((select auth.uid()) is not null and (select auth.uid()) = user_id)
+  with check ((select auth.uid()) is not null and (select auth.uid()) = user_id);
+
 grant select on public.client_source_identities to authenticated;
 grant select, insert, update, delete on public.client_source_identities to service_role;
 
