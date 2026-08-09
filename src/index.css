@@ -2040,6 +2040,37 @@ table {
   white-space: normal;
 }
 
+/* The header-confirmation raw preview (HeaderStep.jsx) has no fixed,
+   known column set like the tables above — a source file can have any
+   number of columns. .invoice-table's base width:100%/min-width:720px
+   forces table-layout:fixed to squeeze every column into a shared 100%,
+   so a 13+ column file left each column too narrow for its own text and
+   the nowrap value visually bled into the next cell. Each column instead
+   gets its own stable pixel width (also set as an inline style on the
+   table itself, in HeaderStep.jsx, to an explicit total — table-layout:
+   fixed only honors a <col>'s width as literal pixels when the table's
+   own width is an explicit length; left at the base rule's width:100%,
+   Chromium instead treats these as relative proportions of the container).
+   That explicit total lets the table grow past its wrapper so
+   .import-data-well's existing overflow-x:auto (not this table) does the
+   scrolling. Chained classes (0,2,0 / 0,2,2) so this reliably beats the
+   base .invoice-table rules regardless of source order. */
+.invoice-table.import-raw-preview-table {
+  min-width: 0;
+  table-layout: fixed;
+}
+
+.import-raw-preview-table col {
+  width: 160px;
+}
+
+.invoice-table.import-raw-preview-table tbody td {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 0; /* forces the browser to respect the column's own width, not the content's natural width */
+}
+
 /* Safe truncation for fixed-width table cells (Client, Invoice #) instead
    of letting long values (e.g. "Northfield Logistics Group") spill past
    their column boundary into the next cell. The full value is always
