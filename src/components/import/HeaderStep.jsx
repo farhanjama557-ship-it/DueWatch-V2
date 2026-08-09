@@ -1,6 +1,7 @@
 import { ArrowLeft } from 'lucide-react'
 
 const RAW_PREVIEW_ROWS = 3
+const RAW_PREVIEW_COL_WIDTH = 160
 
 // Local, display-only cell unwrapping — identical in spirit to the
 // adapter's internal displayCellValue, but this component needs it before
@@ -34,13 +35,35 @@ export default function HeaderStep({ sheet, hasHeaderRow, onChoose, onContinue, 
 
       <p className="import-well-label">Raw preview of the first {previewRows.length} rows</p>
       <div className="import-data-well import-preview-table-wrap">
-        <table className="invoice-table import-raw-preview-table">
+        <table
+          className="invoice-table import-raw-preview-table"
+          /* table-layout:fixed only honors each <col>'s width as a literal
+             pixel size when the table's own width is an explicit length —
+             left at width:auto (even with fixed layout) Chromium instead
+             shrinks the whole table to its container and treats the col
+             widths as relative proportions, which is what let a 13+ column
+             file compress every column below its own text's width. Setting
+             the table's width to the exact sum of its columns makes each
+             <col>'s width literal, and lets the table grow past its
+             wrapper so the wrapper's existing overflow-x:auto scrolls it. */
+          style={{ width: columnCount * RAW_PREVIEW_COL_WIDTH }}
+        >
+          <colgroup>
+            {Array.from({ length: columnCount }, (_, i) => (
+              <col key={i} />
+            ))}
+          </colgroup>
           <tbody>
             {previewRows.map((row) => (
               <tr key={row.rowNumber}>
-                {Array.from({ length: columnCount }, (_, i) => (
-                  <td key={i}>{cellText(row.cells[i]) || <span className="cell-muted">—</span>}</td>
-                ))}
+                {Array.from({ length: columnCount }, (_, i) => {
+                  const text = cellText(row.cells[i])
+                  return (
+                    <td key={i} title={text || undefined}>
+                      {text || <span className="cell-muted">—</span>}
+                    </td>
+                  )
+                })}
               </tr>
             ))}
           </tbody>
