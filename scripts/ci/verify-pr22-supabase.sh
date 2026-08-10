@@ -156,6 +156,44 @@ if [ "$tenant_preflight_exit" -ne 0 ] \
   exit "$overall_status"
 fi
 
+# 20260726000000_canonical_clients.sql (applied above) already carries the
+# client_source_identities_insert_own/_update_own policies for fresh
+# installs, but that migration was already applied to hosted staging before
+# those policies existed — Supabase does not re-run an already-applied
+# migration file just because its contents changed. This standalone forward
+# migration carries the same two policies so an already-migrated database
+# actually receives them. Applied twice here (like the tenant correction
+# migration above) to prove it is genuinely idempotent, matching the real
+# "already has these policies" case an existing database hits on its second
+# deploy, not just the "policies don't exist yet" fresh-install case the
+# first apply below exercises identically to 20260726000000's own copy.
+section "Applying client_source_identities RLS forward migration"
+psql "$DB_URL" -v ON_ERROR_STOP=1 -X \
+  -f supabase/migrations/20260810000000_client_source_identities_rls.sql \
+  > "$ARTIFACT_DIR/03d_source_identities_rls_forward_apply.log" 2>&1
+source_identities_rls_forward_exit=$?
+echo "forward migration exit code: $source_identities_rls_forward_exit" \
+  | tee -a "$ARTIFACT_DIR/03d_source_identities_rls_forward_apply.log"
+[ "$source_identities_rls_forward_exit" -eq 0 ] || overall_status=1
+
+section "Re-running client_source_identities RLS forward migration"
+psql "$DB_URL" -v ON_ERROR_STOP=1 -X \
+  -f supabase/migrations/20260810000000_client_source_identities_rls.sql \
+  > "$ARTIFACT_DIR/03e_source_identities_rls_forward_rerun.log" 2>&1
+source_identities_rls_forward_rerun_exit=$?
+echo "forward migration re-run exit code: $source_identities_rls_forward_rerun_exit" \
+  | tee -a "$ARTIFACT_DIR/03e_source_identities_rls_forward_rerun.log"
+[ "$source_identities_rls_forward_rerun_exit" -eq 0 ] || overall_status=1
+
+if [ "$source_identities_rls_forward_exit" -ne 0 ] \
+   || [ "$source_identities_rls_forward_rerun_exit" -ne 0 ]; then
+  echo "client_source_identities RLS forward migration verification failed; skipping downstream tests." >&2
+  echo "$overall_status" > "$ARTIFACT_DIR/OVERALL_EXIT_CODE"
+  echo "source_identities_rls_forward_exit=$source_identities_rls_forward_exit source_identities_rls_forward_rerun_exit=$source_identities_rls_forward_rerun_exit" \
+    >> "$ARTIFACT_DIR/EXIT_CODE_SUMMARY.txt"
+  exit "$overall_status"
+fi
+
 section "Verifying migration backfill and identity boundaries"
 psql "$DB_URL" -v ON_ERROR_STOP=1 -X <<'SQL' \
   > "$ARTIFACT_DIR/04_migration_backfill.log" 2>&1
@@ -273,6 +311,7 @@ integration_relationships_exit=1
 invoice_client_tenant_exit=1
 tenant_isolation_exit=1
 idempotency_exit=1
+source_identity_rls_exit=1
 grep -q 'TEST GROUP PASS: integration_relationships' "$ARTIFACT_DIR/06_integration_test.log" \
   && integration_relationships_exit=0
 grep -q 'TEST GROUP PASS: invoice_client_tenant_invariant' "$ARTIFACT_DIR/06_integration_test.log" \
@@ -281,10 +320,13 @@ grep -q 'TEST GROUP PASS: tenant_isolation' "$ARTIFACT_DIR/06_integration_test.l
   && tenant_isolation_exit=0
 grep -q 'TEST GROUP PASS: resolver_idempotency' "$ARTIFACT_DIR/06_integration_test.log" \
   && idempotency_exit=0
+grep -q 'TEST GROUP PASS: source_identity_rls' "$ARTIFACT_DIR/06_integration_test.log" \
+  && source_identity_rls_exit=0
 if [ "$integration_relationships_exit" -ne 0 ] \
    || [ "$invoice_client_tenant_exit" -ne 0 ] \
    || [ "$tenant_isolation_exit" -ne 0 ] \
-   || [ "$idempotency_exit" -ne 0 ]; then
+   || [ "$idempotency_exit" -ne 0 ] \
+   || [ "$source_identity_rls_exit" -ne 0 ]; then
   overall_status=1
 fi
 
@@ -398,7 +440,7 @@ echo "$FK_WARNING" >> "$ARTIFACT_DIR/09_fk_smoke_check.log"
 [ "$fk_exit" -eq 0 ] || overall_status=1
 
 echo "$overall_status" > "$ARTIFACT_DIR/OVERALL_EXIT_CODE"
-echo "schema_exit=$schema_exit preseed_exit=$preseed_exit migration_exit=$migration_exit tenant_preflight_exit=$tenant_preflight_exit tenant_correction_exit=$tenant_correction_exit tenant_correction_rerun_exit=$tenant_correction_rerun_exit backfill_exit=$backfill_exit precleanup_exit=$precleanup_exit integration_exit=$integration_exit integration_relationships_exit=$integration_relationships_exit invoice_client_tenant_exit=$invoice_client_tenant_exit tenant_isolation_exit=$tenant_isolation_exit idempotency_exit=$idempotency_exit rollback_clean=$rollback_clean authenticated_clients_select_before_test=${authenticated_clients_select_before_test:-unknown} authenticated_clients_select_after_test=${authenticated_clients_select_after_test:-unknown} test_clients_grant_rolled_back=$test_clients_grant_rolled_back execution_enabled_after_test=${exec_enabled_after:-unknown} legacy_dedupe_exit=$legacy_dedupe_exit fk_exit=$fk_exit" \
+echo "schema_exit=$schema_exit preseed_exit=$preseed_exit migration_exit=$migration_exit tenant_preflight_exit=$tenant_preflight_exit tenant_correction_exit=$tenant_correction_exit tenant_correction_rerun_exit=$tenant_correction_rerun_exit source_identities_rls_forward_exit=$source_identities_rls_forward_exit source_identities_rls_forward_rerun_exit=$source_identities_rls_forward_rerun_exit backfill_exit=$backfill_exit precleanup_exit=$precleanup_exit integration_exit=$integration_exit integration_relationships_exit=$integration_relationships_exit invoice_client_tenant_exit=$invoice_client_tenant_exit tenant_isolation_exit=$tenant_isolation_exit idempotency_exit=$idempotency_exit source_identity_rls_exit=$source_identity_rls_exit rollback_clean=$rollback_clean authenticated_clients_select_before_test=${authenticated_clients_select_before_test:-unknown} authenticated_clients_select_after_test=${authenticated_clients_select_after_test:-unknown} test_clients_grant_rolled_back=$test_clients_grant_rolled_back execution_enabled_after_test=${exec_enabled_after:-unknown} legacy_dedupe_exit=$legacy_dedupe_exit fk_exit=$fk_exit" \
   >> "$ARTIFACT_DIR/EXIT_CODE_SUMMARY.txt"
 
 exit "$overall_status"
