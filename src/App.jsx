@@ -21,6 +21,8 @@ import LandingPage from './landing'
 // while the route chunk itself is fetching, before any file has even been
 // selected, so it must never look like parsing progress.
 const Import = lazy(() => import('./pages/Import'))
+const ImportHistory = lazy(() => import('./pages/ImportHistory'))
+const ImportRunDetail = lazy(() => import('./pages/ImportRunDetail'))
 
 function ImportRouteFallback() {
   return (
@@ -91,6 +93,8 @@ export default function App() {
             </Suspense>
           }
         />
+        <Route path="/imports" element={<Suspense fallback={<ImportRouteFallback />}><ImportHistory /></Suspense>} />
+        <Route path="/imports/:runId" element={<Suspense fallback={<ImportRouteFallback />}><ImportRunDetail /></Suspense>} />
         <Route path="/clients" element={<Clients />} />
         <Route path="/cash-flow" element={<CashFlow />} />
         <Route path="/activity" element={<Activity />} />

@@ -377,3 +377,17 @@ Execution is fail-closed and disabled by default. It requires the environment sw
 ---
 
 *Next entry goes below this line. Read everything above first.*
+
+### 2026-08-11 — Codex — Phase 1.5C Gate 4 import trust loop candidate
+
+**Did:** Added a minimum durable import trust loop without changing the persistence contract. `/imports` lists at most 20 tenant-owned runs per page in deterministic newest-first order and reads saved, blocked, pending, and failed counts from `import_rows`. `/imports/:runId` reconstructs persisted run, row, sanitized batch-failure, and whitelisted event evidence. Run status always comes from `import_runs.status`; terminal events are neutral chronology, so a cancelled run that contains `run_completed` remains Cancelled everywhere. A centralized presentation map covers all 23 persisted block reasons, preserves the distinct warning-approval reasons, and fails closed for unknown, null, or empty codes.
+
+Historical recovery has a separate `continueImportRunToCompletion` boundary that accepts only the durable run ID and can never start or resubmit an import. Viewing history/detail performs no mutation. Resume and cancellation are explicit controls. Both the new-import and existing-run loops reread server truth after mutations, stop on terminal/batch failure, use finite bounds, and honor a route lifecycle signal so an already-running RPC may settle after departure but the departed browser schedules no next mutation or progress callback. Provenance uses only persisted client/invoice outcomes and IDs, committed time, reason codes, sanitized batch failure, and event chronology.
+
+**Verification:** 340/340 JavaScript tests pass (319 prior tests plus 21 Gate 4 tests), including the exact in-flight route-departure sequence, historical-resume-no-start proof, all reason/status presentations, active “so far” counts, neutral terminal events, tenant-filtered read contracts, and browser security boundaries. Production Vite build passes; history and detail remain separate lazy chunks and do not load the Excel importer bundle. The Gate 4 diff changes no `supabase/` or CI files. A fresh SQL rerun was not possible on this PC because no local Postgres/Supabase/container runtime is installed; the preserved backend tree is byte-identical to the last disposable run at `db005e6969209c4b75083fa7dfdb7a89dbde030c`, whose evidence passed all 18 SQL groups, both concurrency proofs, schema convergence, rollback-to-zero, and `execution_enabled=false`. This prior evidence is not represented as a new run.
+
+**Status:** coherent local candidate only. No PR, CI run, staging mutation, hosted query, or merge was performed. Production was never accessed.
+
+**Affects:** `src/App.jsx`, `src/pages/Import.jsx`, `src/pages/ImportHistory.jsx`, `src/pages/ImportRunDetail.jsx`, `src/components/import/ExecuteStep.jsx`, `src/lib/importPersistence/importPersistenceClient.js`, `src/lib/importPersistence/importContinuation.js`, `src/lib/importPersistence/importPresentation.js`, `src/index.css`, three focused files under `tests/importPersistence/`, and this log. Zero migrations, schema, grants, RLS, functions, matching rules, or dashboard-shell files changed.
+
+**Open question:** independent exact-diff review remains required before PR/CI/staging. A fresh disposable SQL rerun also remains required when a local Supabase/Postgres runtime is available, even though this candidate does not change database code.
