@@ -1,0 +1,112 @@
+name: "Phase 1.5B Import Persistence Verification"
+
+# Dedicated Gate 2 verification for PR #27. Everything runs against a
+# disposable local Supabase stack on the GitHub-hosted runner. No Supabase
+# account token, hosted project reference, staging credential, production
+# credential, or hosted data is available to this workflow.
+on:
+  push:
+    branches:
+      - claude/phase-1-5b-safe-persistence-core
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase15b-import-persistence-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: "Verify Phase 1.5B against local Supabase"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact branch SHA
+        uses: actions/checkout@v4
+
+      - name: Record workflow identity and environment
+        run: |
+          mkdir -p phase15b-verify-artifact
+          {
+            echo "workflow_run_id: ${{ github.run_id }}"
+            echo "workflow_run_attempt: ${{ github.run_attempt }}"
+            echo "workflow_job: ${{ github.job }}"
+            echo "workflow_ref: ${{ github.ref }}"
+            echo "workflow_sha: ${{ github.sha }}"
+            echo "runner_os: $(uname -a)"
+            echo "docker_version: $(docker --version)"
+          } > phase15b-verify-artifact/00_versions.txt
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Run complete JavaScript suite
+        run: |
+          set +e
+          npm test > phase15b-verify-artifact/js_tests.log 2>&1
+          js_exit=$?
+          cat phase15b-verify-artifact/js_tests.log
+          echo "js_test_exit=$js_exit" >> phase15b-verify-artifact/EXIT_CODE_SUMMARY.txt
+          exit $js_exit
+
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: 2.111.0
+
+      - name: Record tool versions
+        run: |
+          {
+            echo "node_version: $(node --version)"
+            echo "npm_version: $(npm --version)"
+            echo "supabase_cli_version: $(supabase --version)"
+            echo "psql_version: $(psql --version)"
+          } >> phase15b-verify-artifact/00_versions.txt
+
+      - name: Start disposable local Supabase stack
+        run: supabase start
+
+      - name: Resolve disposable database URL
+        run: |
+          supabase status -o env > /tmp/phase15b_supabase_status.env
+          DB_URL=$(grep '^DB_URL=' /tmp/phase15b_supabase_status.env | cut -d '=' -f2- | tr -d '"')
+          if [ -z "$DB_URL" ]; then
+            echo "Failed to resolve local DB_URL" >&2
+            exit 1
+          fi
+          echo "DB_URL=$DB_URL" >> "$GITHUB_ENV"
+          rm -f /tmp/phase15b_supabase_status.env
+
+      - name: Run migration, security, recovery, concurrency, and rollback verification
+        run: |
+          chmod +x scripts/ci/verify-pr22-supabase.sh scripts/ci/verify-phase15b-supabase.sh
+          ARTIFACT_DIR=./phase15b-verify-artifact scripts/ci/verify-phase15b-supabase.sh
+
+      - name: Build production application
+        if: always()
+        run: |
+          set +e
+          npm run build > phase15b-verify-artifact/build.log 2>&1
+          build_exit=$?
+          cat phase15b-verify-artifact/build.log
+          echo "build_exit=$build_exit" >> phase15b-verify-artifact/EXIT_CODE_SUMMARY.txt
+          exit $build_exit
+
+      - name: Stop disposable local Supabase stack
+        if: always()
+        run: supabase stop --no-backup || true
+
+      - name: Upload Gate 2 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase15b-import-persistence-verification
+          path: phase15b-verify-artifact/
+          retention-days: 14

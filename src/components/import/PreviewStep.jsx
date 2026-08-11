@@ -6,8 +6,13 @@ import RowTable from './RowTable.jsx'
 
 const FILTER_ALL = 'all'
 
-export default function PreviewStep({ result, headers, onBack, onFinish, onInspectReview, onInspectRejected }) {
+export default function PreviewStep({ result, headers, onBack, onFinish, onInspectReview, onInspectRejected, onStartImport }) {
   const [filter, setFilter] = useState(FILTER_ALL)
+  const [warningsAcknowledged, setWarningsAcknowledged] = useState(false)
+
+  const hasWarningRows = result.summary[OUTCOMES.READY_WITH_WARNINGS] > 0
+  const hasEligibleRows = result.summary[OUTCOMES.READY] + result.summary[OUTCOMES.READY_WITH_WARNINGS] > 0
+  const canStartImport = hasEligibleRows && (!hasWarningRows || warningsAcknowledged)
 
   const filteredRows = useMemo(() => {
     if (filter === FILTER_ALL) return result.rows
@@ -46,6 +51,17 @@ export default function PreviewStep({ result, headers, onBack, onFinish, onInspe
 
       <RowTable rows={filteredRows} headers={headers} totalCount={result.rows.length} emptyMessage="No rows match this filter." />
 
+      {hasWarningRows && onStartImport && (
+        <label className="import-warnings-ack">
+          <input
+            type="checkbox"
+            checked={warningsAcknowledged}
+            onChange={(e) => setWarningsAcknowledged(e.target.checked)}
+          />
+          I've reviewed the rows with warnings and want to include them in this import.
+        </label>
+      )}
+
       <div className="import-preview-footer">
         <button className="btn-outline btn-inline import-btn-back" onClick={onBack}>
           <ArrowLeft width={16} height={16} aria-hidden="true" /> Back
@@ -64,6 +80,15 @@ export default function PreviewStep({ result, headers, onBack, onFinish, onInspe
           <button className="btn-terracotta btn-inline" onClick={onFinish}>
             Finish preview
           </button>
+          {onStartImport && (
+            <button
+              className="btn-terracotta btn-inline"
+              onClick={() => onStartImport(warningsAcknowledged)}
+              disabled={!canStartImport}
+            >
+              Start Import
+            </button>
+          )}
         </div>
       </div>
     </div>
