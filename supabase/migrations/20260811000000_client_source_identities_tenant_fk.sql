@@ -23,6 +23,39 @@
 -- remain exactly as they are. The composite FK is a second, independent,
 -- structural guarantee that holds for every role (including service_role
 -- and any other role that bypasses RLS), not a replacement for RLS.
+--
+-- Catalog preflight: before touching any constraint, this migration reads
+-- the actual pg_constraint state and classifies it into exactly one of
+-- two legitimate transitions:
+--   State A — current hosted-staging shape: the exact old constraint
+--     (client_source_identities_client_id_fkey, single-column client_id
+--     -> clients(id), ON DELETE CASCADE, validated, not deferrable)
+--     exists, and the desired composite constraint does not.
+--   State B — corrected fresh-install shape (also what a prior run of
+--     this same migration leaves behind): the desired composite
+--     constraint (client_source_identities_user_id_client_id_fkey, exact
+--     definition below) already exists, and the old single-column
+--     constraint does not. This is an idempotent no-op.
+-- Anything else — an unexpected duplicate, an expected name with the
+-- wrong definition, an unexpected name on an otherwise-matching shape, a
+-- desired-named constraint that does not actually have the required
+-- definition, or both an old-shaped and new-shaped constraint present at
+-- once — is schema drift this migration does not understand well enough
+-- to safely resolve. It raises a clear exception and stops before
+-- dropping or adding anything, rather than guessing.
+--
+-- Narrow drop: once State A is proven, this migration drops only the
+-- single, by-name constraint client_source_identities_client_id_fkey. It
+-- never loops over "every constraint with this column shape" — that
+-- would risk silently removing an unrelated or intentionally different
+-- constraint that merely happens to reference clients(id) via client_id.
+--
+-- Bounded locking: lock_timeout is set for the remainder of this
+-- migration's session so that on a busy hosted table, this migration
+-- fails fast and closed instead of waiting indefinitely for a lock. No
+-- retry loop and no destructive fallback — a lock timeout is a stop
+-- signal to re-run later, not a signal to try something else instead.
+set lock_timeout = '5s';
 
 do $preflight$
 begin
@@ -43,71 +76,157 @@ $preflight$;
 -- 20260726000000_canonical_clients.sql — see that file for why it is
 -- created there too, ahead of 20260803021842_enforce_invoice_client_
 -- tenant_ownership.sql where it was originally introduced for invoices.
+-- Creating an index cannot drop or replace a constraint, so this step is
+-- safe to run ahead of the catalog preflight below.
 create unique index if not exists clients_user_id_id_uidx
   on public.clients(user_id, id);
 
--- Named to match what the corrected 20260726000000_canonical_clients.sql
--- creates inline on a fresh install, so this step is a genuine no-op there
--- instead of racing a second, differently-named constraint into existence.
-do $constraint$
+do $catalog_transition$
+declare
+  v_child constant regclass := 'public.client_source_identities'::regclass;
+  v_parent constant regclass := 'public.clients'::regclass;
+  v_desired_old_name constant text := 'client_source_identities_client_id_fkey';
+  v_desired_new_name constant text := 'client_source_identities_user_id_client_id_fkey';
+  v_expected_old_def constant text :=
+    'FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE';
+  v_expected_new_def constant text :=
+    'FOREIGN KEY (user_id, client_id) REFERENCES clients(user_id, id) ON DELETE CASCADE';
+
+  v_client_id_attnum smallint;
+  v_user_id_child_attnum smallint;
+  v_id_parent_attnum smallint;
+  v_user_id_parent_attnum smallint;
+
+  v_old_shape_count int;
+  v_old_named record;
+  v_old_state text;
+
+  v_new_shape_count int;
+  v_new_named record;
+  v_new_state text;
 begin
-  if not exists (
-    select 1
-    from pg_constraint
-    where conrelid = 'public.client_source_identities'::regclass
-      and conname = 'client_source_identities_user_id_client_id_fkey'
-      and contype = 'f'
-  ) then
-    alter table public.client_source_identities
-      add constraint client_source_identities_user_id_client_id_fkey
-      foreign key (user_id, client_id)
-      references public.clients(user_id, id)
-      on update no action
-      on delete cascade
-      not valid;
+  select attnum into strict v_client_id_attnum
+    from pg_attribute where attrelid = v_child and attname = 'client_id';
+  select attnum into strict v_user_id_child_attnum
+    from pg_attribute where attrelid = v_child and attname = 'user_id';
+  select attnum into strict v_id_parent_attnum
+    from pg_attribute where attrelid = v_parent and attname = 'id';
+  select attnum into strict v_user_id_parent_attnum
+    from pg_attribute where attrelid = v_parent and attname = 'user_id';
+
+  -- Classify the old (single-column client_id -> clients.id) shape,
+  -- regardless of its current name, before deciding anything.
+  select count(*) into v_old_shape_count
+  from pg_constraint
+  where conrelid = v_child and confrelid = v_parent and contype = 'f'
+    and conkey = array[v_client_id_attnum]::smallint[]
+    and confkey = array[v_id_parent_attnum]::smallint[];
+
+  if v_old_shape_count > 1 then
+    raise exception
+      'client_source_identities tenant FK preflight: found % foreign keys matching the old single-column client_id -> clients(id) shape; expected at most one. Refusing to guess which to drop.',
+      v_old_shape_count;
+  end if;
+
+  if v_old_shape_count = 1 then
+    select conname, pg_get_constraintdef(oid) as definition, convalidated,
+           condeferrable, condeferred
+      into strict v_old_named
+      from pg_constraint
+      where conrelid = v_child and confrelid = v_parent and contype = 'f'
+        and conkey = array[v_client_id_attnum]::smallint[]
+        and confkey = array[v_id_parent_attnum]::smallint[];
+
+    if v_old_named.conname <> v_desired_old_name then
+      raise exception
+        'client_source_identities tenant FK preflight: found a foreign key matching the old single-column client_id -> clients(id) shape named "%", not the expected "%". Refusing to drop a differently named constraint.',
+        v_old_named.conname, v_desired_old_name;
+    end if;
+    if v_old_named.definition <> v_expected_old_def
+       or not v_old_named.convalidated
+       or v_old_named.condeferrable
+       or v_old_named.condeferred then
+      raise exception
+        'client_source_identities tenant FK preflight: "%" exists but does not match the expected old definition (found: "%", validated=%, deferrable=%, deferred=%). Refusing to drop an unrecognized constraint.',
+        v_desired_old_name, v_old_named.definition, v_old_named.convalidated,
+        v_old_named.condeferrable, v_old_named.condeferred;
+    end if;
+    v_old_state := 'present_valid';
+  else
+    v_old_state := 'absent';
+  end if;
+
+  -- Classify the desired composite (user_id, client_id) -> clients(user_id,
+  -- id) shape the same way. A matching name alone is never trusted; the
+  -- full definition must match before this migration treats it as already
+  -- fixed.
+  select count(*) into v_new_shape_count
+  from pg_constraint
+  where conrelid = v_child and confrelid = v_parent and contype = 'f'
+    and conkey = array[v_user_id_child_attnum, v_client_id_attnum]::smallint[]
+    and confkey = array[v_user_id_parent_attnum, v_id_parent_attnum]::smallint[];
+
+  if v_new_shape_count > 1 then
+    raise exception
+      'client_source_identities tenant FK preflight: found % foreign keys matching the desired composite (user_id, client_id) -> clients(user_id, id) shape; expected at most one.',
+      v_new_shape_count;
+  end if;
+
+  if v_new_shape_count = 1 then
+    select conname, pg_get_constraintdef(oid) as definition, convalidated,
+           condeferrable, condeferred
+      into strict v_new_named
+      from pg_constraint
+      where conrelid = v_child and confrelid = v_parent and contype = 'f'
+        and conkey = array[v_user_id_child_attnum, v_client_id_attnum]::smallint[]
+        and confkey = array[v_user_id_parent_attnum, v_id_parent_attnum]::smallint[];
+
+    if v_new_named.conname <> v_desired_new_name then
+      raise exception
+        'client_source_identities tenant FK preflight: found a foreign key matching the desired composite (user_id, client_id) -> clients(user_id, id) shape named "%", not the expected "%". Refusing to treat it as already fixed.',
+        v_new_named.conname, v_desired_new_name;
+    end if;
+    if v_new_named.definition <> v_expected_new_def
+       or not v_new_named.convalidated
+       or v_new_named.condeferrable
+       or v_new_named.condeferred then
+      raise exception
+        'client_source_identities tenant FK preflight: "%" exists but does not match the required composite definition (found: "%", validated=%, deferrable=%, deferred=%). Refusing to trust it as valid merely because the name matches.',
+        v_desired_new_name, v_new_named.definition, v_new_named.convalidated,
+        v_new_named.condeferrable, v_new_named.condeferred;
+    end if;
+    v_new_state := 'present_valid';
+  else
+    v_new_state := 'absent';
+  end if;
+
+  if v_old_state = 'present_valid' and v_new_state = 'absent' then
+    -- State A: current hosted-staging shape. Add the composite FK first
+    -- (not valid, then validated), and only once that has succeeded, drop
+    -- the exact old constraint this preflight just proved matches.
+    execute format(
+      'alter table %s add constraint %I foreign key (user_id, client_id) references %s(user_id, id) on update no action on delete cascade not valid',
+      v_child, v_desired_new_name, v_parent
+    );
+    execute format(
+      'alter table %s validate constraint %I', v_child, v_desired_new_name
+    );
+    execute format(
+      'alter table %s drop constraint %I', v_child, v_desired_old_name
+    );
+  elsif v_old_state = 'absent' and v_new_state = 'present_valid' then
+    -- State B: corrected fresh-install shape, or a previous successful run
+    -- of this same migration. Nothing to add or drop.
+    raise notice
+      'client_source_identities tenant FK: desired composite constraint "%" already present and correct; nothing to do.',
+      v_desired_new_name;
+  else
+    raise exception
+      'client_source_identities tenant FK preflight: catalog state does not match either expected transition state (old_state=%, new_state=%). Refusing to guess; stopping without changing any constraint.',
+      v_old_state, v_new_state;
   end if;
 end
-$constraint$;
-
--- Safe to re-run: validating an already-valid constraint is a no-op.
-alter table public.client_source_identities
-  validate constraint client_source_identities_user_id_client_id_fkey;
-
--- Remove only the repository's superseded FK shape, regardless of its
--- name. On an already-migrated environment this drops the original
--- single-column client_id -> clients(id) FK. On a fresh install (where
--- the corrected historical migration never created that shape) this loop
--- matches nothing and is a no-op.
-do $drop_single_column_fks$
-declare
-  v_constraint record;
-  v_client_id_attnum smallint;
-  v_client_pk_attnum smallint;
-begin
-  select attnum into v_client_id_attnum
-  from pg_attribute
-  where attrelid = 'public.client_source_identities'::regclass and attname = 'client_id';
-
-  select attnum into v_client_pk_attnum
-  from pg_attribute
-  where attrelid = 'public.clients'::regclass and attname = 'id';
-
-  for v_constraint in
-    select conname
-    from pg_constraint
-    where conrelid = 'public.client_source_identities'::regclass
-      and confrelid = 'public.clients'::regclass
-      and contype = 'f'
-      and conkey = array[v_client_id_attnum]::smallint[]
-      and confkey = array[v_client_pk_attnum]::smallint[]
-  loop
-    execute format(
-      'alter table public.client_source_identities drop constraint %I',
-      v_constraint.conname
-    );
-  end loop;
-end
-$drop_single_column_fks$;
+$catalog_transition$;
 
 -- Refresh the Phase 0 unknown-FK gate: client_source_identities now
 -- contributes two column-pair rows (user_id -> clients.user_id and
@@ -199,6 +318,14 @@ begin
     or v_definition not like 'FOREIGN KEY (user_id, client_id) REFERENCES clients(user_id, id)%'
     or v_definition not like '%ON DELETE CASCADE%' then
     raise exception 'client_source_identities tenant constraint does not match the required definition';
+  end if;
+
+  if exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.client_source_identities'::regclass
+      and conname = 'client_source_identities_client_id_fkey'
+  ) then
+    raise exception 'client_source_identities tenant migration left the superseded single-column FK in place';
   end if;
 
   if exists(select 1 from duewatch_ops.unknown_client_foreign_keys()) then
