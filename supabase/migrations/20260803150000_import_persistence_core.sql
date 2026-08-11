@@ -922,7 +922,8 @@ begin
   -- concurrent calls for the SAME run — stated plainly, not overclaiming
   -- finer-grained concurrency than what's actually load-bearing here.)
   create temporary table if not exists _claimed_rows (id uuid primary key) on commit drop;
-  delete from _claimed_rows;
+  delete from _claimed_rows
+  where id is not null;
   insert into _claimed_rows
   select id from public.import_rows
   where run_id = p_run_id and batch_id is null and server_status = 'pending'

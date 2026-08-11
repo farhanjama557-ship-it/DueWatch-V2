@@ -45,8 +45,12 @@ psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 \
   -f supabase/tests/phase15b_forward_path_setup.sql \
   -f supabase/migrations/20260811000000_client_source_identities_tenant_fk.sql \
   -f supabase/migrations/20260803150000_import_persistence_core.sql \
+  -f supabase/tests/phase15b_function_compatibility_forward_setup.sql \
   -f supabase/tests/phase15b_broad_privilege_setup.sql \
   -f supabase/migrations/20260811083005_phase15b_import_table_privilege_baseline.sql \
+  -f supabase/migrations/20260811092928_process_import_batch_hosted_compatibility.sql \
+  -f supabase/migrations/20260811092928_process_import_batch_hosted_compatibility.sql \
+  -f supabase/tests/phase15b_hosted_compatibility_test.sql \
   -f supabase/tests/phase15b_schema_fingerprint.sql \
   -c 'rollback;' \
   > "$ARTIFACT_DIR/02_forward_path.log" 2>&1
@@ -73,6 +77,13 @@ cat "$ARTIFACT_DIR/03a_privilege_migration_apply.log"
 record_exit privilege_migration_apply_exit "$privilege_migration_apply_exit"
 
 psql "$DB_URL" -X -v ON_ERROR_STOP=1 \
+  -f supabase/migrations/20260811092928_process_import_batch_hosted_compatibility.sql \
+  > "$ARTIFACT_DIR/03b_function_compatibility_apply.log" 2>&1
+function_compatibility_apply_exit=$?
+cat "$ARTIFACT_DIR/03b_function_compatibility_apply.log"
+record_exit function_compatibility_apply_exit "$function_compatibility_apply_exit"
+
+psql "$DB_URL" -X -v ON_ERROR_STOP=1 \
   -f supabase/migrations/20260803150000_import_persistence_core.sql \
   > "$ARTIFACT_DIR/04_migration_reapply.log" 2>&1
 migration_reapply_exit=$?
@@ -85,6 +96,20 @@ psql "$DB_URL" -X -v ON_ERROR_STOP=1 \
 privilege_migration_reapply_exit=$?
 cat "$ARTIFACT_DIR/04a_privilege_migration_reapply.log"
 record_exit privilege_migration_reapply_exit "$privilege_migration_reapply_exit"
+
+psql "$DB_URL" -X -v ON_ERROR_STOP=1 \
+  -f supabase/migrations/20260811092928_process_import_batch_hosted_compatibility.sql \
+  > "$ARTIFACT_DIR/04b_function_compatibility_reapply.log" 2>&1
+function_compatibility_reapply_exit=$?
+cat "$ARTIFACT_DIR/04b_function_compatibility_reapply.log"
+record_exit function_compatibility_reapply_exit "$function_compatibility_reapply_exit"
+
+psql "$DB_URL" -X -v ON_ERROR_STOP=1 \
+  -f supabase/tests/phase15b_hosted_compatibility_test.sql \
+  > "$ARTIFACT_DIR/04c_hosted_compatibility_contract.log" 2>&1
+hosted_compatibility_exit=$?
+cat "$ARTIFACT_DIR/04c_hosted_compatibility_contract.log"
+record_exit hosted_compatibility_exit "$hosted_compatibility_exit"
 
 psql "$DB_URL" -X -q -t -A -v ON_ERROR_STOP=1 \
   -f supabase/tests/phase15b_schema_fingerprint.sql \
@@ -113,8 +138,11 @@ record_exit convergence_exit "$convergence_exit"
 
 if [ "$migration_apply_exit" -ne 0 ] \
    || [ "$privilege_migration_apply_exit" -ne 0 ] \
+   || [ "$function_compatibility_apply_exit" -ne 0 ] \
    || [ "$migration_reapply_exit" -ne 0 ] \
    || [ "$privilege_migration_reapply_exit" -ne 0 ] \
+   || [ "$function_compatibility_reapply_exit" -ne 0 ] \
+   || [ "$hosted_compatibility_exit" -ne 0 ] \
    || [ "$convergence_exit" -ne 0 ]; then
   echo "$overall_status" > "$ARTIFACT_DIR/OVERALL_EXIT_CODE"
   exit "$overall_status"
@@ -144,6 +172,7 @@ expected_groups=(
   run_idempotency
   lost_response_retry
   cancellation_between_batches
+  repeated_call_temp_table_reset
   failed_batch_rollback
   row_vs_batch_exception_classification
   weak_identity_never_auto_persists
@@ -156,12 +185,14 @@ expected_groups=(
   cross_tenant_rejection
   tenant_safe_fk_constraints
   privilege_baseline
+  hosted_require_where_compatibility
 )
 group_gate_exit=0
 for group in "${expected_groups[@]}"; do
   if grep -q "TEST GROUP PASS: $group" \
       "$ARTIFACT_DIR/07_recovery_integration.log" \
-      "$ARTIFACT_DIR/07a_privilege_baseline.log"; then
+      "$ARTIFACT_DIR/07a_privilege_baseline.log" \
+      "$ARTIFACT_DIR/04c_hosted_compatibility_contract.log"; then
     echo "$group=pass" >> "$ARTIFACT_DIR/08_group_summary.txt"
   else
     echo "$group=missing" >> "$ARTIFACT_DIR/08_group_summary.txt"

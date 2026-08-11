@@ -378,6 +378,107 @@ end
 $cancellation$;
 \echo 'TEST GROUP PASS: cancellation_between_batches'
 
+\echo 'TEST GROUP START: repeated_call_temp_table_reset'
+do $repeated_call_temp_table_reset$
+declare
+  u uuid := gen_random_uuid();
+  v_run_id uuid;
+  first_result jsonb;
+  second_result jsonb;
+  final_result jsonb;
+  first_batch_id uuid;
+  second_batch_id uuid;
+begin
+  insert into auth.users(id, email) values(u, 'ckpt1-temp-reset@example.test');
+  perform set_config('request.jwt.claim.sub', u::text, true);
+  perform set_config('request.jwt.claim.role', 'authenticated', true);
+
+  v_run_id := public.start_import_run(u, 'temp-reset-key', $j$[
+    {"row_number": 1, "outcome": "ready", "issue_codes": [],
+     "normalized": {"client_name": "Temp Reset Co", "client_email": "temp-reset@example.test", "invoice_number": "TEMP-1",
+       "invoice_date": "2026-01-01", "amount": "10.00"}},
+    {"row_number": 2, "outcome": "ready", "issue_codes": [],
+     "normalized": {"client_name": "Temp Reset Co", "client_email": "temp-reset@example.test", "invoice_number": "TEMP-2",
+       "invoice_date": "2026-01-02", "amount": "20.00"}},
+    {"row_number": 3, "outcome": "ready", "issue_codes": [],
+     "normalized": {"client_name": "Temp Reset Co", "client_email": "temp-reset@example.test", "invoice_number": "TEMP-3",
+       "invoice_date": "2026-01-03", "amount": "30.00"}},
+    {"row_number": 4, "outcome": "ready", "issue_codes": [],
+     "normalized": {"client_name": "Temp Reset Co", "client_email": "temp-reset@example.test", "invoice_number": "TEMP-4",
+       "invoice_date": "2026-01-04", "amount": "40.00"}}
+  ]$j$::jsonb);
+
+  -- Both calls execute inside this one DO block and the integration test's
+  -- one surrounding transaction/session. ON COMMIT DROP therefore cannot
+  -- clear _claimed_rows between them; process_import_batch's explicit reset
+  -- is the behavior under test.
+  first_result := public.process_import_batch(v_run_id, 2);
+  if first_result->>'status' <> 'in_progress'
+     or (first_result->>'claimed')::integer <> 2
+     or (first_result->>'committed')::integer <> 2 then
+    raise exception 'First temp-reset batch returned an unexpected result: %', first_result;
+  end if;
+
+  select id into first_batch_id
+  from public.import_batches where run_id = v_run_id and batch_index = 0;
+  if first_batch_id is null
+     or (select count(*) from public.import_rows
+         where run_id = v_run_id and row_number in (1, 2)
+           and batch_id = first_batch_id and server_status = 'committed') <> 2
+     or (select count(*) from public.import_rows
+         where run_id = v_run_id and row_number in (3, 4)
+           and batch_id is null and server_status = 'pending') <> 2 then
+    raise exception 'First call did not claim exactly rows 1-2';
+  end if;
+
+  second_result := public.process_import_batch(v_run_id, 2);
+  if second_result->>'status' <> 'in_progress'
+     or (second_result->>'claimed')::integer <> 2
+     or (second_result->>'committed')::integer <> 2 then
+    raise exception 'Second temp-reset batch returned an unexpected result: %', second_result;
+  end if;
+
+  select id into second_batch_id
+  from public.import_batches where run_id = v_run_id and batch_index = 1;
+  if second_batch_id is null or second_batch_id = first_batch_id then
+    raise exception 'Second call did not create a distinct second batch';
+  end if;
+  if (select count(*) from public.import_rows
+      where run_id = v_run_id and row_number in (1, 2)
+        and batch_id = first_batch_id and server_status = 'committed') <> 2 then
+    raise exception 'Second call reprocessed or reassigned an earlier row';
+  end if;
+  if (select count(*) from public.import_rows
+      where run_id = v_run_id and row_number in (3, 4)
+        and batch_id = second_batch_id and server_status = 'committed') <> 2 then
+    raise exception 'Second call skipped a later row or retained stale claimed IDs';
+  end if;
+  if (select count(*) from public.import_batches where run_id = v_run_id) <> 2
+     or exists(select 1 from public.import_batches where run_id = v_run_id and row_count <> 2)
+     or (select count(*) from public.import_events
+         where run_id = v_run_id and event_type = 'batch_committed') <> 2
+     or (select count(*) from public.import_events
+         where run_id = v_run_id and event_type = 'invoice_inserted') <> 4
+     or exists(select 1 from public.import_events
+         where run_id = v_run_id and event_type = 'invoice_already_existed') then
+    raise exception 'Repeated calls duplicated or misreported batch/row work';
+  end if;
+  if (select count(*) from public.clients where user_id = u) <> 1
+     or (select count(*) from public.invoices where user_id = u) <> 4
+     or (select count(distinct invoice_id) from public.import_rows where run_id = v_run_id) <> 4 then
+    raise exception 'Repeated calls created duplicate clients/invoices or lost invoice identity';
+  end if;
+
+  final_result := public.process_import_batch(v_run_id, 2);
+  if final_result->>'status' <> 'completed'
+     or (select status from public.import_runs where id = v_run_id) <> 'completed'
+     or exists(select 1 from public.import_rows where run_id = v_run_id and server_status <> 'committed') then
+    raise exception 'Repeated-call final state is not completed and fully committed: %', final_result;
+  end if;
+end
+$repeated_call_temp_table_reset$;
+\echo 'TEST GROUP PASS: repeated_call_temp_table_reset'
+
 \echo 'TEST GROUP START: failed_batch_rollback'
 do $failed_batch$
 declare
