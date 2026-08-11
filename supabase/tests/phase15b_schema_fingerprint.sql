@@ -20,7 +20,7 @@ with components as (
   union all
 
   select 'constraint',
-         conrelid::regclass::text || '.' || conname || ':' || contype || ':' ||
+         conrelid::regclass::text || '.' || conname || ':' || contype::text || ':' ||
          convalidated || ':' || condeferrable || ':' || condeferred || ':' ||
          pg_get_constraintdef(oid)
   from pg_constraint
