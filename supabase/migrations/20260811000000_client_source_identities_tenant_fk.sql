@@ -1,56 +1,83 @@
--- Enforce tenant ownership for every invoice/client relationship.
+-- Forward migration for the verified staging tenant-integrity gap:
+-- client_source_identities.client_id was only a single-column FK to
+-- clients(id), proving the referenced client exists but not that it
+-- belongs to the same tenant as user_id. An authenticated caller could
+-- satisfy RLS's `auth.uid() = user_id` check while inserting a row whose
+-- client_id pointed at another tenant's client, and PostgreSQL accepted
+-- it (reproduced through a genuine authenticated staging REST session:
+-- the cross-tenant insert returned HTTP 201). Reads stayed isolated, but
+-- the write did not.
 --
--- The existing single-column FK proves only that client_id exists. This
--- composite FK also proves that the invoice and client belong to the same
--- user. It applies to every database role, including roles that bypass RLS.
+-- 20260726000000_canonical_clients.sql now creates the table with the
+-- composite tenant-safe FK from the start, but Supabase does not re-run
+-- an already-applied migration file just because its contents changed —
+-- an environment that already ran that migration before this fix existed
+-- (current hosted staging) would never receive the corrected FK from
+-- editing that file alone. This migration replaces the single-column FK
+-- with the same composite tenant-ownership pattern already proven by
+-- invoices_user_id_client_id_fkey, and does so idempotently so it is also
+-- safe to run against a fresh database where the corrected historical
+-- migration already created the desired constraint under the same name.
+--
+-- Does not weaken RLS: client_source_identities_insert_own/_update_own
+-- remain exactly as they are. The composite FK is a second, independent,
+-- structural guarantee that holds for every role (including service_role
+-- and any other role that bypasses RLS), not a replacement for RLS.
 
 do $preflight$
 begin
   if exists (
     select 1
-    from public.invoices i
-    join public.clients c on c.id = i.client_id
-    where i.client_id is not null
-      and i.user_id <> c.user_id
+    from public.client_source_identities si
+    join public.clients c on c.id = si.client_id
+    where si.user_id <> c.user_id
   ) then
     raise exception using
       errcode = '23514',
-      message = 'Cannot enforce invoice/client tenant ownership: cross-tenant relationships exist';
+      message = 'Cannot enforce client_source_identities tenant ownership: cross-tenant relationships exist';
   end if;
 end
 $preflight$;
 
--- PostgreSQL requires the referenced composite columns to be covered by a
--- non-partial unique index. clients.id remains the primary key, so this adds
--- no new identity semantics; it makes (user_id, id) a valid FK target.
+-- Idempotent and, on a fresh install, already created by the corrected
+-- 20260726000000_canonical_clients.sql — see that file for why it is
+-- created there too, ahead of 20260803021842_enforce_invoice_client_
+-- tenant_ownership.sql where it was originally introduced for invoices.
 create unique index if not exists clients_user_id_id_uidx
   on public.clients(user_id, id);
 
+-- Named to match what the corrected 20260726000000_canonical_clients.sql
+-- creates inline on a fresh install, so this step is a genuine no-op there
+-- instead of racing a second, differently-named constraint into existence.
 do $constraint$
 begin
   if not exists (
     select 1
     from pg_constraint
-    where conrelid = 'public.invoices'::regclass
-      and conname = 'invoices_user_id_client_id_fkey'
+    where conrelid = 'public.client_source_identities'::regclass
+      and conname = 'client_source_identities_user_id_client_id_fkey'
       and contype = 'f'
   ) then
-    alter table public.invoices
-      add constraint invoices_user_id_client_id_fkey
+    alter table public.client_source_identities
+      add constraint client_source_identities_user_id_client_id_fkey
       foreign key (user_id, client_id)
       references public.clients(user_id, id)
       on update no action
-      on delete set null (client_id)
+      on delete cascade
       not valid;
   end if;
 end
 $constraint$;
 
-alter table public.invoices
-  validate constraint invoices_user_id_client_id_fkey;
+-- Safe to re-run: validating an already-valid constraint is a no-op.
+alter table public.client_source_identities
+  validate constraint client_source_identities_user_id_client_id_fkey;
 
--- Remove only the repository's superseded FK shape, regardless of its name.
--- The new composite constraint stays in place throughout this step.
+-- Remove only the repository's superseded FK shape, regardless of its
+-- name. On an already-migrated environment this drops the original
+-- single-column client_id -> clients(id) FK. On a fresh install (where
+-- the corrected historical migration never created that shape) this loop
+-- matches nothing and is a no-op.
 do $drop_single_column_fks$
 declare
   v_constraint record;
@@ -59,7 +86,7 @@ declare
 begin
   select attnum into v_client_id_attnum
   from pg_attribute
-  where attrelid = 'public.invoices'::regclass and attname = 'client_id';
+  where attrelid = 'public.client_source_identities'::regclass and attname = 'client_id';
 
   select attnum into v_client_pk_attnum
   from pg_attribute
@@ -68,23 +95,24 @@ begin
   for v_constraint in
     select conname
     from pg_constraint
-    where conrelid = 'public.invoices'::regclass
+    where conrelid = 'public.client_source_identities'::regclass
       and confrelid = 'public.clients'::regclass
       and contype = 'f'
       and conkey = array[v_client_id_attnum]::smallint[]
       and confkey = array[v_client_pk_attnum]::smallint[]
   loop
     execute format(
-      'alter table public.invoices drop constraint %I',
+      'alter table public.client_source_identities drop constraint %I',
       v_constraint.conname
     );
   end loop;
 end
 $drop_single_column_fks$;
 
--- Refresh the Phase 0 unknown-FK gate so it pairs composite FK columns by
--- ordinal position instead of producing a Cartesian product through
--- information_schema.constraint_column_usage.
+-- Refresh the Phase 0 unknown-FK gate: client_source_identities now
+-- contributes two column-pair rows (user_id -> clients.user_id and
+-- client_id -> clients.id) for its one composite FK, replacing the single
+-- client_id -> clients.id row the old single-column FK produced.
 create or replace function duewatch_ops.unknown_client_foreign_keys()
 returns table(
   table_schema text,
@@ -144,19 +172,6 @@ returns table(
     not in (
       ('public','invoices','user_id','public','clients','user_id','SET NULL','NO ACTION'),
       ('public','invoices','client_id','public','clients','id','SET NULL','NO ACTION'),
-      -- client_source_identities' single-column client_id FK below was
-      -- superseded by a composite (user_id, client_id) tenant-safe FK, the
-      -- same pattern as invoices above (see
-      -- 20260811000000_client_source_identities_tenant_fk.sql). Kept
-      -- current here too, not just in that later migration: on a fresh
-      -- install 20260726000000_canonical_clients.sql now creates
-      -- client_source_identities with the composite FK from the start, so
-      -- by the time this migration's own postcondition check below runs
-      -- (immediately after this function is (re)defined), the table
-      -- already has the composite shape and needs it in the allowlist -
-      -- an already-migrated environment still gets this update for real
-      -- via the later forward migration re-defining this same function,
-      -- since Supabase does not re-run an already-applied migration file.
       ('public','client_source_identities','user_id','public','clients','user_id','CASCADE','NO ACTION'),
       ('public','client_source_identities','client_id','public','clients','id','CASCADE','NO ACTION'),
       ('public','line_items','invoice_id','public','invoices','id','CASCADE','NO ACTION'),
@@ -176,18 +191,18 @@ declare
 begin
   select pg_get_constraintdef(oid) into v_definition
   from pg_constraint
-  where conrelid = 'public.invoices'::regclass
-    and conname = 'invoices_user_id_client_id_fkey'
+  where conrelid = 'public.client_source_identities'::regclass
+    and conname = 'client_source_identities_user_id_client_id_fkey'
     and contype = 'f';
 
   if v_definition is null
     or v_definition not like 'FOREIGN KEY (user_id, client_id) REFERENCES clients(user_id, id)%'
-    or v_definition not like '%ON DELETE SET NULL (client_id)%' then
-    raise exception 'Invoice/client tenant constraint does not match the required definition';
+    or v_definition not like '%ON DELETE CASCADE%' then
+    raise exception 'client_source_identities tenant constraint does not match the required definition';
   end if;
 
   if exists(select 1 from duewatch_ops.unknown_client_foreign_keys()) then
-    raise exception 'Invoice/client tenant migration left an unknown client/invoice FK';
+    raise exception 'client_source_identities tenant migration left an unknown client/invoice FK';
   end if;
 
   if (select execution_enabled
