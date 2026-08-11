@@ -161,6 +161,7 @@ declare
   u uuid := gen_random_uuid();
   payload jsonb;
   conflicting_payload jsonb;
+  oversized_payload jsonb;
   run_1 uuid;
   run_2 uuid;
 begin
@@ -200,6 +201,16 @@ begin
     raise exception 'A rejected conflicting-payload retry mutated the original run row count';
   end if;
 
+  begin
+    perform public.process_import_batch(run_1, 201);
+    raise exception 'Expected rejection of a batch size above 200';
+  exception when others then
+    if sqlerrm not like '%between 1 and 200 inclusive%' then raise; end if;
+  end;
+  if exists (select 1 from public.import_batches where run_id = run_1) then
+    raise exception 'Rejected oversized batch request created a batch';
+  end if;
+
   -- Bounds (Review Blocker 2): non-array p_rows, over-limit rows, and
   -- invalid/duplicate row_number values all fail closed.
   begin
@@ -207,6 +218,15 @@ begin
     raise exception 'Expected rejection of a non-array p_rows';
   exception when others then
     if sqlerrm not like '%must be a JSON array%' then raise; end if;
+  end;
+  select jsonb_agg(jsonb_build_object('row_number', n))
+  into oversized_payload
+  from generate_series(1, 10001) as n;
+  begin
+    perform public.start_import_run(u, 'bounds-key-over-limit', oversized_payload);
+    raise exception 'Expected rejection of more than 10000 rows';
+  exception when others then
+    if sqlerrm not like '%exceeds the maximum of 10000 rows%' then raise; end if;
   end;
   begin
     perform public.start_import_run(u, 'bounds-key-2', $j$[
@@ -838,6 +858,87 @@ begin
 end
 $refresh$;
 \echo 'TEST GROUP PASS: refresh_reconstruction'
+
+\echo 'TEST GROUP START: authenticated_import_state_rls'
+do $authenticated_import_state_rls_setup$
+declare
+  tenant_a constant uuid := 'eda10000-0000-4000-8000-000000000001';
+  tenant_b constant uuid := 'edb20000-0000-4000-8000-000000000002';
+  run_a uuid;
+  run_b uuid;
+begin
+  insert into auth.users(id, email) values
+    (tenant_a, 'ckpt1-rls-tenant-a@example.test'),
+    (tenant_b, 'ckpt1-rls-tenant-b@example.test');
+
+  perform set_config('request.jwt.claim.sub', tenant_a::text, true);
+  perform set_config('request.jwt.claim.role', 'authenticated', true);
+  run_a := public.start_import_run(tenant_a, 'rls-tenant-a-key', $j$[
+    {"row_number": 1, "outcome": "ready", "issue_codes": [],
+     "normalized": {"client_name": "RLS Tenant A", "client_email": "rls-a@example.test",
+       "invoice_number": "RLS-A-1", "invoice_date": "2026-01-01", "amount": "10.00"}}
+  ]$j$::jsonb);
+  perform public.process_import_batch(run_a);
+
+  perform set_config('request.jwt.claim.sub', tenant_b::text, true);
+  perform set_config('request.jwt.claim.role', 'authenticated', true);
+  run_b := public.start_import_run(tenant_b, 'rls-tenant-b-key', $j$[
+    {"row_number": 1, "outcome": "ready", "issue_codes": [],
+     "normalized": {"client_name": "RLS Tenant B", "client_email": "rls-b@example.test",
+       "invoice_number": "RLS-B-1", "invoice_date": "2026-01-01", "amount": "10.00"}}
+  ]$j$::jsonb);
+  perform public.process_import_batch(run_b);
+
+  -- The assertions below deliberately switch the database role, rather
+  -- than merely setting JWT claims while continuing as postgres. This is
+  -- what actually exercises authenticated grants and the four RLS policies.
+  perform set_config('request.jwt.claim.sub', tenant_a::text, true);
+  perform set_config('request.jwt.claim.role', 'authenticated', true);
+end
+$authenticated_import_state_rls_setup$;
+
+set local role authenticated;
+
+do $authenticated_import_state_rls_assertions$
+declare
+  tenant_a constant uuid := 'eda10000-0000-4000-8000-000000000001';
+begin
+  if (select count(id) from public.import_runs where user_id = tenant_a) = 0
+     or exists (select 1 from public.import_runs where user_id <> tenant_a) then
+    raise exception 'import_runs RLS did not expose only Tenant A rows';
+  end if;
+  if (select count(id) from public.import_batches where user_id = tenant_a) = 0
+     or exists (select 1 from public.import_batches where user_id <> tenant_a) then
+    raise exception 'import_batches RLS did not expose only Tenant A rows';
+  end if;
+  if (select count(id) from public.import_rows where user_id = tenant_a) = 0
+     or exists (select 1 from public.import_rows where user_id <> tenant_a) then
+    raise exception 'import_rows RLS did not expose only Tenant A rows';
+  end if;
+  if (select count(id) from public.import_events where user_id = tenant_a) = 0
+     or exists (select 1 from public.import_events where user_id <> tenant_a) then
+    raise exception 'import_events RLS did not expose only Tenant A rows';
+  end if;
+
+  begin
+    execute 'select internal_diagnostic from public.import_batches limit 1';
+    raise exception 'authenticated unexpectedly read import_batches.internal_diagnostic';
+  exception when insufficient_privilege then
+    null;
+  end;
+
+  begin
+    insert into public.import_events(run_id, user_id, event_type)
+    select id, user_id, 'run_created' from public.import_runs limit 1;
+    raise exception 'authenticated unexpectedly wrote import state directly';
+  exception when insufficient_privilege then
+    null;
+  end;
+end
+$authenticated_import_state_rls_assertions$;
+
+reset role;
+\echo 'TEST GROUP PASS: authenticated_import_state_rls'
 
 \echo 'TEST GROUP START: cross_tenant_rejection'
 do $cross_tenant$
