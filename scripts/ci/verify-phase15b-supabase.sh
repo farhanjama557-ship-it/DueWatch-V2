@@ -45,6 +45,8 @@ psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 \
   -f supabase/tests/phase15b_forward_path_setup.sql \
   -f supabase/migrations/20260811000000_client_source_identities_tenant_fk.sql \
   -f supabase/migrations/20260803150000_import_persistence_core.sql \
+  -f supabase/tests/phase15b_broad_privilege_setup.sql \
+  -f supabase/migrations/20260811083005_phase15b_import_table_privilege_baseline.sql \
   -f supabase/tests/phase15b_schema_fingerprint.sql \
   -c 'rollback;' \
   > "$ARTIFACT_DIR/02_forward_path.log" 2>&1
@@ -64,11 +66,25 @@ cat "$ARTIFACT_DIR/03_migration_apply.log"
 record_exit migration_apply_exit "$migration_apply_exit"
 
 psql "$DB_URL" -X -v ON_ERROR_STOP=1 \
+  -f supabase/migrations/20260811083005_phase15b_import_table_privilege_baseline.sql \
+  > "$ARTIFACT_DIR/03a_privilege_migration_apply.log" 2>&1
+privilege_migration_apply_exit=$?
+cat "$ARTIFACT_DIR/03a_privilege_migration_apply.log"
+record_exit privilege_migration_apply_exit "$privilege_migration_apply_exit"
+
+psql "$DB_URL" -X -v ON_ERROR_STOP=1 \
   -f supabase/migrations/20260803150000_import_persistence_core.sql \
   > "$ARTIFACT_DIR/04_migration_reapply.log" 2>&1
 migration_reapply_exit=$?
 cat "$ARTIFACT_DIR/04_migration_reapply.log"
 record_exit migration_reapply_exit "$migration_reapply_exit"
+
+psql "$DB_URL" -X -v ON_ERROR_STOP=1 \
+  -f supabase/migrations/20260811083005_phase15b_import_table_privilege_baseline.sql \
+  > "$ARTIFACT_DIR/04a_privilege_migration_reapply.log" 2>&1
+privilege_migration_reapply_exit=$?
+cat "$ARTIFACT_DIR/04a_privilege_migration_reapply.log"
+record_exit privilege_migration_reapply_exit "$privilege_migration_reapply_exit"
 
 psql "$DB_URL" -X -q -t -A -v ON_ERROR_STOP=1 \
   -f supabase/tests/phase15b_schema_fingerprint.sql \
@@ -96,7 +112,9 @@ cat "$ARTIFACT_DIR/06_schema_convergence.log"
 record_exit convergence_exit "$convergence_exit"
 
 if [ "$migration_apply_exit" -ne 0 ] \
+   || [ "$privilege_migration_apply_exit" -ne 0 ] \
    || [ "$migration_reapply_exit" -ne 0 ] \
+   || [ "$privilege_migration_reapply_exit" -ne 0 ] \
    || [ "$convergence_exit" -ne 0 ]; then
   echo "$overall_status" > "$ARTIFACT_DIR/OVERALL_EXIT_CODE"
   exit "$overall_status"
@@ -109,6 +127,17 @@ psql "$DB_URL" -X -v ON_ERROR_STOP=1 \
 recovery_exit=$?
 cat "$ARTIFACT_DIR/07_recovery_integration.log"
 record_exit recovery_exit "$recovery_exit"
+
+section "Proving the fail-closed import-table privilege baseline"
+psql "$DB_URL" -X -v ON_ERROR_STOP=1 \
+  -c 'begin;' \
+  -f supabase/tests/phase15b_broad_privilege_setup.sql \
+  -f supabase/migrations/20260811083005_phase15b_import_table_privilege_baseline.sql \
+  -f supabase/tests/phase15b_privilege_contract_test.sql \
+  > "$ARTIFACT_DIR/07a_privilege_baseline.log" 2>&1
+privilege_baseline_exit=$?
+cat "$ARTIFACT_DIR/07a_privilege_baseline.log"
+record_exit privilege_baseline_exit "$privilege_baseline_exit"
 
 expected_groups=(
   eligibility_deny_by_default
@@ -126,10 +155,13 @@ expected_groups=(
   authenticated_import_state_rls
   cross_tenant_rejection
   tenant_safe_fk_constraints
+  privilege_baseline
 )
 group_gate_exit=0
 for group in "${expected_groups[@]}"; do
-  if grep -q "TEST GROUP PASS: $group" "$ARTIFACT_DIR/07_recovery_integration.log"; then
+  if grep -q "TEST GROUP PASS: $group" \
+      "$ARTIFACT_DIR/07_recovery_integration.log" \
+      "$ARTIFACT_DIR/07a_privilege_baseline.log"; then
     echo "$group=pass" >> "$ARTIFACT_DIR/08_group_summary.txt"
   else
     echo "$group=missing" >> "$ARTIFACT_DIR/08_group_summary.txt"

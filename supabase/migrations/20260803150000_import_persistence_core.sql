@@ -486,6 +486,33 @@ create policy "import_events_select_own" on public.import_events
   for select to authenticated
   using ((select auth.uid()) is not null and (select auth.uid()) = user_id);
 
+-- Hosted Supabase projects may pre-grant broad table privileges through
+-- project-level default ACLs. Establish the complete privilege baseline
+-- here instead of assuming any particular project default. The column-level
+-- revokes also remove legacy per-column grants before the one deliberate
+-- authenticated column grant on import_batches is restored below.
+revoke all privileges
+  on public.import_runs, public.import_batches, public.import_rows, public.import_events
+  from PUBLIC, anon, authenticated, service_role;
+revoke all privileges (
+  id, user_id, idempotency_key, request_payload_hash,
+  warnings_acknowledged, status, total_rows, eligible_rows, blocked_rows,
+  next_batch_index, cancel_requested_at, created_at, started_at, completed_at
+) on public.import_runs from PUBLIC, anon, authenticated, service_role;
+revoke all privileges (
+  id, run_id, user_id, batch_index, status, row_count,
+  failure_reason, internal_diagnostic, created_at
+) on public.import_batches from PUBLIC, anon, authenticated, service_role;
+revoke all privileges (
+  id, run_id, batch_id, user_id, row_number, row_idempotency_key,
+  material_payload, material_payload_hash, server_status, block_reason_code,
+  block_reason_detail, client_id, client_result, invoice_id, invoice_result,
+  committed_at, created_at
+) on public.import_rows from PUBLIC, anon, authenticated, service_role;
+revoke all privileges (
+  id, run_id, user_id, batch_id, row_id, event_type, detail, created_at
+) on public.import_events from PUBLIC, anon, authenticated, service_role;
+
 grant select on public.import_runs, public.import_rows, public.import_events
   to authenticated;
 -- import_batches.internal_diagnostic is deliberately withheld from

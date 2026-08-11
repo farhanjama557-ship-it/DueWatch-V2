@@ -55,11 +55,20 @@ with components as (
 
   union all
 
+  select 'table_security', n.nspname || '.' || c.relname || ':' ||
+         c.relrowsecurity || ':' || c.relforcerowsecurity
+  from pg_class c
+  join pg_namespace n on n.oid = c.relnamespace
+  where n.nspname = 'public'
+    and c.relname in ('import_runs', 'import_batches', 'import_rows', 'import_events')
+
+  union all
+
   select 'table_grant', table_schema || '.' || table_name || ':' || grantee || ':' || privilege_type
   from information_schema.role_table_grants
   where table_schema = 'public'
     and table_name in ('import_runs', 'import_batches', 'import_rows', 'import_events')
-    and grantee in ('authenticated', 'service_role')
+    and grantee in ('PUBLIC', 'anon', 'authenticated', 'service_role')
 
   union all
 
@@ -68,7 +77,7 @@ with components as (
   from information_schema.role_column_grants
   where table_schema = 'public'
     and table_name in ('import_runs', 'import_batches', 'import_rows', 'import_events')
-    and grantee in ('authenticated', 'service_role')
+    and grantee in ('PUBLIC', 'anon', 'authenticated', 'service_role')
 
   union all
 
