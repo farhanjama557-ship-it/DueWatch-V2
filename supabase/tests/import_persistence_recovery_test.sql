@@ -756,6 +756,161 @@ end
 $invoice_identity$;
 \echo 'TEST GROUP PASS: invoice_source_identity_and_conflicts'
 
+\echo 'TEST GROUP START: ambiguous_invoice_fallback'
+do $ambiguous_invoice_fallback$
+declare
+  u uuid := gen_random_uuid();
+  c uuid := gen_random_uuid();
+  pair_a_exact uuid := '00000000-0000-4000-8000-000000000101';
+  pair_a_conflict uuid := 'ffffffff-ffff-4fff-8fff-fffffffff101';
+  pair_b_conflict uuid := '00000000-0000-4000-8000-000000000102';
+  pair_b_exact uuid := 'ffffffff-ffff-4fff-8fff-fffffffff102';
+  v_run_id uuid;
+  first_result jsonb;
+  retry_result jsonb;
+  invoice_snapshot jsonb;
+begin
+  insert into auth.users(id, email) values(u, 'ckpt1-ambiguous-invoice@example.test');
+  perform set_config('request.jwt.claim.sub', u::text, true);
+  perform set_config('request.jwt.claim.role', 'authenticated', true);
+
+  insert into public.clients(id, user_id, name, email)
+  values(c, u, 'Ambiguous Invoice Co', 'ambiguous-invoice@example.test');
+
+  -- Pair A: the exact candidate has the lower UUID but is inserted second.
+  insert into public.invoices(
+    id, user_id, client_id, inv_num, amount, amount_paid, inv_date, due_date,
+    paid, currency, payment_date, source_system, source_invoice_id
+  ) values (
+    pair_a_conflict, u, c, 'AMB-A', 999.00, 0, '2026-01-01', null,
+    false, 'USD', null, null, null
+  );
+  insert into public.invoices(
+    id, user_id, client_id, inv_num, amount, amount_paid, inv_date, due_date,
+    paid, currency, payment_date, source_system, source_invoice_id
+  ) values (
+    pair_a_exact, u, c, 'AMB-A', 100.00, 0, '2026-01-01', null,
+    false, 'USD', null, null, null
+  );
+
+  -- Pair B reverses both facts: exact has the higher UUID and is inserted
+  -- first. Both pairs must block, proving neither insertion nor UUID order
+  -- can cause a candidate to be selected.
+  insert into public.invoices(
+    id, user_id, client_id, inv_num, amount, amount_paid, inv_date, due_date,
+    paid, currency, payment_date, source_system, source_invoice_id
+  ) values (
+    pair_b_exact, u, c, 'AMB-B', 100.00, 0, '2026-01-01', null,
+    false, 'USD', null, null, null
+  );
+  insert into public.invoices(
+    id, user_id, client_id, inv_num, amount, amount_paid, inv_date, due_date,
+    paid, currency, payment_date, source_system, source_invoice_id
+  ) values (
+    pair_b_conflict, u, c, 'AMB-B', 999.00, 0, '2026-01-01', null,
+    false, 'USD', null, null, null
+  );
+
+  select jsonb_agg(to_jsonb(i) order by i.id) into invoice_snapshot
+  from public.invoices i where i.user_id = u;
+
+  v_run_id := public.start_import_run(u, 'ambiguous-invoice-fallback-key', $j$[
+    {"row_number": 1, "outcome": "ready", "issue_codes": [],
+     "normalized": {"client_name": "Ambiguous Invoice Co", "client_email": "ambiguous-invoice@example.test",
+       "invoice_number": "AMB-A", "invoice_date": "2026-01-01", "amount": "100.00", "currency": "USD"}},
+    {"row_number": 2, "outcome": "ready", "issue_codes": [],
+     "normalized": {"client_name": "Ambiguous Invoice Co", "client_email": "ambiguous-invoice@example.test",
+       "invoice_number": "AMB-SAFE", "invoice_date": "2026-01-02", "amount": "50.00", "currency": "USD"}},
+    {"row_number": 3, "outcome": "ready", "issue_codes": [],
+     "normalized": {"client_name": "Ambiguous Invoice Co", "client_email": "ambiguous-invoice@example.test",
+       "invoice_number": "AMB-B", "invoice_date": "2026-01-01", "amount": "100.00", "currency": "USD"}}
+  ]$j$::jsonb);
+
+  first_result := public.process_import_batch(v_run_id);
+  if first_result->>'status' <> 'in_progress'
+     or (first_result->>'claimed')::integer <> 3
+     or (first_result->>'committed')::integer <> 1 then
+    raise exception 'Ambiguous batch returned an unexpected first result: %', first_result;
+  end if;
+
+  if exists (
+    select 1 from public.import_rows
+    where run_id = v_run_id and row_number in (1, 3)
+      and (server_status <> 'blocked'
+        or block_reason_code <> 'AMBIGUOUS_INVOICE_IDENTITY'
+        or invoice_id is not null
+        or invoice_result is not null)
+  ) then
+    raise exception 'Ambiguous rows did not remain blocked with null invoice results';
+  end if;
+  if (
+    select count(*) from public.import_rows
+    where run_id = v_run_id and row_number in (1, 3)
+      and server_status = 'blocked'
+      and block_reason_code = 'AMBIGUOUS_INVOICE_IDENTITY'
+      and invoice_id is null and invoice_result is null
+  ) <> 2 then
+    raise exception 'Expected both ambiguity orderings to block safely';
+  end if;
+
+  if not exists (
+    select 1 from public.import_rows
+    where run_id = v_run_id and row_number = 2
+      and server_status = 'committed'
+      and invoice_result = 'inserted'
+      and invoice_id is not null
+  ) then
+    raise exception 'Neighboring valid row did not commit in the ambiguous batch';
+  end if;
+  if (select count(*) from public.invoices where user_id = u) <> 5
+     or (select count(*) from public.invoices where user_id = u and client_id = c and inv_num = 'AMB-A') <> 2
+     or (select count(*) from public.invoices where user_id = u and client_id = c and inv_num = 'AMB-B') <> 2
+     or (select count(*) from public.invoices where user_id = u and client_id = c and inv_num = 'AMB-SAFE') <> 1 then
+    raise exception 'Ambiguous processing mutated a candidate or inserted an ambiguous invoice';
+  end if;
+  if invoice_snapshot <> (
+    select jsonb_agg(to_jsonb(i) order by i.id)
+    from public.invoices i where i.user_id = u and i.inv_num in ('AMB-A', 'AMB-B')
+  ) then
+    raise exception 'An existing ambiguous candidate invoice changed';
+  end if;
+
+  if (select count(*) from public.import_batches where run_id = v_run_id and status = 'committed') <> 1
+     or exists (select 1 from public.import_batches where run_id = v_run_id and status = 'failed') then
+    raise exception 'Row ambiguity incorrectly failed the containing batch';
+  end if;
+  if (select count(*) from public.import_events
+      where run_id = v_run_id and event_type = 'row_blocked'
+        and detail->>'reason_code' = 'AMBIGUOUS_INVOICE_IDENTITY') <> 2 then
+    raise exception 'Expected one sanitized ambiguity event per blocked row';
+  end if;
+  if exists (
+    select 1 from public.import_events
+    where run_id = v_run_id and event_type = 'row_blocked'
+      and detail->>'reason_code' = 'AMBIGUOUS_INVOICE_IDENTITY'
+      and (detail ? 'existing_invoice_id'
+        or detail::text like '%' || pair_a_exact::text || '%'
+        or detail::text like '%' || pair_a_conflict::text || '%'
+        or detail::text like '%' || pair_b_exact::text || '%'
+        or detail::text like '%' || pair_b_conflict::text || '%')
+  ) then
+    raise exception 'Ambiguity event exposed candidate-sensitive identifiers';
+  end if;
+
+  retry_result := public.process_import_batch(v_run_id);
+  if retry_result->>'status' <> 'partially_completed' then
+    raise exception 'Ambiguous retry should reconstruct partially_completed, got %', retry_result;
+  end if;
+  if (select count(*) from public.invoices where user_id = u) <> 5
+     or (select count(*) from public.import_events
+         where run_id = v_run_id and event_type = 'row_blocked'
+           and detail->>'reason_code' = 'AMBIGUOUS_INVOICE_IDENTITY') <> 2 then
+    raise exception 'Retry changed invoices or duplicated ambiguity events';
+  end if;
+end
+$ambiguous_invoice_fallback$;
+\echo 'TEST GROUP PASS: ambiguous_invoice_fallback'
+
 \echo 'TEST GROUP START: material_field_preservation'
 do $material_fields$
 declare

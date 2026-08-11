@@ -856,6 +856,8 @@ declare
   v_remaining integer;
   v_committed_in_call integer;
   v_existing public.invoices%rowtype;
+  v_fallback_invoice_ids uuid[];
+  v_fallback_match_count integer;
   v_conflict boolean;
   v_sanitized_reason text := 'An unexpected error occurred while processing this batch. No rows from this batch were saved.';
 begin
@@ -1033,11 +1035,52 @@ begin
           and i.source_system = v_source_system
           and i.source_invoice_id = v_source_invoice_id;
       else
-        select i.* into v_existing from public.invoices i
-        where i.user_id = v_run.user_id
-          and i.client_id = v_client_id
-          and i.inv_num = (v_row.material_payload->>'invoice_number')
-          and i.source_system is null and i.source_invoice_id is null;
+        -- A source-less fallback is not structurally unique in the legacy
+        -- invoice schema. Probe at most two IDs under the existing fallback
+        -- advisory lock: zero means insert, one is safe to compare, and two
+        -- is enough to prove ambiguity without choosing or exposing either
+        -- candidate. Ordering is deterministic only for testability; an
+        -- ambiguous candidate is never selected regardless of that order.
+        select coalesce(array_agg(matches.id order by matches.id), '{}'::uuid[])
+        into v_fallback_invoice_ids
+        from (
+          select i.id
+          from public.invoices i
+          where i.user_id = v_run.user_id
+            and i.client_id = v_client_id
+            and i.inv_num = (v_row.material_payload->>'invoice_number')
+            and i.source_system is null and i.source_invoice_id is null
+          order by i.id
+          limit 2
+        ) matches;
+
+        v_fallback_match_count := cardinality(v_fallback_invoice_ids);
+        if v_fallback_match_count > 1 then
+          update public.import_rows
+          set server_status = 'blocked',
+              block_reason_code = 'AMBIGUOUS_INVOICE_IDENTITY',
+              block_reason_detail = jsonb_build_object(
+                'message', 'Multiple existing invoices match this client and invoice number. Review is required.'
+              ),
+              batch_id = v_batch_id,
+              invoice_id = null,
+              invoice_result = null
+          where id = v_row.id;
+          insert into public.import_events(run_id, user_id, batch_id, row_id, event_type, detail)
+          values (p_run_id, v_run.user_id, v_batch_id, v_row.id, 'row_blocked',
+            jsonb_build_object(
+              'reason_code', 'AMBIGUOUS_INVOICE_IDENTITY',
+              'message', 'Multiple existing invoices match this client and invoice number. Review is required.'
+            ));
+          continue;
+        elsif v_fallback_match_count = 1 then
+          select i.* into strict v_existing
+          from public.invoices i
+          where i.id = v_fallback_invoice_ids[1]
+            and i.user_id = v_run.user_id;
+        else
+          v_existing := null;
+        end if;
       end if;
 
       -- status -> paid boolean translation (the real schema has no status

@@ -120,6 +120,7 @@ expected_groups=(
   weak_identity_never_auto_persists
   matched_vs_created_on_source_identity_retry
   invoice_source_identity_and_conflicts
+  ambiguous_invoice_fallback
   material_field_preservation
   refresh_reconstruction
   authenticated_import_state_rls
