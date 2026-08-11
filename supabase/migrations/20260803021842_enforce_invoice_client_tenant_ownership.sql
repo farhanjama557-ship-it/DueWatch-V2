@@ -144,6 +144,20 @@ returns table(
     not in (
       ('public','invoices','user_id','public','clients','user_id','SET NULL','NO ACTION'),
       ('public','invoices','client_id','public','clients','id','SET NULL','NO ACTION'),
+      -- client_source_identities' single-column client_id FK below was
+      -- superseded by a composite (user_id, client_id) tenant-safe FK, the
+      -- same pattern as invoices above (see
+      -- 20260811000000_client_source_identities_tenant_fk.sql). Kept
+      -- current here too, not just in that later migration: on a fresh
+      -- install 20260726000000_canonical_clients.sql now creates
+      -- client_source_identities with the composite FK from the start, so
+      -- by the time this migration's own postcondition check below runs
+      -- (immediately after this function is (re)defined), the table
+      -- already has the composite shape and needs it in the allowlist -
+      -- an already-migrated environment still gets this update for real
+      -- via the later forward migration re-defining this same function,
+      -- since Supabase does not re-run an already-applied migration file.
+      ('public','client_source_identities','user_id','public','clients','user_id','CASCADE','NO ACTION'),
       ('public','client_source_identities','client_id','public','clients','id','CASCADE','NO ACTION'),
       ('public','line_items','invoice_id','public','invoices','id','CASCADE','NO ACTION'),
       ('public','reminders','invoice_id','public','invoices','id','CASCADE','NO ACTION'),

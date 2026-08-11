@@ -949,5 +949,208 @@ end
 $source_identity_rls_tenant_b_unchanged$;
 
 \echo 'TEST GROUP PASS: source_identity_rls'
+\echo 'TEST GROUP START: source_identity_tenant_fk'
+
+-- Regression coverage for the verified staging tenant-integrity gap:
+-- client_source_identities.client_id was only a single-column FK to
+-- clients(id) - it proved the referenced client existed, not that it
+-- belonged to the same tenant as user_id. RLS's insert/update policies
+-- only ever check `auth.uid() = user_id`, so an authenticated caller
+-- genuinely authenticated as its own tenant (satisfying RLS) could still
+-- supply another tenant's client_id, and PostgreSQL accepted it -
+-- reproduced through a real staging REST session as an HTTP 201.
+-- client_source_identities_user_id_client_id_fkey (the composite FK,
+-- same pattern as invoices_user_id_client_id_fkey) is what closes this,
+-- and it holds for every role, not just ones subject to RLS - hence the
+-- direct service_role attempt below in addition to the authenticated one.
+do $source_identity_tenant_fk_fixture$
+declare
+  tenant_a constant uuid := 'fc0a0000-0000-4000-8000-0000fc0a0001';
+  tenant_b constant uuid := 'fc0b0000-0000-4000-8000-0000fc0b0002';
+begin
+  insert into auth.users(id, email) values
+    (tenant_a, 'phase0-tenant-fk-a@example.test'),
+    (tenant_b, 'phase0-tenant-fk-b@example.test');
+  insert into public.clients(id, user_id, name) values
+    ('fc0a1000-0000-4000-8000-0000fc0a1001', tenant_a, 'Tenant FK Client A'),
+    ('fc0b1000-0000-4000-8000-0000fc0b1002', tenant_b, 'Tenant FK Client B');
+end
+$source_identity_tenant_fk_fixture$;
+
+-- Table privileges granted earlier in this same transaction (by the
+-- tenant_isolation and source_identity_rls groups above) already cover
+-- what this group needs: select/insert on clients, select/insert/update
+-- on client_source_identities, all for `authenticated`. Nothing new to
+-- grant here.
+set local role authenticated;
+select set_config(
+  'request.jwt.claim.sub', 'fc0a0000-0000-4000-8000-0000fc0a0001', true
+);
+select set_config('request.jwt.claim.role', 'authenticated', true);
+do $source_identity_tenant_fk_tenant_a$
+declare
+  tenant_a constant uuid := 'fc0a0000-0000-4000-8000-0000fc0a0001';
+  client_a constant uuid := 'fc0a1000-0000-4000-8000-0000fc0a1001';
+  resolved_id uuid;
+begin
+  -- 1. Tenant A can insert a source identity linking its own user_id to
+  -- its own client - a direct insert, same-tenant pair.
+  insert into public.client_source_identities(
+    user_id, client_id, source, external_id, provenance
+  ) values (
+    tenant_a, client_a, 'tenant_fk_test', 'ext-direct-a', '{}'::jsonb
+  );
+  if not exists(
+    select 1 from public.client_source_identities
+    where user_id = tenant_a and client_id = client_a
+      and source = 'tenant_fk_test' and external_id = 'ext-direct-a'
+  ) then
+    raise exception 'Same-tenant direct insert did not persist';
+  end if;
+
+  -- 2. The same same-tenant path still works through
+  -- resolve_or_create_client (unchanged resolver semantics: still returns
+  -- only a uuid, still matches/creates exactly as before).
+  resolved_id := public.resolve_or_create_client(
+    p_user_id => tenant_a,
+    p_name => 'Tenant FK Client A',
+    p_source => 'tenant_fk_test',
+    p_external_id => 'ext-resolver-a'
+  );
+  if resolved_id <> client_a then
+    raise exception 'Resolver did not match the existing same-tenant client by name';
+  end if;
+  if pg_typeof(resolved_id) is distinct from 'uuid'::regtype then
+    raise exception 'resolve_or_create_client return type changed from uuid';
+  end if;
+  if not exists(
+    select 1 from public.client_source_identities
+    where user_id = tenant_a and client_id = client_a
+      and source = 'tenant_fk_test' and external_id = 'ext-resolver-a'
+  ) then
+    raise exception 'Resolver did not record source identity provenance for the same-tenant match';
+  end if;
+end
+$source_identity_tenant_fk_tenant_a$;
+
+select set_config(
+  'request.jwt.claim.sub', 'fc0b0000-0000-4000-8000-0000fc0b0002', true
+);
+do $source_identity_tenant_fk_tenant_b$
+declare
+  tenant_b constant uuid := 'fc0b0000-0000-4000-8000-0000fc0b0002';
+  client_a constant uuid := 'fc0a1000-0000-4000-8000-0000fc0a1001';
+  client_b constant uuid := 'fc0b1000-0000-4000-8000-0000fc0b1002';
+  own_identity_id uuid;
+begin
+  -- 3. Tenant B cannot insert its own user_id paired with tenant A's
+  -- client_id. RLS's `with check (auth.uid() = user_id)` passes (the row's
+  -- user_id genuinely is the caller's own tenant) - this is the exact
+  -- staging bug shape, and only the composite FK rejects it.
+  begin
+    insert into public.client_source_identities(
+      user_id, client_id, source, external_id, provenance
+    ) values (
+      tenant_b, client_a, 'tenant_fk_test', 'ext-cross-insert-b', '{}'::jsonb
+    );
+    raise exception 'Expected cross-tenant (user_id, client_id) insert to be rejected by the FK';
+  exception when foreign_key_violation then
+    null;
+  end;
+  if exists(
+    select 1 from public.client_source_identities
+    where source = 'tenant_fk_test' and external_id = 'ext-cross-insert-b'
+  ) then
+    raise exception 'Rejected cross-tenant insert left a row behind';
+  end if;
+
+  -- 4. Tenant B cannot update one of its own identities to point at
+  -- tenant A's client. The row is tenant B's own (RLS's `using`/`with
+  -- check` both pass); only the FK rejects the resulting mismatched pair.
+  insert into public.client_source_identities(
+    user_id, client_id, source, external_id, provenance
+  ) values (
+    tenant_b, client_b, 'tenant_fk_test', 'ext-own-b', '{}'::jsonb
+  ) returning id into own_identity_id;
+
+  begin
+    update public.client_source_identities
+    set client_id = client_a
+    where id = own_identity_id;
+    raise exception 'Expected cross-tenant client_id update to be rejected by the FK';
+  exception when foreign_key_violation then
+    null;
+  end;
+  if not exists(
+    select 1 from public.client_source_identities
+    where id = own_identity_id and client_id = client_b
+  ) then
+    raise exception 'Rejected cross-tenant update left the row pointing at the wrong client';
+  end if;
+end
+$source_identity_tenant_fk_tenant_b$;
+reset role;
+
+-- 5. service_role bypasses RLS entirely (see the table's own
+-- `grant ... to service_role` and Supabase's standard bypassrls grant on
+-- that role) but still cannot create a mismatched (user_id, client_id)
+-- pair - the FK is a database-level guarantee independent of RLS or
+-- caller path, exactly what "regardless of caller path" requires.
+set local role service_role;
+do $source_identity_tenant_fk_service_role$
+declare
+  tenant_a constant uuid := 'fc0a0000-0000-4000-8000-0000fc0a0001';
+  tenant_b constant uuid := 'fc0b0000-0000-4000-8000-0000fc0b0002';
+  client_b constant uuid := 'fc0b1000-0000-4000-8000-0000fc0b1002';
+begin
+  begin
+    insert into public.client_source_identities(
+      user_id, client_id, source, external_id, provenance
+    ) values (
+      tenant_a, client_b, 'tenant_fk_test', 'ext-service-role-cross', '{}'::jsonb
+    );
+    raise exception 'Expected service_role cross-tenant insert to be rejected by the FK';
+  exception when foreign_key_violation then
+    null;
+  end;
+end
+$source_identity_tenant_fk_service_role$;
+reset role;
+
+-- 6. Normal same-tenant cascade behavior remains correct: deleting a
+-- client still deletes its own client_source_identities rows (ON DELETE
+-- CASCADE), unchanged from the original single-column FK's behavior.
+do $source_identity_tenant_fk_cascade$
+declare
+  tenant_a constant uuid := 'fc0a0000-0000-4000-8000-0000fc0a0001';
+  client_a constant uuid := 'fc0a1000-0000-4000-8000-0000fc0a1001';
+begin
+  if (select count(*) from public.client_source_identities
+      where client_id = client_a) < 1 then
+    raise exception 'Expected fixture source identities for client_a before delete';
+  end if;
+
+  delete from public.clients where id = client_a;
+
+  if exists(
+    select 1 from public.client_source_identities where client_id = client_a
+  ) then
+    raise exception 'Deleting a client did not cascade-delete its source identities';
+  end if;
+end
+$source_identity_tenant_fk_cascade$;
+
+-- 8. This group never touches duewatch_ops.client_dedup_config itself, so
+-- it introduces no new risk to execution_enabled beyond what the suite's
+-- earlier gate tests already exercise. execution_enabled legitimately
+-- reads true from here through the rest of this transaction (the earlier
+-- integration_relationships group's gate tests flip it on and never flip
+-- it back mid-transaction by design), so the meaningful assertion - that
+-- it is false again once everything rolls back - belongs in, and is
+-- already made by, the CI script's post-rollback "Rollback verification"
+-- section (a fresh connection, after this whole transaction ends),
+-- exactly as it already does for the rest of the suite.
+
+\echo 'TEST GROUP PASS: source_identity_tenant_fk'
 
 rollback;
