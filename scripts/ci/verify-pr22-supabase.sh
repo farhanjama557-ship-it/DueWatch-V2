@@ -156,6 +156,174 @@ if [ "$tenant_preflight_exit" -ne 0 ] \
   exit "$overall_status"
 fi
 
+# 20260726000000_canonical_clients.sql (applied above) already carries the
+# client_source_identities_insert_own/_update_own policies for fresh
+# installs, but that migration was already applied to hosted staging before
+# those policies existed — Supabase does not re-run an already-applied
+# migration file just because its contents changed. This standalone forward
+# migration carries the same two policies so an already-migrated database
+# actually receives them. Applied twice here (like the tenant correction
+# migration above) to prove it is genuinely idempotent, matching the real
+# "already has these policies" case an existing database hits on its second
+# deploy, not just the "policies don't exist yet" fresh-install case the
+# first apply below exercises identically to 20260726000000's own copy.
+section "Applying client_source_identities RLS forward migration"
+psql "$DB_URL" -v ON_ERROR_STOP=1 -X \
+  -f supabase/migrations/20260810000000_client_source_identities_rls.sql \
+  > "$ARTIFACT_DIR/03d_source_identities_rls_forward_apply.log" 2>&1
+source_identities_rls_forward_exit=$?
+echo "forward migration exit code: $source_identities_rls_forward_exit" \
+  | tee -a "$ARTIFACT_DIR/03d_source_identities_rls_forward_apply.log"
+[ "$source_identities_rls_forward_exit" -eq 0 ] || overall_status=1
+
+section "Re-running client_source_identities RLS forward migration"
+psql "$DB_URL" -v ON_ERROR_STOP=1 -X \
+  -f supabase/migrations/20260810000000_client_source_identities_rls.sql \
+  > "$ARTIFACT_DIR/03e_source_identities_rls_forward_rerun.log" 2>&1
+source_identities_rls_forward_rerun_exit=$?
+echo "forward migration re-run exit code: $source_identities_rls_forward_rerun_exit" \
+  | tee -a "$ARTIFACT_DIR/03e_source_identities_rls_forward_rerun.log"
+[ "$source_identities_rls_forward_rerun_exit" -eq 0 ] || overall_status=1
+
+if [ "$source_identities_rls_forward_exit" -ne 0 ] \
+   || [ "$source_identities_rls_forward_rerun_exit" -ne 0 ]; then
+  echo "client_source_identities RLS forward migration verification failed; skipping downstream tests." >&2
+  echo "$overall_status" > "$ARTIFACT_DIR/OVERALL_EXIT_CODE"
+  echo "source_identities_rls_forward_exit=$source_identities_rls_forward_exit source_identities_rls_forward_rerun_exit=$source_identities_rls_forward_rerun_exit" \
+    >> "$ARTIFACT_DIR/EXIT_CODE_SUMMARY.txt"
+  exit "$overall_status"
+fi
+
+# 20260726000000_canonical_clients.sql (applied above) already carries the
+# composite client_source_identities_user_id_client_id_fkey for fresh
+# installs, but that migration was already applied to hosted staging before
+# this fix existed — Supabase does not re-run an already-applied migration
+# file just because its contents changed. This standalone forward migration
+# replaces the original single-column client_id FK with the same composite
+# tenant-ownership pattern already proven by invoices_user_id_client_id_fkey,
+# so an already-migrated database actually receives it. Applied twice here
+# to prove it is genuinely idempotent against a database that already has
+# the constraint (the exact state the first apply below leaves it in,
+# identical to what a fresh install already has from
+# 20260726000000's own copy).
+section "Applying client_source_identities tenant FK forward migration"
+psql "$DB_URL" -v ON_ERROR_STOP=1 -X \
+  -f supabase/migrations/20260811000000_client_source_identities_tenant_fk.sql \
+  > "$ARTIFACT_DIR/03f_source_identities_tenant_fk_forward_apply.log" 2>&1
+source_identities_tenant_fk_forward_exit=$?
+echo "forward migration exit code: $source_identities_tenant_fk_forward_exit" \
+  | tee -a "$ARTIFACT_DIR/03f_source_identities_tenant_fk_forward_apply.log"
+[ "$source_identities_tenant_fk_forward_exit" -eq 0 ] || overall_status=1
+
+section "Re-running client_source_identities tenant FK forward migration"
+psql "$DB_URL" -v ON_ERROR_STOP=1 -X \
+  -f supabase/migrations/20260811000000_client_source_identities_tenant_fk.sql \
+  > "$ARTIFACT_DIR/03g_source_identities_tenant_fk_forward_rerun.log" 2>&1
+source_identities_tenant_fk_forward_rerun_exit=$?
+echo "forward migration re-run exit code: $source_identities_tenant_fk_forward_rerun_exit" \
+  | tee -a "$ARTIFACT_DIR/03g_source_identities_tenant_fk_forward_rerun.log"
+[ "$source_identities_tenant_fk_forward_rerun_exit" -eq 0 ] || overall_status=1
+
+if [ "$source_identities_tenant_fk_forward_exit" -ne 0 ] \
+   || [ "$source_identities_tenant_fk_forward_rerun_exit" -ne 0 ]; then
+  echo "client_source_identities tenant FK forward migration verification failed; skipping downstream tests." >&2
+  echo "$overall_status" > "$ARTIFACT_DIR/OVERALL_EXIT_CODE"
+  echo "source_identities_tenant_fk_forward_exit=$source_identities_tenant_fk_forward_exit source_identities_tenant_fk_forward_rerun_exit=$source_identities_tenant_fk_forward_rerun_exit" \
+    >> "$ARTIFACT_DIR/EXIT_CODE_SUMMARY.txt"
+  exit "$overall_status"
+fi
+
+# The two sections above only prove fresh-chain idempotency: the forward
+# migration applied to a database that started in the corrected shape. The
+# section below proves the actual hosted-staging transition: the exact old
+# single-column FK -> the exact new composite FK, including cross-tenant
+# and service-role behavior after the swap. It runs inside its own
+# begin/rollback transaction (see the setup file's header) so it cannot
+# leak into the DB_URL state the rest of this script depends on.
+section "Proving the exact hosted-staging transition (old FK -> forward migration -> new FK)"
+psql "$DB_URL" -v ON_ERROR_STOP=1 -X \
+  -f supabase/tests/client_source_identities_tenant_fk_transition_setup.sql \
+  -f supabase/migrations/20260811000000_client_source_identities_tenant_fk.sql \
+  -f supabase/migrations/20260811000000_client_source_identities_tenant_fk.sql \
+  -f supabase/tests/client_source_identities_tenant_fk_transition_assertions.sql \
+  > "$ARTIFACT_DIR/03h_source_identities_tenant_fk_hosted_transition.log" 2>&1
+hosted_transition_process_exit=$?
+hosted_transition_exit=1
+if [ "$hosted_transition_process_exit" -eq 0 ] \
+   && grep -q 'TEST GROUP PASS: source_identity_tenant_fk_hosted_transition' \
+      "$ARTIFACT_DIR/03h_source_identities_tenant_fk_hosted_transition.log"; then
+  hosted_transition_exit=0
+fi
+echo "hosted transition test process exit code: $hosted_transition_process_exit (test group gate: $hosted_transition_exit)" \
+  | tee -a "$ARTIFACT_DIR/03h_source_identities_tenant_fk_hosted_transition.log"
+[ "$hosted_transition_exit" -eq 0 ] || overall_status=1
+
+section "Proving the tenant FK forward migration fails closed on unexpected catalog drift"
+drift_scenarios=(
+  "duplicate_old|supabase/tests/client_source_identities_tenant_fk_drift_duplicate_old_setup.sql|matching the old single-column client_id -> clients(id) shape; expected at most one"
+  "wrong_old_definition|supabase/tests/client_source_identities_tenant_fk_drift_wrong_old_definition_setup.sql|does not match the expected old definition"
+  "unexpected_old_name|supabase/tests/client_source_identities_tenant_fk_drift_unexpected_old_name_setup.sql|not the expected \"client_source_identities_client_id_fkey\""
+  "wrong_new_definition|supabase/tests/client_source_identities_tenant_fk_drift_wrong_new_definition_setup.sql|does not match the required composite definition"
+)
+drift_tests_exit=0
+drift_index=0
+for drift_scenario in "${drift_scenarios[@]}"; do
+  drift_index=$((drift_index + 1))
+  drift_name="${drift_scenario%%|*}"
+  drift_rest="${drift_scenario#*|}"
+  drift_setup_file="${drift_rest%%|*}"
+  drift_message="${drift_rest#*|}"
+  drift_log="$ARTIFACT_DIR/03i_${drift_index}_drift_${drift_name}.log"
+
+  psql "$DB_URL" -v ON_ERROR_STOP=1 -X \
+    -f "$drift_setup_file" \
+    -f supabase/migrations/20260811000000_client_source_identities_tenant_fk.sql \
+    > "$drift_log" 2>&1
+  drift_process_exit=$?
+
+  drift_scenario_pass=1
+  if [ "$drift_process_exit" -eq 0 ]; then
+    drift_scenario_pass=0
+  elif ! grep -qF "$drift_message" "$drift_log"; then
+    drift_scenario_pass=0
+  fi
+
+  drift_state=$(psql "$DB_URL" -v ON_ERROR_STOP=1 -X -t -A -F',' <<'SQL'
+select
+  (select count(*) from pg_constraint
+    where conrelid = 'public.client_source_identities'::regclass and contype = 'f'
+      and confrelid = 'public.clients'::regclass
+      and conname = 'client_source_identities_user_id_client_id_fkey'
+      and pg_get_constraintdef(oid) = 'FOREIGN KEY (user_id, client_id) REFERENCES clients(user_id, id) ON DELETE CASCADE'
+      and convalidated),
+  -- Scoped to FKs referencing clients specifically: client_source_identities
+  -- also carries its own unrelated, legitimate user_id -> auth.users(id) FK,
+  -- which must not be counted here.
+  (select count(*) from pg_constraint
+    where conrelid = 'public.client_source_identities'::regclass and contype = 'f'
+      and confrelid = 'public.clients'::regclass);
+SQL
+)
+  IFS=',' read -r drift_composite_ok drift_total_fk_count <<< "$drift_state"
+  if [ "${drift_composite_ok:-0}" != "1" ] || [ "${drift_total_fk_count:-0}" != "1" ]; then
+    drift_scenario_pass=0
+  fi
+
+  {
+    echo "drift_scenario=$drift_name"
+    echo "drift_setup_file=$drift_setup_file"
+    echo "drift_process_exit=$drift_process_exit"
+    echo "drift_composite_ok_after_attempt=${drift_composite_ok:-?}"
+    echo "drift_total_fk_count_after_attempt=${drift_total_fk_count:-?}"
+    echo "drift_scenario_pass=$drift_scenario_pass"
+  } >> "$drift_log"
+
+  [ "$drift_scenario_pass" -eq 1 ] || drift_tests_exit=1
+done
+echo "drift negative-test suite gate: $drift_tests_exit" \
+  >> "$ARTIFACT_DIR/03i_drift_summary.log"
+[ "$drift_tests_exit" -eq 0 ] || overall_status=1
+
 section "Verifying migration backfill and identity boundaries"
 psql "$DB_URL" -v ON_ERROR_STOP=1 -X <<'SQL' \
   > "$ARTIFACT_DIR/04_migration_backfill.log" 2>&1
@@ -273,6 +441,8 @@ integration_relationships_exit=1
 invoice_client_tenant_exit=1
 tenant_isolation_exit=1
 idempotency_exit=1
+source_identity_rls_exit=1
+source_identity_tenant_fk_exit=1
 grep -q 'TEST GROUP PASS: integration_relationships' "$ARTIFACT_DIR/06_integration_test.log" \
   && integration_relationships_exit=0
 grep -q 'TEST GROUP PASS: invoice_client_tenant_invariant' "$ARTIFACT_DIR/06_integration_test.log" \
@@ -281,10 +451,16 @@ grep -q 'TEST GROUP PASS: tenant_isolation' "$ARTIFACT_DIR/06_integration_test.l
   && tenant_isolation_exit=0
 grep -q 'TEST GROUP PASS: resolver_idempotency' "$ARTIFACT_DIR/06_integration_test.log" \
   && idempotency_exit=0
+grep -q 'TEST GROUP PASS: source_identity_rls' "$ARTIFACT_DIR/06_integration_test.log" \
+  && source_identity_rls_exit=0
+grep -q 'TEST GROUP PASS: source_identity_tenant_fk' "$ARTIFACT_DIR/06_integration_test.log" \
+  && source_identity_tenant_fk_exit=0
 if [ "$integration_relationships_exit" -ne 0 ] \
    || [ "$invoice_client_tenant_exit" -ne 0 ] \
    || [ "$tenant_isolation_exit" -ne 0 ] \
-   || [ "$idempotency_exit" -ne 0 ]; then
+   || [ "$idempotency_exit" -ne 0 ] \
+   || [ "$source_identity_rls_exit" -ne 0 ] \
+   || [ "$source_identity_tenant_fk_exit" -ne 0 ]; then
   overall_status=1
 fi
 
@@ -301,15 +477,23 @@ select
     'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2'::uuid,
     'cccccccc-cccc-4ccc-8ccc-ccccccccccc3'::uuid,
     'faaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1'::uuid,
-    'fbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2'::uuid
+    'fbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2'::uuid,
+    'fc0a0000-0000-4000-8000-0000fc0a0001'::uuid,
+    'fc0b0000-0000-4000-8000-0000fc0b0002'::uuid
   ) or email = 'phase0-test@example.test'),
   (select count(*) from public.clients where user_id in (
     'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1'::uuid,
     'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2'::uuid,
     'cccccccc-cccc-4ccc-8ccc-ccccccccccc3'::uuid,
     'faaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1'::uuid,
-    'fbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2'::uuid
-  ) or email = 'billing@example.test'),
+    'fbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2'::uuid,
+    'fc0a0000-0000-4000-8000-0000fc0a0001'::uuid,
+    'fc0b0000-0000-4000-8000-0000fc0b0002'::uuid
+  ) or email = 'billing@example.test'
+    or id in (
+      'fc0a1000-0000-4000-8000-0000fc0a1001'::uuid,
+      'fc0b1000-0000-4000-8000-0000fc0b1002'::uuid
+    )),
   (select count(*) from public.invoices where user_id in (
     'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1'::uuid,
     'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2'::uuid,
@@ -320,7 +504,13 @@ select
   (select count(*) from public.client_source_identities where user_id in (
     'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1'::uuid,
     'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2'::uuid,
-    'cccccccc-cccc-4ccc-8ccc-ccccccccccc3'::uuid)),
+    'cccccccc-cccc-4ccc-8ccc-ccccccccccc3'::uuid,
+    'fc0a0000-0000-4000-8000-0000fc0a0001'::uuid,
+    'fc0b0000-0000-4000-8000-0000fc0b0002'::uuid
+  ) or client_id in (
+    'fc0a1000-0000-4000-8000-0000fc0a1001'::uuid,
+    'fc0b1000-0000-4000-8000-0000fc0b1002'::uuid
+  )),
   (select count(*) from public.client_dedup_runs where user_id in (
     'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1'::uuid,
     'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2'::uuid,
@@ -359,10 +549,10 @@ if [ "$rollback_query_exit" -ne 0 ] \
   overall_status=1
 fi
 {
-  echo "leftover_users=${leftover_users:-?}"
-  echo "leftover_clients=${leftover_clients:-?}"
+  echo "leftover_users=${leftover_users:-?} (includes fc0a0000.../fc0b0000... from the source_identity_tenant_fk test group)"
+  echo "leftover_clients=${leftover_clients:-?} (includes fc0a1000.../fc0b1000... from the source_identity_tenant_fk test group)"
   echo "leftover_invoices=${leftover_invoices:-?}"
-  echo "leftover_source_identities=${leftover_sources:-?}"
+  echo "leftover_source_identities=${leftover_sources:-?} (includes rows keyed by fc0a.../fc0b... user_id or client_id from the source_identity_tenant_fk test group)"
   echo "leftover_runs=${leftover_runs:-?}"
   echo "leftover_candidates=${leftover_candidates:-?}"
   echo "leftover_audit=${leftover_audit:-?}"
@@ -398,7 +588,7 @@ echo "$FK_WARNING" >> "$ARTIFACT_DIR/09_fk_smoke_check.log"
 [ "$fk_exit" -eq 0 ] || overall_status=1
 
 echo "$overall_status" > "$ARTIFACT_DIR/OVERALL_EXIT_CODE"
-echo "schema_exit=$schema_exit preseed_exit=$preseed_exit migration_exit=$migration_exit tenant_preflight_exit=$tenant_preflight_exit tenant_correction_exit=$tenant_correction_exit tenant_correction_rerun_exit=$tenant_correction_rerun_exit backfill_exit=$backfill_exit precleanup_exit=$precleanup_exit integration_exit=$integration_exit integration_relationships_exit=$integration_relationships_exit invoice_client_tenant_exit=$invoice_client_tenant_exit tenant_isolation_exit=$tenant_isolation_exit idempotency_exit=$idempotency_exit rollback_clean=$rollback_clean authenticated_clients_select_before_test=${authenticated_clients_select_before_test:-unknown} authenticated_clients_select_after_test=${authenticated_clients_select_after_test:-unknown} test_clients_grant_rolled_back=$test_clients_grant_rolled_back execution_enabled_after_test=${exec_enabled_after:-unknown} legacy_dedupe_exit=$legacy_dedupe_exit fk_exit=$fk_exit" \
+echo "schema_exit=$schema_exit preseed_exit=$preseed_exit migration_exit=$migration_exit tenant_preflight_exit=$tenant_preflight_exit tenant_correction_exit=$tenant_correction_exit tenant_correction_rerun_exit=$tenant_correction_rerun_exit source_identities_rls_forward_exit=$source_identities_rls_forward_exit source_identities_rls_forward_rerun_exit=$source_identities_rls_forward_rerun_exit source_identities_tenant_fk_forward_exit=$source_identities_tenant_fk_forward_exit source_identities_tenant_fk_forward_rerun_exit=$source_identities_tenant_fk_forward_rerun_exit hosted_transition_exit=$hosted_transition_exit drift_tests_exit=$drift_tests_exit backfill_exit=$backfill_exit precleanup_exit=$precleanup_exit integration_exit=$integration_exit integration_relationships_exit=$integration_relationships_exit invoice_client_tenant_exit=$invoice_client_tenant_exit tenant_isolation_exit=$tenant_isolation_exit idempotency_exit=$idempotency_exit source_identity_rls_exit=$source_identity_rls_exit source_identity_tenant_fk_exit=$source_identity_tenant_fk_exit rollback_clean=$rollback_clean authenticated_clients_select_before_test=${authenticated_clients_select_before_test:-unknown} authenticated_clients_select_after_test=${authenticated_clients_select_after_test:-unknown} test_clients_grant_rolled_back=$test_clients_grant_rolled_back execution_enabled_after_test=${exec_enabled_after:-unknown} legacy_dedupe_exit=$legacy_dedupe_exit fk_exit=$fk_exit" \
   >> "$ARTIFACT_DIR/EXIT_CODE_SUMMARY.txt"
 
 exit "$overall_status"

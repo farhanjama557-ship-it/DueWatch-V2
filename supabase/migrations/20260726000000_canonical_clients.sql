@@ -87,15 +87,38 @@ create trigger clients_set_identity_fields
   before insert or update of name, email, phone, company, canonical_id
   on public.clients for each row execute function public.set_client_identity_fields();
 
+-- PostgreSQL requires the referenced composite columns to be covered by a
+-- non-partial unique index. clients.id remains the primary key, so this adds
+-- no new identity semantics; it makes (user_id, id) a valid FK target. Also
+-- (re)created, idempotently, by 20260803021842_enforce_invoice_client_tenant_
+-- ownership.sql for the invoices FK — creating it here too, ahead of that
+-- migration, is what lets client_source_identities be born with the same
+-- tenant-safe FK shape on a fresh install instead of only gaining it later.
+create unique index if not exists clients_user_id_id_uidx
+  on public.clients(user_id, id);
+
+-- A single-column client_id FK only proves the referenced client exists —
+-- not that it belongs to the same tenant as user_id. An authenticated
+-- caller could satisfy RLS's `auth.uid() = user_id` check while pointing
+-- client_id at a different tenant's client, and PostgreSQL would accept it.
+-- The composite FK below is the same tenant-ownership pattern already used
+-- by invoices_user_id_client_id_fkey: it proves both that the client exists
+-- and that it belongs to user_id, enforced for every role (including ones
+-- that bypass RLS), not just the authenticated insert/update paths.
 create table if not exists public.client_source_identities (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
-  client_id uuid not null references public.clients(id) on delete cascade,
+  client_id uuid not null,
   source text not null,
   external_id text not null,
   provenance jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
-  unique(user_id, source, external_id)
+  unique(user_id, source, external_id),
+  constraint client_source_identities_user_id_client_id_fkey
+    foreign key (user_id, client_id)
+    references public.clients(user_id, id)
+    on update no action
+    on delete cascade
 );
 create index if not exists client_source_identities_client_idx
   on public.client_source_identities(client_id);
@@ -105,6 +128,32 @@ drop policy if exists "client_source_identities_select_own"
 create policy "client_source_identities_select_own"
   on public.client_source_identities for select to authenticated
   using ((select auth.uid()) is not null and (select auth.uid()) = user_id);
+
+-- resolve_or_create_client() runs security invoker, so an authenticated
+-- caller's own insert/upsert into this table is subject to RLS directly.
+-- Table privileges already permit insert/update, but with RLS enabled and
+-- only a select-own policy present, RLS denied every insert by default —
+-- the hosted-staging failure on the source-identity path. These two
+-- policies scope insert/update to the caller's own rows, matching the
+-- select-own policy and the table's tenant-scoped
+-- unique(user_id, source, external_id) constraint.
+drop policy if exists "client_source_identities_insert_own"
+  on public.client_source_identities;
+create policy "client_source_identities_insert_own"
+  on public.client_source_identities
+  for insert
+  to authenticated
+  with check ((select auth.uid()) is not null and (select auth.uid()) = user_id);
+
+drop policy if exists "client_source_identities_update_own"
+  on public.client_source_identities;
+create policy "client_source_identities_update_own"
+  on public.client_source_identities
+  for update
+  to authenticated
+  using ((select auth.uid()) is not null and (select auth.uid()) = user_id)
+  with check ((select auth.uid()) is not null and (select auth.uid()) = user_id);
+
 grant select on public.client_source_identities to authenticated;
 grant select, insert, update, delete on public.client_source_identities to service_role;
 
