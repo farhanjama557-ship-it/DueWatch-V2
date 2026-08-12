@@ -61,9 +61,10 @@ export default function ExecuteStep({ phase, progress, error, onCancel, canCance
       )}
 
       {isTerminal && (
-        <Link to="/invoices" className="btn-terracotta btn-inline">
-          Go to Invoices
-        </Link>
+        <div className="import-detail-actions">
+          {progress?.runId && <Link to={`/imports/${progress.runId}`} className="btn-outline btn-inline">View import details</Link>}
+          <Link to="/invoices" className="btn-terracotta btn-inline">Go to Invoices</Link>
+        </div>
       )}
     </div>
   )
