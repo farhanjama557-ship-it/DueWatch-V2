@@ -17,6 +17,7 @@ import {
   buildImportIdempotencyKey,
   runImportToCompletion,
 } from '../lib/importPersistence/importPersistenceClient.js'
+import { runSingleFlight } from '../lib/importPersistence/singleFlight.js'
 import importHeroImg from '../assets/duewatch-import-hero.svg'
 import StepProgress from '../components/import/StepProgress.jsx'
 import UploadStep from '../components/import/UploadStep.jsx'
@@ -83,6 +84,7 @@ export default function Import() {
   const [executeError, setExecuteError] = useState(null)
   const cancelRequestedRef = useRef(false)
   const continuationActiveRef = useRef(true)
+  const startImportInFlightRef = useRef(false)
 
   useEffect(() => {
     continuationActiveRef.current = true
@@ -243,44 +245,46 @@ export default function Import() {
   // that begins real persistence. Nothing about the preview flow above
   // changes because this exists.
   async function handleStartImport(warningsAcknowledged) {
-    if (!user?.id) {
-      setExecuteError(new Error('You must be signed in to start an import.'))
-      setExecutePhase('error')
-      goTo('execute')
-      return
-    }
-    cancelRequestedRef.current = false
-    setExecuteError(null)
-    setExecuteProgress(null)
-    setExecutePhase('starting')
-    goTo('execute')
-    try {
-      const requestRows = buildRunRequestRows(s.normalizeResult.rows)
-      const idempotencyKey = await buildImportIdempotencyKey(user.id, requestRows, warningsAcknowledged)
-      const finalProgress = await runImportToCompletion({
-        userId: user.id,
-        idempotencyKey,
-        rows: requestRows,
-        warningsAcknowledged,
-        onProgress: (p) => {
-          if (!continuationActiveRef.current) return
-          setExecuteProgress(p)
-          setExecutePhase(p.batchFailedReason ? 'batch_failed' : p.status)
-        },
-        isCancelRequested: () => cancelRequestedRef.current,
-        shouldContinue: () => continuationActiveRef.current,
-      })
-      if (!continuationActiveRef.current) return
-      setExecuteProgress(finalProgress)
-      setExecutePhase(
-        finalProgress.batchFailedReason ? 'batch_failed' : finalProgress.stalled ? 'stalled' : finalProgress.status
-      )
-    } catch (err) {
-      if (continuationActiveRef.current) {
-        setExecuteError(err)
+    return runSingleFlight(startImportInFlightRef, async () => {
+      if (!user?.id) {
+        setExecuteError(new Error('You must be signed in to start an import.'))
         setExecutePhase('error')
+        goTo('execute')
+        return
       }
-    }
+      cancelRequestedRef.current = false
+      setExecuteError(null)
+      setExecuteProgress(null)
+      setExecutePhase('starting')
+      goTo('execute')
+      try {
+        const requestRows = buildRunRequestRows(s.normalizeResult.rows)
+        const idempotencyKey = await buildImportIdempotencyKey(user.id, requestRows, warningsAcknowledged)
+        const finalProgress = await runImportToCompletion({
+          userId: user.id,
+          idempotencyKey,
+          rows: requestRows,
+          warningsAcknowledged,
+          onProgress: (p) => {
+            if (!continuationActiveRef.current) return
+            setExecuteProgress(p)
+            setExecutePhase(p.batchFailedReason ? 'batch_failed' : p.status)
+          },
+          isCancelRequested: () => cancelRequestedRef.current,
+          shouldContinue: () => continuationActiveRef.current,
+        })
+        if (!continuationActiveRef.current) return
+        setExecuteProgress(finalProgress)
+        setExecutePhase(
+          finalProgress.batchFailedReason ? 'batch_failed' : finalProgress.stalled ? 'stalled' : finalProgress.status
+        )
+      } catch (err) {
+        if (continuationActiveRef.current) {
+          setExecuteError(err)
+          setExecutePhase('error')
+        }
+      }
+    })
   }
 
   function handleCancelImport() {

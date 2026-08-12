@@ -94,6 +94,7 @@ export default function ImportRunDetail() {
     setError(null)
     try {
       await continueImportRunToCompletion({
+        userId: user.id,
         runId,
         shouldContinue: () => activeRef.current,
         onProgress: (progress) => {

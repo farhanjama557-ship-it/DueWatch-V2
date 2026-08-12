@@ -9,6 +9,10 @@ import {
   driveNewImportToCompletion,
   continueExistingImportToCompletion,
 } from './importContinuation.js'
+import {
+  getRunProgress as readRunProgress,
+  getRunRowCounts as readRunRowCounts,
+} from './importProgress.js'
 
 export { buildRunRequestRows, buildImportIdempotencyKey } from './requestShape.js'
 
@@ -46,46 +50,12 @@ export async function requestImportCancellation(runId) {
 // made at start_import_run time; rows can also become blocked later,
 // during batch execution — e.g. AMBIGUOUS_CLIENT_IDENTITY or
 // INVOICE_MATERIAL_CONFLICT — and a stale read would under-report them).
-async function countRunRows(database, runId, status, userId) {
-  let query = database
-    .from('import_rows')
-    .select('id', { count: 'exact', head: true })
-    .eq('run_id', runId)
-    .eq('server_status', status)
-  if (userId) query = query.eq('user_id', userId)
-  const { count, error } = await query
-  if (error) throw error
-  return count ?? 0
+export async function getRunRowCounts({ userId, runId, database = supabase }) {
+  return readRunRowCounts({ userId, runId, database })
 }
 
-export async function getRunRowCounts(runId, database = supabase, userId = null) {
-  const [committedRows, blockedRows, pendingRows, failedRows] = await Promise.all([
-    countRunRows(database, runId, 'committed', userId),
-    countRunRows(database, runId, 'blocked', userId),
-    countRunRows(database, runId, 'pending', userId),
-    countRunRows(database, runId, 'failed', userId),
-  ])
-  return { committedRows, blockedRows, pendingRows, failedRows }
-}
-
-export async function getRunProgress(runId, database = supabase) {
-  const { data: run, error: runError } = await database
-    .from('import_runs')
-    .select('id, status, total_rows, eligible_rows, cancel_requested_at')
-    .eq('id', runId)
-    .single()
-  if (runError) throw runError
-
-  const counts = await getRunRowCounts(runId, database)
-
-  return {
-    runId: run.id,
-    status: run.status,
-    totalRows: run.total_rows,
-    eligibleAtSubmission: run.eligible_rows,
-    ...counts,
-    cancelRequested: run.cancel_requested_at != null,
-  }
+export async function getRunProgress({ userId, runId, database = supabase }) {
+  return readRunProgress({ userId, runId, database })
 }
 
 export async function listImportRuns({ userId, page = 0, pageSize = 20, database = supabase }) {
@@ -105,7 +75,7 @@ export async function listImportRuns({ userId, page = 0, pageSize = 20, database
 
   return Promise.all((data || []).map(async (run) => ({
     ...run,
-    ...(await getRunRowCounts(run.id, database, userId)),
+    ...(await getRunRowCounts({ userId, runId: run.id, database })),
   })))
 }
 
@@ -164,7 +134,7 @@ export async function getImportRunDetail({ userId, runId, database = supabase })
       runId,
       orderColumn: 'batch_index',
     }),
-    getRunRowCounts(runId, database, userId),
+    getRunRowCounts({ userId, runId, database }),
   ])
 
   return {
@@ -209,19 +179,20 @@ export async function runImportToCompletion({
     isCancelRequested,
     shouldContinue,
     startRun: startImportRun,
-    getProgress: getRunProgress,
+    getProgress: (runId) => getRunProgress({ userId, runId }),
     processBatch: processImportBatch,
     requestCancellation: requestImportCancellation,
   })
 }
 
-export async function continueImportRunToCompletion({ runId, batchSize, onProgress, shouldContinue }) {
+export async function continueImportRunToCompletion({ userId, runId, batchSize, onProgress, shouldContinue }) {
+  if (!userId || !runId) throw new Error('Import run not found.')
   return continueExistingImportToCompletion({
     runId,
     batchSize,
     onProgress,
     shouldContinue,
-    getProgress: getRunProgress,
+    getProgress: (existingRunId) => getRunProgress({ userId, runId: existingRunId }),
     processBatch: processImportBatch,
   })
 }

@@ -5,11 +5,19 @@ import { readFile } from 'node:fs/promises'
 const clientSource = await readFile(new URL('../../src/lib/importPersistence/importPersistenceClient.js', import.meta.url), 'utf8')
 const appSource = await readFile(new URL('../../src/App.jsx', import.meta.url), 'utf8')
 const detailSource = await readFile(new URL('../../src/pages/ImportRunDetail.jsx', import.meta.url), 'utf8')
+const progressSource = await readFile(new URL('../../src/lib/importPersistence/importProgress.js', import.meta.url), 'utf8')
 
 test('history and detail reads explicitly scope browser queries to the signed-in user', () => {
   assert.match(clientSource, /listImportRuns[\s\S]*?\.eq\('user_id', userId\)/)
   assert.match(clientSource, /getImportRunDetail[\s\S]*?\.eq\('user_id', userId\)/)
   assert.match(clientSource, /selectAllForRun[\s\S]*?\.eq\('user_id', userId\)/)
+  assert.match(progressSource, /getRunProgress[\s\S]*?\.eq\('user_id', userId\)/)
+})
+
+test('new and resumed progress polling both thread the authenticated tenant identity', () => {
+  assert.match(clientSource, /runImportToCompletion[\s\S]*?getProgress: \(runId\) => getRunProgress\(\{ userId, runId \}\)/)
+  assert.match(clientSource, /continueImportRunToCompletion[\s\S]*?getProgress: \(existingRunId\) => getRunProgress\(\{ userId, runId: existingRunId \}\)/)
+  assert.match(detailSource, /continueImportRunToCompletion\(\{\s*userId: user\.id,/)
 })
 
 test('history is bounded, deterministic, paginated, and accepts an empty result', () => {
