@@ -1736,3 +1736,297 @@ test('review-fix2 MEDIUM2-6: ambiguous precedence at revalidation time also fail
   assert.equal(revalidated.outcome, REVALIDATION_OUTCOMES.AMBIGUOUS_RULE_PRECEDENCE)
   assert.equal(revalidated.authority.authorized, false)
 })
+
+// =======================================================================
+// PART 4 -- third (final) review-fix regression tests (independent
+// adversarial re-review of candidate c68a1902ff97e66c53b36c29b37f00afb584d11c:
+// 0 blocker, 1 high, 1 medium).
+// =======================================================================
+
+// --- HIGH (third pass): malformed same-tenant competing policy must fail closed ---
+
+test('review-fix3 HIGH-A: an earlier-precedence malformed rule (bad tone) fails the whole evaluation closed, even though a later valid rule matches', () => {
+  const invoice = baseInvoice({ due_date: isoDateDaysFromNow(NOW, -20) })
+  const ruleA = baseRule({ id: 'rule-a', sort_order: 1, trigger_days: 15, tone: 'aggressive' }) // malformed tone
+  const ruleB = baseRule({ id: 'rule-b', sort_order: 2, trigger_days: 15, tone: 'firm' }) // valid, matches
+
+  const result = evaluateNextActionAuthority({
+    userId: USER_A,
+    invoice,
+    rules: [ruleA, ruleB],
+    autopilotSettings: null,
+    events: [],
+    ...emptyHistory(),
+    now: NOW,
+  })
+
+  assert.equal(result.recommendation, null)
+  assert.equal(result.authority.authorized, false)
+  assert.equal(result.authority.blockedReason, AUTHORITY_BLOCK_REASONS.MALFORMED_RULE_STATE)
+})
+
+test('review-fix3 HIGH-B: reversing the raw array order produces the same fail-closed result', () => {
+  const invoice = baseInvoice({ due_date: isoDateDaysFromNow(NOW, -20) })
+  const ruleA = baseRule({ id: 'rule-a', sort_order: 1, trigger_days: 15, tone: 'aggressive' })
+  const ruleB = baseRule({ id: 'rule-b', sort_order: 2, trigger_days: 15, tone: 'firm' })
+
+  const forward = evaluateNextActionAuthority({
+    userId: USER_A,
+    invoice,
+    rules: [ruleA, ruleB],
+    autopilotSettings: null,
+    events: [],
+    ...emptyHistory(),
+    now: NOW,
+  })
+  const reversed = evaluateNextActionAuthority({
+    userId: USER_A,
+    invoice,
+    rules: [ruleB, ruleA],
+    autopilotSettings: null,
+    events: [],
+    ...emptyHistory(),
+    now: NOW,
+  })
+
+  assert.equal(forward.authority.authorized, false)
+  assert.equal(reversed.authority.authorized, false)
+  assert.equal(forward.authority.blockedReason, AUTHORITY_BLOCK_REASONS.MALFORMED_RULE_STATE)
+  assert.equal(reversed.authority.blockedReason, AUTHORITY_BLOCK_REASONS.MALFORMED_RULE_STATE)
+})
+
+test('review-fix3 HIGH-C: a malformed rule missing sort_order entirely fails closed -- precedence cannot be established', () => {
+  const invoice = baseInvoice({ due_date: isoDateDaysFromNow(NOW, -20) })
+  const malformedNoSortOrder = {
+    id: 'rule-nosort',
+    user_id: USER_A,
+    name: 'Broken',
+    trigger_type: 'after_due',
+    trigger_days: 15,
+    tone: 'firm',
+    enabled: true,
+    // sort_order intentionally omitted
+  }
+  const validLater = baseRule({ id: 'rule-valid', sort_order: 5, trigger_days: 15 })
+  assert.equal(isWellFormedRule(malformedNoSortOrder), false)
+
+  const result = evaluateNextActionAuthority({
+    userId: USER_A,
+    invoice,
+    rules: [malformedNoSortOrder, validLater],
+    autopilotSettings: null,
+    events: [],
+    ...emptyHistory(),
+    now: NOW,
+  })
+
+  assert.equal(result.authority.authorized, false)
+  assert.equal(result.authority.blockedReason, AUTHORITY_BLOCK_REASONS.MALFORMED_RULE_STATE)
+})
+
+test('review-fix3 HIGH-D: a malformed rule with an unreadable enabled state fails closed', () => {
+  const invoice = baseInvoice({ due_date: isoDateDaysFromNow(NOW, -20) })
+  const malformedEnabled = baseRule({ id: 'rule-badenabled', sort_order: 1, trigger_days: 15 })
+  malformedEnabled.enabled = 'yes' // not a boolean -- cannot be proven false
+  const validLater = baseRule({ id: 'rule-valid', sort_order: 5, trigger_days: 15 })
+  assert.equal(isWellFormedRule(malformedEnabled), false)
+
+  const result = evaluateNextActionAuthority({
+    userId: USER_A,
+    invoice,
+    rules: [malformedEnabled, validLater],
+    autopilotSettings: null,
+    events: [],
+    ...emptyHistory(),
+    now: NOW,
+  })
+
+  assert.equal(result.authority.authorized, false)
+  assert.equal(result.authority.blockedReason, AUTHORITY_BLOCK_REASONS.MALFORMED_RULE_STATE)
+})
+
+test('review-fix3 HIGH-E: a malformed rule that is UNAMBIGUOUSLY disabled does not block an otherwise-valid rule', () => {
+  const invoice = baseInvoice({ due_date: isoDateDaysFromNow(NOW, -20) })
+  // Malformed tone, but enabled is reliably the literal boolean false --
+  // it can never participate in selection regardless of its other broken
+  // fields, so it must not block rule-valid.
+  const disabledMalformed = baseRule({
+    id: 'rule-disabled-malformed',
+    sort_order: 1,
+    trigger_days: 15,
+    tone: 'aggressive',
+    enabled: false,
+  })
+  const validRule = baseRule({ id: 'rule-valid', sort_order: 5, trigger_days: 15 })
+  assert.equal(isWellFormedRule(disabledMalformed), false)
+
+  const result = evaluateNextActionAuthority({
+    userId: USER_A,
+    invoice,
+    rules: [disabledMalformed, validRule],
+    autopilotSettings: null,
+    events: [],
+    ...emptyHistory(),
+    now: NOW,
+  })
+
+  assert.equal(result.authority.authorized, true)
+  assert.equal(result.authority.basis.ruleId, 'rule-valid')
+})
+
+test('review-fix3 HIGH-F: a cross-tenant malformed rule does not leak or block tenant A policy', () => {
+  const invoice = baseInvoice({ user_id: USER_A, due_date: isoDateDaysFromNow(NOW, -20) })
+  const crossTenantMalformed = baseRule({
+    id: 'rule-other-tenant-malformed',
+    user_id: USER_B,
+    sort_order: 1,
+    trigger_days: 15,
+    tone: 'aggressive', // malformed, but belongs to a different tenant entirely
+  })
+  const validRule = baseRule({ id: 'rule-valid', user_id: USER_A, sort_order: 5, trigger_days: 15 })
+
+  const result = evaluateNextActionAuthority({
+    userId: USER_A,
+    invoice,
+    rules: [crossTenantMalformed, validRule],
+    autopilotSettings: null,
+    events: [],
+    ...emptyHistory(),
+    now: NOW,
+  })
+
+  assert.equal(result.authority.authorized, true)
+  assert.equal(result.authority.basis.ruleId, 'rule-valid')
+})
+
+test('review-fix3 HIGH-G: revalidation stales prior valid authority once a malformed earlier same-tenant rule appears', () => {
+  const invoice = baseInvoice({ due_date: isoDateDaysFromNow(NOW, -20) })
+  const ruleB = baseRule({ id: 'rule-b', sort_order: 5, trigger_days: 15 })
+  const evaluated = evaluateNextActionAuthority({
+    userId: USER_A,
+    invoice,
+    rules: [ruleB],
+    autopilotSettings: null,
+    events: [],
+    ...emptyHistory(),
+    now: NOW,
+  })
+  assert.equal(evaluated.authority.authorized, true)
+  assert.equal(evaluated.authority.basis.ruleId, 'rule-b')
+
+  // A new, earlier-precedence, malformed (unreadable enabled state) rule
+  // now exists for the same tenant.
+  const newMalformedRule = baseRule({ id: 'rule-a-new', sort_order: 1, trigger_days: 15 })
+  newMalformedRule.enabled = 'yes'
+
+  const revalidated = revalidateAuthority({
+    userId: USER_A,
+    priorAuthority: evaluated.authority,
+    invoice,
+    currentRules: [newMalformedRule, ruleB],
+    currentAutopilotSettings: null,
+    currentEvents: [],
+    ...emptyCurrentHistory(),
+    now: NOW,
+  })
+
+  assert.equal(revalidated.outcome, REVALIDATION_OUTCOMES.MALFORMED_RULE_STATE)
+  assert.equal(revalidated.authority.authorized, false)
+})
+
+// --- MEDIUM (third pass): requiresApproval must also be tenant-bound ---
+
+test('review-fix3 MEDIUM-1: wrong-tenant settings with approval_required: false cannot produce requiresApproval: false', () => {
+  const invoice = baseInvoice({ due_date: isoDateDaysFromNow(NOW, -20) })
+  const rule = baseRule({ id: 'rule-1', trigger_days: 15 })
+  const result = evaluateNextActionAuthority({
+    userId: USER_A,
+    invoice,
+    rules: [rule],
+    autopilotSettings: { user_id: USER_B, enabled: true, approval_required: false },
+    events: [],
+    ...emptyHistory(),
+    now: NOW,
+  })
+
+  assert.notEqual(result.permission.requiresApproval, false)
+  assert.equal(result.permission.canActAutomatically, false)
+})
+
+test('review-fix3 MEDIUM-2: settings with a missing user_id and approval_required: false cannot produce requiresApproval: false', () => {
+  const invoice = baseInvoice({ due_date: isoDateDaysFromNow(NOW, -20) })
+  const rule = baseRule({ id: 'rule-1', trigger_days: 15 })
+  const result = evaluateNextActionAuthority({
+    userId: USER_A,
+    invoice,
+    rules: [rule],
+    autopilotSettings: { enabled: true, approval_required: false }, // no user_id
+    events: [],
+    ...emptyHistory(),
+    now: NOW,
+  })
+
+  assert.notEqual(result.permission.requiresApproval, false)
+  assert.equal(result.permission.canActAutomatically, false)
+})
+
+test('review-fix3 MEDIUM-3: correct tenant settings with approval_required: false produce requiresApproval: false and canActAutomatically: true when otherwise permitted', () => {
+  const invoice = baseInvoice({ due_date: isoDateDaysFromNow(NOW, -20) })
+  const rule = baseRule({ id: 'rule-1', trigger_days: 15 })
+  const result = evaluateNextActionAuthority({
+    userId: USER_A,
+    invoice,
+    rules: [rule],
+    autopilotSettings: { user_id: USER_A, enabled: true, approval_required: false },
+    events: [],
+    ...emptyHistory(),
+    now: NOW,
+  })
+
+  assert.equal(result.permission.requiresApproval, false)
+  assert.equal(result.permission.canActAutomatically, true)
+})
+
+test('review-fix3 MEDIUM-4: revalidation applies the same safe requiresApproval behavior', () => {
+  const invoice = baseInvoice({ due_date: isoDateDaysFromNow(NOW, -20) })
+  const rule = baseRule({ id: 'rule-1', trigger_days: 15 })
+  const evaluated = evaluateNextActionAuthority({
+    userId: USER_A,
+    invoice,
+    rules: [rule],
+    autopilotSettings: { user_id: USER_A, enabled: true, approval_required: false },
+    events: [],
+    ...emptyHistory(),
+    now: NOW,
+  })
+  assert.equal(evaluated.permission.requiresApproval, false)
+  assert.equal(evaluated.permission.canActAutomatically, true)
+
+  const revalidatedWrongTenant = revalidateAuthority({
+    userId: USER_A,
+    priorAuthority: evaluated.authority,
+    invoice,
+    currentRules: [rule],
+    currentAutopilotSettings: { user_id: USER_B, enabled: true, approval_required: false },
+    currentEvents: [],
+    ...emptyCurrentHistory(),
+    now: NOW,
+  })
+  assert.equal(revalidatedWrongTenant.outcome, REVALIDATION_OUTCOMES.VALID)
+  assert.notEqual(revalidatedWrongTenant.permission.requiresApproval, false)
+  assert.equal(revalidatedWrongTenant.permission.canActAutomatically, false)
+
+  const revalidatedMissingOwnership = revalidateAuthority({
+    userId: USER_A,
+    priorAuthority: evaluated.authority,
+    invoice,
+    currentRules: [rule],
+    currentAutopilotSettings: { enabled: true, approval_required: false },
+    currentEvents: [],
+    ...emptyCurrentHistory(),
+    now: NOW,
+  })
+  assert.equal(revalidatedMissingOwnership.outcome, REVALIDATION_OUTCOMES.VALID)
+  assert.notEqual(revalidatedMissingOwnership.permission.requiresApproval, false)
+  assert.equal(revalidatedMissingOwnership.permission.canActAutomatically, false)
+})

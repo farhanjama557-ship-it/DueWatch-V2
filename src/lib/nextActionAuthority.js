@@ -41,6 +41,20 @@
 // (4) equal-sort_order ties were broken by rule id, a secondary ordering
 // never proven to match the real scheduler -- selectAuthorizingRule now
 // fails closed (AMBIGUOUS_RULE_PRECEDENCE) on a genuine tie instead.
+//
+// --- Third review-fix pass (2026-08-12) ---
+// A final independent adversarial review of c68a190 found two more issues:
+// (1) a malformed same-tenant rule was silently discarded by
+// `.filter(isWellFormedRule)` even when it could not be proven disabled --
+// meaning it might, in reality, still be enabled and eligible to win under
+// real (non-pre-filtering) scheduler semantics, so authorizing a later
+// well-formed rule instead was an unfounded claim. Fixed via
+// findUnresolvableSameTenantRule, applied in both entry points. (2)
+// derivePermission tenant-gated canActAutomatically but not
+// requiresApproval, so wrong-tenant or unowned settings could still
+// produce a live "no approval required" claim. Fixed: requiresApproval now
+// also requires proven settings ownership, rounding safe to `true`
+// otherwise.
 
 import { daysOverdue, daysUntil } from './format.js'
 import { ruleMatches } from './ruleSchedule.js'
@@ -62,6 +76,12 @@ export const AUTHORITY_BLOCK_REASONS = Object.freeze({
   // omitted or malformed input -- which must never be silently treated as
   // "there is none." See selectAuthorizingRule / isValidExecutionHistory.
   EXECUTION_HISTORY_UNAVAILABLE: 'execution_history_unavailable',
+  // A same-tenant persisted rule is structurally malformed and cannot be
+  // proven disabled, so it cannot be safely dropped and ignored -- it
+  // might actually be enabled and eligible to win under real scheduler
+  // semantics, which do not pre-filter malformed rows before selection.
+  // See findUnresolvableSameTenantRule (third review pass, HIGH).
+  MALFORMED_RULE_STATE: 'malformed_rule_state',
   PENDING_ACTION_EXISTS: 'pending_action_exists',
   ALREADY_HANDLED: 'already_handled',
   // Two or more currently-open candidate rules share the same winning
@@ -77,7 +97,7 @@ export const REVALIDATION_OUTCOMES = Object.freeze({
   TENANT_MISMATCH: AUTHORITY_BLOCK_REASONS.TENANT_MISMATCH,
   EXECUTION_HISTORY_UNAVAILABLE: AUTHORITY_BLOCK_REASONS.EXECUTION_HISTORY_UNAVAILABLE,
   RULE_NOT_FOUND: 'rule_not_found',
-  MALFORMED_RULE_STATE: 'malformed_rule_state',
+  MALFORMED_RULE_STATE: AUTHORITY_BLOCK_REASONS.MALFORMED_RULE_STATE,
   RULE_DISABLED: 'rule_disabled',
   RULE_CHANGED: 'rule_changed',
   INVOICE_NO_LONGER_MATCHES: 'invoice_no_longer_matches',
@@ -248,6 +268,28 @@ function isValidExecutionHistory(value) {
   return value instanceof Set
 }
 
+// A same-tenant rule that fails isWellFormedRule() cannot be safely
+// matched, hashed, or ordered — but silently dropping it and proceeding
+// with only the well-formed rules can fail OPEN: the real scheduler
+// (supabase/functions/_shared/rules.js's planRun()) does not pre-filter
+// malformed rows before selection, so an earlier-precedence malformed row
+// could, in reality, still be enabled and eligible to win. Authorizing a
+// later well-formed rule instead in that case would be an authority claim
+// this contract cannot actually back. Unknown policy state must not
+// become permission (third review pass, HIGH).
+//
+// The only malformed same-tenant rule that can be safely ignored is one
+// whose `enabled` field is unambiguously readable as the literal boolean
+// `false` — a disabled rule never participates in selectAuthorizingRule's
+// candidate set regardless of how broken its other fields are, the same
+// as a well-formed disabled rule. Anything else — enabled: true, or
+// `enabled` itself missing/garbled/unreadable — rounds safe: this
+// function returns that rule so the caller can fail closed rather than
+// silently continuing.
+function findUnresolvableSameTenantRule(sameTenantRules) {
+  return sameTenantRules.find((rule) => !isWellFormedRule(rule) && rule?.enabled !== false)
+}
+
 // Selects which rule, if any, currently authorizes an action for this
 // invoice — and distinguishes *why* nothing was selected when nothing was.
 //
@@ -360,18 +402,25 @@ function deriveFacts(invoice, now) {
 // Missing/unset autopilotSettings default to the safest reading:
 // autopilot not enabled, approval required.
 //
-// canActAutomatically additionally requires autopilotSettings.user_id to
-// match the caller's own userId (second review pass, MEDIUM 1) — a
-// load-bearing autonomy decision must not be granted from a settings
-// object a future caller might accidentally supply for a different
-// tenant. requiresApproval itself is left unaffected by that check: it
-// describes what the (unproven-ownership) settings object says, which is
-// inert on its own — the dangerous step is specifically permitting
-// automatic execution, not reporting a fact about a settings row.
+// canActAutomatically requires autopilotSettings.user_id to match the
+// caller's own userId (second review pass, MEDIUM 1) — a load-bearing
+// autonomy decision must not be granted from a settings object a future
+// caller might accidentally supply for a different tenant.
+//
+// requiresApproval is ALSO gated on that same ownership proof (third
+// review pass, MEDIUM): unowned/wrong-tenant settings can never be read as
+// "approval_required: false" no matter what the settings object itself
+// says, because "no approval required" is a live permission claim, not an
+// inert fact — a downstream UI could otherwise read it as ground truth.
+// Without proven ownership this rounds safe to `true`, the exact same
+// default already used when autopilotSettings is absent entirely; a
+// caller that can't prove whose settings it's holding is treated as if it
+// were holding none. Only settings actually owned by userId can ever
+// produce requiresApproval: false.
 function derivePermission({ autopilotSettings, invoice, userId }) {
   const settingsOwnedByCaller = Boolean(userId) && autopilotSettings?.user_id === userId
   const autopilotEnabled = autopilotSettings?.enabled === true
-  const requiresApproval = autopilotSettings?.approval_required !== false
+  const requiresApproval = settingsOwnedByCaller ? autopilotSettings?.approval_required !== false : true
   const invoicePaused = invoice?.autopilot_paused === true
   return {
     requiresApproval,
@@ -455,9 +504,15 @@ export function evaluateNextActionAuthority({
     return closed(facts, AUTHORITY_BLOCK_REASONS.EXECUTION_HISTORY_UNAVAILABLE)
   }
 
-  const safeRules = (Array.isArray(rules) ? rules : [])
-    .filter(isWellFormedRule)
-    .filter((r) => r.user_id === userId)
+  // Cross-tenant rules stay invisible (never inspected further); among
+  // same-tenant rules, a malformed one that cannot be proven disabled
+  // fails the whole evaluation closed rather than being silently dropped
+  // (third review pass, HIGH — see findUnresolvableSameTenantRule).
+  const sameTenantRules = (Array.isArray(rules) ? rules : []).filter((r) => r && r.user_id === userId)
+  if (findUnresolvableSameTenantRule(sameTenantRules)) {
+    return closed(facts, AUTHORITY_BLOCK_REASONS.MALFORMED_RULE_STATE)
+  }
+  const safeRules = sameTenantRules.filter(isWellFormedRule)
 
   const { rule, blockedReason } = selectAuthorizingRule({
     invoice,
@@ -608,8 +663,16 @@ export function revalidateAuthority({
   // instead, the old recommendation is stale -- never silently
   // transferred to whatever current policy would pick, and never kept
   // alive just because this one rule, considered in isolation, still
-  // technically matches.
-  const safeCurrentRules = rules.filter(isWellFormedRule).filter((r) => r.user_id === userId)
+  // technically matches. And, same principle applied to the reselection
+  // candidate set itself: a same-tenant rule that appeared, or became
+  // malformed, since the prior evaluation and cannot be proven disabled
+  // must stale this revalidation closed too, not be silently dropped
+  // (third review pass, HIGH).
+  const sameTenantCurrentRules = rules.filter((r) => r && r.user_id === userId)
+  if (findUnresolvableSameTenantRule(sameTenantCurrentRules)) {
+    return closed(REVALIDATION_OUTCOMES.MALFORMED_RULE_STATE, ruleId)
+  }
+  const safeCurrentRules = sameTenantCurrentRules.filter(isWellFormedRule)
   const currentSelection = selectAuthorizingRule({
     invoice,
     rules: safeCurrentRules,
