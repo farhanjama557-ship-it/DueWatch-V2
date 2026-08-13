@@ -3,25 +3,41 @@
 // and "Edit First", InvoiceDetailPanel "Send reminder"). The React app never
 // holds RESEND_API_KEY; it calls this function instead.
 //
-// Post-2A.1 execution safety checkpoint (review-fix pass, BLOCKER 1):
-// founder approval of an Autopilot rule-backed draft (SignatureCard
-// "Approve & Send") now routes through the SAME durable execution boundary
-// (autopilotExecutionCore.executeApprovalSend) the scheduler's auto-send
-// uses — a persisted awaitingSignatureId is required, and the tenant/
-// invoice/rule authority basis is loaded and revalidated server-side,
-// never trusted from the browser. Two rapid/concurrent approval attempts
-// for the same awaiting_signature row acquire the same durable execution
-// claim as the scheduler would, so at most one ever reaches Resend.
+// Post-2A.1 execution safety checkpoint (review-fix passes):
+// - BLOCKER 1 (first pass): founder approval of an Autopilot rule-backed
+//   draft (SignatureCard "Approve & Send") routes through the SAME durable
+//   execution boundary (autopilotExecutionCore.executeApprovalSend) the
+//   scheduler's auto-send uses — a persisted awaitingSignatureId is
+//   required, and the tenant/invoice/rule authority basis is loaded and
+//   revalidated server-side, never trusted from the browser.
+// - BLOCKER (second pass): "Edit First" is the SAME approval flow with
+//   founder-edited wording — it now ALSO routes through this exact path
+//   (optional `editedBody`), instead of the legacy ad-hoc invoiceId+body
+//   path. The founder may edit the message text; the browser never
+//   supplies authority/rule/user identity, which is always loaded and
+//   revalidated server-side from the persisted awaiting_signature row.
+// - BLOCKER (second pass): the awaiting_signature row currently being
+//   approved is excluded from its OWN pending/handled calculation
+//   (excludeAwaitingSignatureId), so revalidation of the exact row being
+//   approved no longer self-blocks on PENDING_ACTION_EXISTS/ALREADY_HANDLED.
+// - BLOCKER (second pass): the persisted factual-basis/rule-snapshot
+//   receipts are re-verified here too, not just authority — a partial
+//   payment or rule edit since the draft was queued fails the approval
+//   closed rather than sending stale money facts.
+// - MEDIUM (second pass): a blocked (CLAIM_LOST) outcome now surfaces the
+//   REAL prior claim status (sent/send_failed/uncertain/in_flight) so the
+//   founder sees an accurate message, never a generic "already handled."
 //
 // The pre-existing ad-hoc path (arbitrary invoiceId + body, with no
-// backing awaiting_signature/rule) is UNCHANGED — it is not "founder
-// approval of an Autopilot rule-backed draft" and was explicitly out of
-// scope for this checkpoint.
+// backing awaiting_signature/rule — InvoiceDetailPanel/CognitiveCompose's
+// fully founder-composed sends) is UNCHANGED — it is not "founder approval
+// of an Autopilot rule-backed draft" and was explicitly out of scope.
 //
 // Deploy: supabase functions deploy send-reminder-email
 // Invoke from the app: supabase.functions.invoke('send-reminder-email', { body: {...} })
 //
-// Request body: EITHER { awaitingSignatureId } (approval-backed path) OR
+// Request body: EITHER { awaitingSignatureId, editedBody? } (approval-backed
+// path, covers both "Approve & Send" and "Edit First") OR
 // { invoiceId, subject?, body } (ad-hoc path, unchanged).
 // Requires a valid user session (Authorization header) — verifies
 // ownership server-side before sending anything, on both paths.
@@ -65,7 +81,12 @@ Deno.serve(async (req) => {
     const requestBody = await req.json()
 
     if (requestBody.awaitingSignatureId) {
-      return await handleApprovalSend({ admin, userId: user.id, awaitingSignatureId: requestBody.awaitingSignatureId })
+      return await handleApprovalSend({
+        admin,
+        userId: user.id,
+        awaitingSignatureId: requestBody.awaitingSignatureId,
+        editedBody: typeof requestBody.editedBody === 'string' ? requestBody.editedBody : null,
+      })
     }
 
     const { invoiceId, subject, body } = requestBody
@@ -112,13 +133,17 @@ Deno.serve(async (req) => {
   }
 })
 
-// Founder approval of an Autopilot rule-backed draft (SignatureCard
-// "Approve & Send"). Loads the awaiting_signature row's authority basis
-// server-side — never trusts a browser-supplied invoiceId/ruleId/draft.
-async function handleApprovalSend({ admin, userId, awaitingSignatureId }) {
+// Founder approval of an Autopilot rule-backed draft — SignatureCard
+// "Approve & Send" (editedBody omitted) and "Edit First" (editedBody
+// supplied). Loads the awaiting_signature row's authority/factual-basis/
+// rule-snapshot provenance server-side — never trusts a browser-supplied
+// invoiceId/ruleId/draft. The founder may only ever influence the TEXT
+// (editedBody); every identity/authority field is loaded and revalidated
+// here, from the persisted row and fresh database state.
+async function handleApprovalSend({ admin, userId, awaitingSignatureId, editedBody }) {
   const { data: row, error: rowErr } = await admin
     .from('awaiting_signature')
-    .select('id, user_id, invoice_id, status, draft_content, ai_context')
+    .select('id, user_id, invoice_id, status, draft_content, ai_reason, ai_context')
     .eq('id', awaitingSignatureId)
     .maybeSingle()
 
@@ -133,15 +158,20 @@ async function handleApprovalSend({ admin, userId, awaitingSignatureId }) {
   }
 
   const priorAuthority = row.ai_context?.authority
+  const priorFactualBasis = row.ai_context?.factualBasis
+  const priorRuleSnapshot = row.ai_context?.ruleSnapshot
   if (
     !priorAuthority ||
     priorAuthority.authorized !== true ||
     !priorAuthority.basis ||
     priorAuthority.basis.ruleId == null ||
-    !priorAuthority.ruleSnapshotHash
+    !priorAuthority.ruleSnapshotHash ||
+    !priorFactualBasis ||
+    !priorRuleSnapshot
   ) {
-    // Legacy row created before this checkpoint has no authority
-    // provenance to revalidate — fail closed rather than inventing one.
+    // Legacy row created before this checkpoint (or before the factual-
+    // basis/rule-snapshot fields existed) has insufficient provenance to
+    // revalidate — fail closed rather than inventing any of it.
     return json(
       {
         error:
@@ -151,15 +181,6 @@ async function handleApprovalSend({ admin, userId, awaitingSignatureId }) {
     )
   }
 
-  const { data: invoice, error: invErr } = await admin
-    .from('invoices')
-    .select('id, inv_num')
-    .eq('id', row.invoice_id)
-    .maybeSingle()
-  if (invErr || !invoice) {
-    return json({ error: 'Invoice not found' }, 404)
-  }
-
   const io = buildApprovalIo({ admin, userId, row })
 
   let result
@@ -167,9 +188,11 @@ async function handleApprovalSend({ admin, userId, awaitingSignatureId }) {
     result = await executeApprovalSend({
       userId,
       priorAuthority,
+      priorFactualBasis,
+      priorRuleSnapshot,
       invoiceId: row.invoice_id,
-      subject: `Regarding invoice ${invoice.inv_num || ''}`.trim(),
-      text: row.draft_content,
+      text: editedBody ?? row.draft_content,
+      reason: row.ai_reason,
       now: new Date(),
       io,
     })
@@ -181,7 +204,10 @@ async function handleApprovalSend({ admin, userId, awaitingSignatureId }) {
     case SEND_OUTCOME.SENT:
       return json({ ok: true, id: result.providerMessageId })
     case SEND_OUTCOME.CLAIM_LOST:
-      return json({ error: 'Another request already sent this reminder.' }, 409)
+      // MEDIUM: never collapse sent/send_failed/uncertain/in_flight into
+      // one generic message — a prior UNCERTAIN claim must never tell the
+      // founder to generate another automatic contact.
+      return json({ error: claimLostMessage(result.existingStatus) }, 409)
     case SEND_OUTCOME.STALE_AUTHORITY:
       return json(
         { error: `This reminder is no longer valid to send (${result.detail}). Ask Duewatch to draft a new one.` },
@@ -196,30 +222,55 @@ async function handleApprovalSend({ admin, userId, awaitingSignatureId }) {
   }
 }
 
+function claimLostMessage(existingStatus) {
+  if (existingStatus === 'sent') return 'This reminder has already been sent.'
+  if (existingStatus === 'uncertain') {
+    return 'A previous attempt to send this reminder had an uncertain outcome and was not automatically retried. Check Activity before trying again.'
+  }
+  if (existingStatus === 'send_failed') {
+    return 'A previous attempt to send this reminder failed. Check Activity before trying again.'
+  }
+  return 'Another request for this reminder is already in progress.'
+}
+
 // Real, Supabase-backed implementation of autopilotExecutionCore's `io`
 // interface for the approval-backed path. Every write's error is checked
 // and thrown, not silently ignored.
 function buildApprovalIo({ admin, userId, row }) {
   const nowIso = () => new Date().toISOString()
-  const ruleId = row.ai_context?.rule_id ?? null
-  const ruleName = row.ai_context?.rule_name ?? null
 
   return {
     async fetchAuthorityInputs({ invoiceId }) {
-      return fetchAuthorityInputs(admin, { userId, invoiceId })
+      // BLOCKER (second pass): exclude ONLY this exact row from its own
+      // pending/handled calculation, so revalidating the row being
+      // approved doesn't self-block via PENDING_ACTION_EXISTS/
+      // ALREADY_HANDLED. Every other row/history remains visible.
+      return fetchAuthorityInputs(admin, { userId, invoiceId, excludeAwaitingSignatureId: row.id })
     },
     isProviderConfigured,
-    async acquireClaim({ userId: uid, invoiceId, ruleId: rid, actionType, idempotencyKey }) {
+    async acquireClaim({ userId: uid, invoiceId, ruleId, actionType, idempotencyKey }) {
       const { data, error } = await admin.rpc('acquire_autopilot_execution_claim', {
         p_user_id: uid,
         p_invoice_id: invoiceId,
-        p_rule_id: rid,
+        p_rule_id: ruleId,
         p_action_type: actionType,
         p_idempotency_key: idempotencyKey,
       })
       if (error) throw error
       const claimRow = data?.[0]
-      return { claimId: claimRow?.claim_id, acquired: claimRow?.acquired === true }
+      if (claimRow?.acquired) {
+        return { claimId: claimRow.claim_id, acquired: true }
+      }
+      let existingStatus = null
+      if (claimRow?.claim_id) {
+        const { data: existing } = await admin
+          .from('autopilot_execution_claims')
+          .select('status')
+          .eq('id', claimRow.claim_id)
+          .maybeSingle()
+        existingStatus = existing?.status ?? null
+      }
+      return { claimId: claimRow?.claim_id, acquired: false, existingStatus }
     },
     async resolveClaim({ claimId, status, providerMessageId, evidence }) {
       const { error } = await admin
@@ -240,12 +291,12 @@ function buildApprovalIo({ admin, userId, row }) {
       // rather than silently creating a duplicate draft.
       throw new Error('This client has no email on file.')
     },
-    async recordSentEvidence({ claimId, sendResult }) {
+    async recordSentEvidence({ claimId, sendResult, authority, reason, text }) {
       const { error: remErr } = await admin.from('reminders').insert({
         invoice_id: row.invoice_id,
         user_id: userId,
         title: 'Reminder sent',
-        detail: row.draft_content,
+        detail: text,
       })
       if (remErr) throw remErr
 
@@ -265,18 +316,21 @@ function buildApprovalIo({ admin, userId, row }) {
         lifecycle_stage: 'sent',
         lifecycle_state: 'completed',
         evidence: {
-          trigger: ruleName || 'Autopilot recommendation',
+          reason,
+          trigger: authority?.basis?.ruleName ?? 'Autopilot recommendation',
           approved_by: 'You',
           resend_id: sendResult.id || null,
           delivery_status: 'sent',
           execution_claim_id: claimId,
-          rule_id: ruleId,
-          rule_name: ruleName,
+          rule_id: authority?.basis?.ruleId ?? null,
+          rule_name: authority?.basis?.ruleName ?? null,
+          rule_snapshot_hash: authority?.ruleSnapshotHash ?? null,
+          authorized_at: authority?.evaluatedAt ?? null,
         },
       })
       if (evErr) throw evErr
     },
-    async recordFailureEvidence({ claimId, error }) {
+    async recordFailureEvidence({ claimId, error, authority, reason }) {
       const { error: evErr } = await admin.from('events').insert({
         user_id: userId,
         event_type: 'reminder_send_failed',
@@ -284,17 +338,20 @@ function buildApprovalIo({ admin, userId, row }) {
         lifecycle_stage: 'sent',
         lifecycle_state: 'error',
         evidence: {
-          trigger: ruleName || 'Autopilot recommendation',
+          reason,
+          trigger: authority?.basis?.ruleName ?? 'Autopilot recommendation',
           approved_by: 'You',
           delivery_status: error,
           execution_claim_id: claimId,
-          rule_id: ruleId,
-          rule_name: ruleName,
+          rule_id: authority?.basis?.ruleId ?? null,
+          rule_name: authority?.basis?.ruleName ?? null,
+          rule_snapshot_hash: authority?.ruleSnapshotHash ?? null,
+          authorized_at: authority?.evaluatedAt ?? null,
         },
       })
       if (evErr) throw evErr
     },
-    async recordUncertainEvidence({ claimId, error }) {
+    async recordUncertainEvidence({ claimId, error, authority, reason }) {
       const { error: evErr } = await admin.from('events').insert({
         user_id: userId,
         event_type: 'reminder_send_uncertain',
@@ -302,13 +359,16 @@ function buildApprovalIo({ admin, userId, row }) {
         lifecycle_stage: 'sent',
         lifecycle_state: 'error',
         evidence: {
-          trigger: ruleName || 'Autopilot recommendation',
+          reason,
+          trigger: authority?.basis?.ruleName ?? 'Autopilot recommendation',
           approved_by: 'You',
           delivery_status: 'Duewatch stopped automatically; completion could not be proven, so no retry was attempted.',
           error,
           execution_claim_id: claimId,
-          rule_id: ruleId,
-          rule_name: ruleName,
+          rule_id: authority?.basis?.ruleId ?? null,
+          rule_name: authority?.basis?.ruleName ?? null,
+          rule_snapshot_hash: authority?.ruleSnapshotHash ?? null,
+          authorized_at: authority?.evaluatedAt ?? null,
         },
       })
       if (evErr) throw evErr
