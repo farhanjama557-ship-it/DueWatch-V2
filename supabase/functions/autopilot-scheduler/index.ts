@@ -21,6 +21,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2'
 import { sendEmail } from '../_shared/resend.js'
 import { planRun, daysOverdue, daysUntil } from '../_shared/rules.js'
 import { reminderDraft, explainRule } from '../_shared/draftTemplate.js'
+import { ACTION_TYPE_SEND_REMINDER, buildExecutionIdentity, buildIdempotencyKey } from '../_shared/executionClaim.js'
 
 const MAX_PER_RUN = 10 // safety rail: Resend rate limits + no surprise batches
 
@@ -92,32 +93,47 @@ async function runForUser(settings, today) {
   let errors = 0
 
   try {
-    const [{ data: rules }, { data: invoices }, { data: existingSignatures }] = await Promise.all([
-      admin
-        .from('autopilot_rules')
-        .select('*')
-        .eq('user_id', userId)
-        .eq('enabled', true)
-        .order('sort_order', { ascending: true }),
-      // autopilot_paused invoices are excluded entirely — the per-invoice
-      // toggle (Session 7.5 #7) must actually stop Autopilot from acting,
-      // not just look paused in the UI.
-      admin
-        .from('invoices')
-        .select('*, clients(name, email)')
-        .eq('user_id', userId)
-        .eq('paid', false)
-        .eq('autopilot_paused', false),
-      admin.from('awaiting_signature').select('invoice_id, status, ai_context').eq('user_id', userId),
-    ])
+    const [{ data: rules }, { data: invoices }, { data: existingSignatures }, { data: existingClaims }] =
+      await Promise.all([
+        admin
+          .from('autopilot_rules')
+          .select('*')
+          .eq('user_id', userId)
+          .eq('enabled', true)
+          .order('sort_order', { ascending: true }),
+        // autopilot_paused invoices are excluded entirely — the per-invoice
+        // toggle (Session 7.5 #7) must actually stop Autopilot from acting,
+        // not just look paused in the UI.
+        admin
+          .from('invoices')
+          .select('*, clients(name, email)')
+          .eq('user_id', userId)
+          .eq('paid', false)
+          .eq('autopilot_paused', false),
+        admin.from('awaiting_signature').select('invoice_id, status, ai_context').eq('user_id', userId),
+        // Execution-safety checkpoint fix: auto-sent reminders never wrote
+        // an awaiting_signature row, so handledKeys previously had no way
+        // to see them — the same (often first, lowest-sort_order) rule
+        // could keep winning forever, since existingSignatures could never
+        // reflect an auto-sent reminder. autopilot_execution_claims is the
+        // durable record of every auto-send attempt (any status), so it now
+        // also feeds handledKeys, letting a later, more-advanced rule
+        // finally become eligible once an earlier rule is durably handled.
+        admin
+          .from('autopilot_execution_claims')
+          .select('invoice_id, rule_id')
+          .eq('user_id', userId)
+          .eq('action_type', ACTION_TYPE_SEND_REMINDER),
+      ])
 
     invoicesChecked = (invoices || []).length
 
-    const handledKeys = new Set(
-      (existingSignatures || [])
+    const handledKeys = new Set([
+      ...(existingSignatures || [])
         .filter((r) => r.ai_context?.rule_id)
-        .map((r) => `${r.invoice_id}:${r.ai_context.rule_id}`)
-    )
+        .map((r) => `${r.invoice_id}:${r.ai_context.rule_id}`),
+      ...(existingClaims || []).map((c) => `${c.invoice_id}:${c.rule_id}`),
+    ])
     const pendingInvoiceIds = new Set(
       (existingSignatures || []).filter((r) => r.status === 'pending').map((r) => r.invoice_id)
     )
@@ -208,6 +224,9 @@ async function actOnMatch({ userId, invoice, rule, approvalRequired, today }) {
 
   // Auto mode: send immediately. If the client has no email on file, fall
   // back to queuing for review rather than silently dropping the reminder.
+  // This fallback makes no external request and needs no execution claim —
+  // it's the same "no automatic contact happened" outcome as never having
+  // matched at all.
   const to = invoice.clients?.email
   const nowIso = new Date().toISOString()
 
@@ -225,11 +244,112 @@ async function actOnMatch({ userId, invoice, rule, approvalRequired, today }) {
     return
   }
 
-  const sendResult = await sendEmail({
-    to,
-    subject: `Regarding invoice ${invoice.inv_num || ''}`.trim(),
-    text: draft,
+  // ---- execution-safety checkpoint: acquire the durable claim BEFORE any
+  // external request. The uniqueness boundary is (user_id, invoice_id,
+  // rule_id, action_type) — see the autopilot_execution_claims migration.
+  // Only the caller that wins may call Resend; every other caller
+  // (concurrent, or a later scheduler run against a claim of ANY status)
+  // must stop here and make zero provider requests.
+  const identity = buildExecutionIdentity({
+    userId,
+    invoiceId: invoice.id,
+    ruleId: rule.id,
+    actionType: ACTION_TYPE_SEND_REMINDER,
   })
+  if (!identity) {
+    // Malformed/missing tenant or rule identity fails closed — never send
+    // without a provably well-formed claim identity to acquire against.
+    throw new Error(
+      `Cannot acquire an execution claim: malformed identity for invoice ${invoice.id}, rule ${rule.id}`
+    )
+  }
+  const idempotencyKey = buildIdempotencyKey(identity)
+  if (!idempotencyKey) {
+    throw new Error(`Cannot acquire an execution claim: could not build an idempotency key for invoice ${invoice.id}`)
+  }
+
+  const { data: claimRows, error: claimError } = await admin.rpc('acquire_autopilot_execution_claim', {
+    p_user_id: userId,
+    p_invoice_id: invoice.id,
+    p_rule_id: rule.id,
+    p_action_type: ACTION_TYPE_SEND_REMINDER,
+    p_idempotency_key: idempotencyKey,
+  })
+  if (claimError) {
+    // No claim was ever created — nothing to resolve, and this identity
+    // remains eligible on the next run (no external request was attempted).
+    throw claimError
+  }
+  const claim = claimRows?.[0]
+  if (!claim?.acquired) {
+    // Lost the race, or already durably handled by a prior run. Fail
+    // closed: zero provider-send calls, zero writes below.
+    return
+  }
+
+  let sendResult
+  try {
+    sendResult = await sendEmail({
+      to,
+      subject: `Regarding invoice ${invoice.inv_num || ''}`.trim(),
+      text: draft,
+      idempotencyKey,
+    })
+  } catch (err) {
+    // An exception here means we cannot prove whether Resend received the
+    // request — genuinely uncertain, not a clean failure. The claim row
+    // stays behind as 'uncertain' evidence; it is never auto-retried.
+    await admin
+      .from('autopilot_execution_claims')
+      .update({
+        status: 'uncertain',
+        resolved_at: new Date().toISOString(),
+        evidence: { error: err instanceof Error ? err.message : String(err) },
+      })
+      .eq('id', claim.claim_id)
+    throw err
+  }
+
+  if (sendResult.error) {
+    // A clean (if unsuccessful) response from Resend — a definite failure,
+    // not an uncertain one. Still never auto-retried by a later run.
+    await admin
+      .from('autopilot_execution_claims')
+      .update({
+        status: 'send_failed',
+        resolved_at: new Date().toISOString(),
+        evidence: { error: sendResult.error },
+      })
+      .eq('id', claim.claim_id)
+    await admin.from('events').insert({
+      user_id: userId,
+      event_type: 'reminder_sent',
+      invoice_id: invoice.id,
+      lifecycle_stage: 'sent',
+      lifecycle_state: 'error',
+      evidence: {
+        reason,
+        trigger: rule.name,
+        approved_by: 'Autopilot (auto-send)',
+        delivery_status: sendResult.error,
+        execution_claim_id: claim.claim_id,
+        ...ruleContext,
+      },
+    })
+    throw new Error(sendResult.error)
+  }
+
+  // Confirmed success — only now do we write the reminder/last_reminder
+  // records that claim a reminder was actually sent, and resolve the claim.
+  await admin
+    .from('autopilot_execution_claims')
+    .update({
+      status: 'sent',
+      resolved_at: new Date().toISOString(),
+      provider_message_id: sendResult.id || null,
+      evidence: { resend_id: sendResult.id || null },
+    })
+    .eq('id', claim.claim_id)
 
   await admin.from('reminders').insert({
     invoice_id: invoice.id,
@@ -243,18 +363,17 @@ async function actOnMatch({ userId, invoice, rule, approvalRequired, today }) {
     event_type: 'reminder_sent',
     invoice_id: invoice.id,
     lifecycle_stage: 'sent',
-    lifecycle_state: sendResult.error ? 'error' : 'completed',
+    lifecycle_state: 'completed',
     evidence: {
       reason,
       trigger: rule.name,
       approved_by: 'Autopilot (auto-send)',
       resend_id: sendResult.id || null,
-      delivery_status: sendResult.error || 'sent',
+      delivery_status: 'sent',
+      execution_claim_id: claim.claim_id,
       ...ruleContext,
     },
   })
-
-  if (sendResult.error) throw new Error(sendResult.error)
 }
 
 function json(payload, status = 200) {
