@@ -1,4 +1,4 @@
-import { daysOverdue, daysUntil } from './format'
+import { daysOverdue, daysUntil } from './format.js'
 
 // Mirrors the eligibility semantics in supabase/functions/_shared/rules.js
 // (duplicated — that file runs in Deno, this runs in the browser). A rule's

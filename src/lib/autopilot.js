@@ -21,9 +21,15 @@ export function ruleTiming(rule) {
 }
 
 export async function fetchAutopilotSettings(userId) {
+  // user_id is included so callers building nextActionAuthority.js's
+  // permission input can prove these settings belong to the same tenant
+  // whose authority is being evaluated, rather than trusting the caller to
+  // have scoped the query correctly (Phase 2A.1 second review-fix pass,
+  // MEDIUM 1) — canActAutomatically there is gated on
+  // autopilotSettings.user_id === userId.
   const { data, error } = await supabase
     .from('autopilot_settings')
-    .select('id, enabled, approval_required')
+    .select('id, user_id, enabled, approval_required')
     .eq('user_id', userId)
     .maybeSingle()
   if (error) return null
