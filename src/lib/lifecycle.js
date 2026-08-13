@@ -42,6 +42,10 @@ export function lifecycleKeyFor(eventType) {
       return 'drafted'
     case 'reminder_sent':
       return 'sent'
+    case 'reminder_send_failed':
+      return 'error'
+    case 'reminder_send_uncertain':
+      return 'error_banner'
     case 'reminder_skipped':
       return 'skipped'
     case 'payment_recorded':

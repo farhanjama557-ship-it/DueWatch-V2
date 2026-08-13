@@ -1,82 +1,23 @@
 // Phase 2A.1 — the deterministic authority contract every future Pulse
-// recommendation depends on.
+// recommendation depends on. This is the Deno-runtime copy — see
+// src/lib/nextActionAuthority.js for the full doctrine/history comment
+// (FACTS MAY BE DERIVED. POLICY MUST BE GRANTED, all three Phase 2A.1
+// review-fix passes) and for the definitive account of why this file
+// exists as a separate copy rather than a cross-boundary import.
 //
-// FACTS MAY BE DERIVED. POLICY MUST BE GRANTED.
-//
-// A non-null recommendation must be backed by a real, persisted, currently
-// enabled founder rule (`autopilot_rules`), owned by the same tenant as the
-// invoice, that currently matches, has not already been handled for this
-// exact invoice, and is not blocked by an already-pending action on that
-// invoice. If none of that holds, the recommendation is null — not
-// softened, not hedged, not an inferred escalation. Zero working rules =
-// facts only.
-//
-// This module does not decide ranking/priority (`recommend.js`'s
-// "High priority"/"Firm"/"Follow up" badges are exactly the invented-policy
-// pattern this contract exists to replace, but rewriting that file is Pulse
-// UI work and explicitly out of scope here) and never fabricates a "no
-// response" fact from `last_reminder` alone — no evidence source in this
-// app currently proves a client responded to anything.
-//
-// --- Review-fix pass (2026-08-12) ---
-// An independent adversarial review of the first candidate
-// (cf2fe94ede1010742344cebe8c86c6c15f4a53ea) found this module's selection
-// logic did not agree with the real scheduler's execution semantics. Fixed
-// here; see the inline notes at selectAuthorizingRule, isValidDueDate, the
-// userId parameter, and RULE_SNAPSHOT_FIELDS for exactly what changed and
-// why. `ruleSchedule.js`'s `nextScheduledAction()` is no longer used by
-// this module for authorization — see selectAuthorizingRule for why.
-//
-// --- Second review-fix pass (2026-08-12) ---
-// A further independent adversarial review of f82936c found four more
-// issues: (1) handledKeys/pendingInvoiceIds silently defaulted to empty
-// Sets when omitted, recreating the original permissive failure mode --
-// they are now required, explicit Sets (see the isValidExecutionHistory
-// check in both entry points); (2) revalidateAuthority checked the prior
-// rule in isolation but never confirmed CURRENT policy, taken as a whole,
-// still selects that same rule -- see the "current policy reselection"
-// step near the end of revalidateAuthority; (3) permission derivation
-// trusted autopilotSettings without proving it belonged to the caller's
-// own tenant -- see derivePermission's settingsOwnedByTenant check;
-// (4) equal-sort_order ties were broken by rule id, a secondary ordering
-// never proven to match the real scheduler -- selectAuthorizingRule now
-// fails closed (AMBIGUOUS_RULE_PRECEDENCE) on a genuine tie instead.
-//
-// --- Third review-fix pass (2026-08-12) ---
-// A final independent adversarial review of c68a190 found two more issues:
-// (1) a malformed same-tenant rule was silently discarded by
-// `.filter(isWellFormedRule)` even when it could not be proven disabled --
-// meaning it might, in reality, still be enabled and eligible to win under
-// real (non-pre-filtering) scheduler semantics, so authorizing a later
-// well-formed rule instead was an unfounded claim. Fixed via
-// findUnresolvableSameTenantRule, applied in both entry points. (2)
-// derivePermission tenant-gated canActAutomatically but not
-// requiresApproval, so wrong-tenant or unowned settings could still
-// produce a live "no approval required" claim. Fixed: requiresApproval now
-// also requires proven settings ownership, rounding safe to `true`
-// otherwise.
-//
-// --- Deno port (post-2A.1 execution safety checkpoint, 2026-08-13) ---
-// Every future Approve/Send/Schedule execution boundary must call this
-// SAME authority engine, not a second simplified one built inside the Edge
-// Function world. Since this module runs under Vite (browser) and Node
-// (tests) but never under Deno directly, and this codebase's own
-// established convention for browser/Deno-shared logic is to duplicate
-// with an explicit cross-reference comment rather than reach import paths
-// across the src/lib <-> supabase/functions boundary (see
-// src/lib/ruleSchedule.js's ruleMatches vs supabase/functions/_shared/
-// rules.js's ruleMatches), the identical logic is duplicated at
-// supabase/functions/_shared/nextActionAuthority.js for Deno. Everything
-// from the "SHARED AUTHORITY CORE" marker below to end-of-file is REQUIRED
-// to stay byte-for-byte identical between the two copies (only the import
-// line above the marker legitimately differs, since each runtime's
-// ruleMatches/daysOverdue/daysUntil live in a different file) — enforced
-// by tests/nextActionAuthoritySharedCore.sync.test.mjs, which fails the
-// build if the two copies ever drift. Do not edit one copy without the
-// other; the sync test is what catches it if you forget.
+// Everything from the "SHARED AUTHORITY CORE" marker below to end-of-file
+// MUST stay byte-for-byte identical to src/lib/nextActionAuthority.js's
+// copy — enforced by tests/nextActionAuthoritySharedCore.sync.test.mjs.
+// Only this import line legitimately differs between the two copies: the
+// browser/Node copy imports from ./format.js + ./ruleSchedule.js, this
+// Deno copy imports the same three function names (ruleMatches,
+// daysOverdue, daysUntil) from the Deno-side mirror, ./rules.js, which
+// already exists for exactly this reason (see its own header comment).
+// Do not edit this file's shared core without also editing
+// src/lib/nextActionAuthority.js's, and vice versa — the sync test will
+// fail the build if the two ever drift.
 
-import { daysOverdue, daysUntil } from './format.js'
-import { ruleMatches } from './ruleSchedule.js'
+import { daysOverdue, daysUntil, ruleMatches } from './rules.js'
 
 // ==== SHARED AUTHORITY CORE (byte-identical in both copies past this line) ====
 

@@ -5,7 +5,8 @@ import { supabase } from './supabase'
  * a missing events table or a failed insert is swallowed with a warning.
  *
  * Event types: invoice_created, reminder_opened, reminder_sent,
- * reminder_skipped, payment_recorded, invoice_marked_paid.
+ * reminder_send_failed, reminder_send_uncertain, reminder_skipped,
+ * payment_recorded, invoice_marked_paid.
  *
  * `lifecycleStage`/`lifecycleState`/`evidence` are optional (Session 7) —
  * omitting them leaves those columns null, so existing call sites are

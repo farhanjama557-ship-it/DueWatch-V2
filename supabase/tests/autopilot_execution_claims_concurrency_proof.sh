@@ -4,21 +4,23 @@
 #
 # This is the load-bearing guarantee behind Autopilot's at-most-once
 # automatic reminder-send: two concurrent scheduler runs (or a genuine
-# overlap between a manual dispatch and a cron run) racing the SAME
-# (user_id, invoice_id, rule_id, action_type) identity must result in
-# exactly ONE acquired claim -- the loser must get acquired = false and,
-# in the real scheduler, therefore make ZERO Resend calls.
+# overlap between a manual dispatch and a cron run, or two rapid founder
+# approval attempts) racing the SAME (user_id, invoice_id, rule_id,
+# action_type) identity must result in exactly ONE acquired claim -- the
+# loser must get acquired = false and, in the real scheduler/Edge
+# Function, therefore make ZERO Resend calls.
 #
-# This script proves the acquisition race with two REAL concurrent
-# connections (a single transactional script cannot exercise genuine
-# concurrency -- see autopilot_execution_claims_test.sql for the
-# single-connection behavioral proofs). It creates a minimal DEBUG copy of
-# just the atomic-insert core (with an injected pg_sleep to make the race
-# window deterministic rather than a timing coin-flip) -- the real
-# public.acquire_autopilot_execution_claim is never modified. The debug
-# function and its fixture are dropped/deleted before this script exits,
-# whether it passes or fails. Mirrors
-# import_persistence_run_idempotency_concurrency_proof.sh exactly.
+# Review-fix pass (MEDIUM 2): the prior version of this script raced a
+# DEBUG COPY of the acquire function with an injected pg_sleep, which only
+# proved the atomic-insert PATTERN, not the exact deployed function. This
+# version races public.acquire_autopilot_execution_claim itself, completely
+# unmodified. The deterministic-overlap sleep that makes the race reliable
+# instead of a timing coin-flip is issued as a SEPARATE, ordinary
+# session-level `select pg_sleep(...)` statement BEFORE the real function
+# call, from the client script -- never baked into the function's own
+# definition. Both connections sleep independently and then call the real
+# function immediately upon waking, which reproduces a tight overlap
+# window without touching the artifact being proven.
 #
 # Usage: ./autopilot_execution_claims_concurrency_proof.sh <database_name>
 # Must be run against a local, disposable Postgres instance that already
@@ -28,10 +30,9 @@ set -euo pipefail
 
 DB="${1:?usage: autopilot_execution_claims_concurrency_proof.sh <database_name>}"
 
-echo "=== Concurrency proof: two schedulers racing to claim the same (user, invoice, rule, action) ==="
+echo "=== Concurrency proof: two callers racing the REAL acquire_autopilot_execution_claim ==="
 
 cleanup() {
-  psql -d "$DB" -v ON_ERROR_STOP=1 -c "drop function if exists public.acquire_autopilot_execution_claim_debug(uuid, uuid, uuid, text, text, numeric);" >/dev/null 2>&1 || true
   if [ -n "${USER_ID:-}" ]; then
     psql -d "$DB" -v ON_ERROR_STOP=1 -c "delete from auth.users where id = '$USER_ID';" >/dev/null 2>&1 || true
   fi
@@ -51,51 +52,20 @@ INVOICE_ID=$(echo "$INVOICE_ID" | tr -d '[:space:]')
 RULE_ID=$(psql -d "$DB" -v ON_ERROR_STOP=1 -qtA -c "select gen_random_uuid();")
 RULE_ID=$(echo "$RULE_ID" | tr -d '[:space:]')
 
-# Debug copy of exactly the atomic insert-or-find core of
-# acquire_autopilot_execution_claim, with a deterministic sleep before the
-# INSERT so two concurrent sessions reliably overlap on it instead of
-# racing on unpredictable real-world timing. Tenant/malformed-input
-# validation is intentionally omitted from the debug copy -- that logic is
-# already proven separately in autopilot_execution_claims_test.sql; this
-# script exists only to prove the concurrency property.
-psql -d "$DB" -v ON_ERROR_STOP=1 <<'SQL'
-create or replace function public.acquire_autopilot_execution_claim_debug(
-  p_user_id uuid, p_invoice_id uuid, p_rule_id uuid, p_action_type text,
-  p_idempotency_key text, p_sleep_seconds numeric default 0
-) returns table(claim_id uuid, acquired boolean)
-language plpgsql security definer set search_path = public, pg_temp as $$
-declare
-  v_claim_id uuid;
-begin
-  perform pg_sleep(p_sleep_seconds);
-  insert into public.autopilot_execution_claims(
-    id, user_id, invoice_id, rule_id, action_type, idempotency_key, status, claimed_at
-  ) values (
-    gen_random_uuid(), p_user_id, p_invoice_id, p_rule_id, p_action_type, p_idempotency_key, 'in_flight', now()
-  )
-  on conflict (user_id, invoice_id, rule_id, action_type) do nothing
-  returning id into v_claim_id;
-
-  if v_claim_id is not null then
-    return query select v_claim_id, true;
-    return;
-  end if;
-
-  select id into v_claim_id from public.autopilot_execution_claims
-  where user_id = p_user_id and invoice_id = p_invoice_id and rule_id = p_rule_id and action_type = p_action_type;
-  return query select v_claim_id, false;
-end;
-$$;
-SQL
-
 CALLER_A_FILE=$(mktemp)
 CALLER_B_FILE=$(mktemp)
 trap 'rm -f "$CALLER_A_FILE" "$CALLER_B_FILE"; cleanup' EXIT
 
+# Both callers sleep independently (a plain session-level statement, not
+# part of the function under test), then immediately call the real,
+# unmodified function. Launched together via `&` from the same bash
+# process, so both sleeps start within microseconds of each other and both
+# wake and fire their INSERT within a tight, genuinely overlapping window.
 (
   psql -d "$DB" -v ON_ERROR_STOP=1 -qtA -c "
-    select acquired from public.acquire_autopilot_execution_claim_debug(
-      '$USER_ID'::uuid, '$INVOICE_ID'::uuid, '$RULE_ID'::uuid, 'send_reminder', 'race-key-a', 0.5
+    select pg_sleep(0.5);
+    select acquired from public.acquire_autopilot_execution_claim(
+      '$USER_ID'::uuid, '$INVOICE_ID'::uuid, '$RULE_ID'::uuid, 'send_reminder', 'race-key-a'
     );
   " > "$CALLER_A_FILE"
 ) &
@@ -103,8 +73,9 @@ PID_A=$!
 
 (
   psql -d "$DB" -v ON_ERROR_STOP=1 -qtA -c "
-    select acquired from public.acquire_autopilot_execution_claim_debug(
-      '$USER_ID'::uuid, '$INVOICE_ID'::uuid, '$RULE_ID'::uuid, 'send_reminder', 'race-key-b', 0.5
+    select pg_sleep(0.5);
+    select acquired from public.acquire_autopilot_execution_claim(
+      '$USER_ID'::uuid, '$INVOICE_ID'::uuid, '$RULE_ID'::uuid, 'send_reminder', 'race-key-b'
     );
   " > "$CALLER_B_FILE"
 ) &
@@ -113,8 +84,11 @@ PID_B=$!
 wait "$PID_A"
 wait "$PID_B"
 
-RESULT_A=$(tr -d '[:space:]' < "$CALLER_A_FILE")
-RESULT_B=$(tr -d '[:space:]' < "$CALLER_B_FILE")
+# -qtA against a multi-statement -c prints one output line per statement;
+# pg_sleep(...) itself prints an empty result row, so the LAST non-empty
+# line is the acquired result.
+RESULT_A=$(grep -v '^$' "$CALLER_A_FILE" | tail -n 1 | tr -d '[:space:]')
+RESULT_B=$(grep -v '^$' "$CALLER_B_FILE" | tail -n 1 | tr -d '[:space:]')
 echo "caller A acquired=$RESULT_A"
 echo "caller B acquired=$RESULT_B"
 
@@ -142,12 +116,25 @@ if [ "$CLAIM_COUNT" -ne 1 ]; then
   FAIL=1
 fi
 
-# In the real scheduler, sendEmail() is only ever called after checking
-# claim.acquired === true (see actOnMatch in autopilot-scheduler/index.ts).
-# Exactly one row + exactly one acquired=true caller, proven above, is
-# therefore also a proof that at most one of the two callers could ever
-# have reached the Resend call -- the loser's code path returns before
-# sendEmail is referenced at all.
+# The persisted idempotency_key must belong to whichever caller actually
+# won -- proves the row really came from one real INSERT, not a fluke.
+WINNER_KEY=$(psql -d "$DB" -v ON_ERROR_STOP=1 -qtA -c "
+  select idempotency_key from public.autopilot_execution_claims
+  where user_id = '$USER_ID' and invoice_id = '$INVOICE_ID' and rule_id = '$RULE_ID' and action_type = 'send_reminder';
+")
+WINNER_KEY=$(echo "$WINNER_KEY" | tr -d '[:space:]')
+if [ "$WINNER_KEY" != "race-key-a" ] && [ "$WINNER_KEY" != "race-key-b" ]; then
+  echo "FAIL: persisted idempotency_key ($WINNER_KEY) does not match either real caller"
+  FAIL=1
+fi
+
+# In the real scheduler and manual-approval Edge Function,
+# runClaimedSend() (autopilotExecutionCore.js) only ever calls
+# io.sendEmail() after checking claim.acquired === true. Exactly one row +
+# exactly one acquired=true caller, proven above -- against the real,
+# unmodified acquire_autopilot_execution_claim -- is therefore also a
+# proof that at most one of the two callers could ever have reached the
+# Resend call.
 
 psql -d "$DB" -v ON_ERROR_STOP=1 -c "delete from auth.users where id = '$USER_ID';" > /dev/null
 REMAINING=$(psql -d "$DB" -v ON_ERROR_STOP=1 -qtA -c "
@@ -164,4 +151,4 @@ if [ "$FAIL" -ne 0 ]; then
   echo "=== AUTOPILOT EXECUTION CLAIM CONCURRENCY PROOF FAILED ==="
   exit 1
 fi
-echo "=== AUTOPILOT EXECUTION CLAIM CONCURRENCY PROOF PASSED (exactly one winner, 1 row, fixture cleaned up) ==="
+echo "=== AUTOPILOT EXECUTION CLAIM CONCURRENCY PROOF PASSED (real function, exactly one winner, 1 row, fixture cleaned up) ==="

@@ -1,42 +1,24 @@
 import { supabase } from './supabase'
 
-// Approve & Send: sends the draft as a real email via the send-reminder-email
-// Edge Function (the only place RESEND_API_KEY is used — never in the
-// browser), then records the reminder and resolves the awaiting_signature
-// row. Returns { error } — on send failure, nothing is written, so the card
-// can show the error and the founder can retry.
-export async function approveSignature({ id, invoiceId, userId, draftContent }) {
-  const { data: sendResult, error: sendErr } = await supabase.functions.invoke(
+// Approve & Send: routes through the send-reminder-email Edge Function's
+// approval-backed path (post-2A.1 execution safety checkpoint, BLOCKER 1).
+// Only the awaiting_signature id is sent — the Edge Function loads the
+// invoice/rule/draft and re-verifies current authority server-side, never
+// trusting a browser-supplied invoiceId/draftContent, and acquires the
+// same durable execution claim the scheduler's auto-send uses, so two
+// rapid/concurrent approve attempts can send at most once. The Edge
+// Function itself writes reminders/invoices.last_reminder/
+// awaiting_signature.status/events atomically with the actual outcome —
+// the browser no longer performs those writes itself. Returns { error }.
+export async function approveSignature({ id }) {
+  const { data: result, error: invokeErr } = await supabase.functions.invoke(
     'send-reminder-email',
-    { body: { invoiceId, body: draftContent } }
+    { body: { awaitingSignatureId: id } }
   )
-  if (sendErr || sendResult?.error) {
-    return { error: { message: sendResult?.error || sendErr.message } }
+  if (invokeErr || result?.error) {
+    return { error: { message: result?.error || invokeErr.message } }
   }
-
-  const nowIso = new Date().toISOString()
-
-  const { error: remErr } = await supabase.from('reminders').insert({
-    invoice_id: invoiceId,
-    user_id: userId,
-    title: 'Reminder sent',
-    detail: draftContent,
-  })
-  if (remErr) return { error: remErr }
-
-  const { error: invErr } = await supabase
-    .from('invoices')
-    .update({ last_reminder: nowIso })
-    .eq('id', invoiceId)
-  if (invErr) return { error: invErr }
-
-  const { error: sigErr } = await supabase
-    .from('awaiting_signature')
-    .update({ status: 'approved', resolved_at: nowIso })
-    .eq('id', id)
-  if (sigErr) return { error: sigErr }
-
-  return { error: null, resendId: sendResult?.id }
+  return { error: null, resendId: result?.id }
 }
 
 export async function skipSignature({ id, reason }) {

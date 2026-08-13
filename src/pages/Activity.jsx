@@ -33,7 +33,7 @@ export default function Activity() {
     setLoading(true)
     supabase
       .from('events')
-      .select('id, event_type, invoice_id, created_at, invoices(inv_num, clients(name))')
+      .select('id, event_type, invoice_id, created_at, lifecycle_state, evidence, invoices(inv_num, clients(name))')
       .eq('user_id', user.id)
       .order('created_at', { ascending: false })
       .limit(200)

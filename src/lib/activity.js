@@ -6,6 +6,17 @@ import { LIFECYCLE_ICON, lifecycleKeyFor } from './lifecycle'
 export const ACTIVITY_META = {
   reminder_opened: { title: 'Drafted a reminder', actor: 'Duewatch', group: 'reminders' },
   reminder_sent: { title: 'Sent a reminder', actor: 'Duewatch', group: 'reminders' },
+  // Post-2A.1 execution safety checkpoint (HIGH 2): a failed or uncertain
+  // send must never render as "Sent a reminder" — that was a truthfulness
+  // gap for the founder reading this log. Distinct event_types (not just
+  // lifecycle_state on a reminder_sent row) so the title itself is honest
+  // even for a caller/list that doesn't consult lifecycle_state at all.
+  reminder_send_failed: { title: 'Reminder send failed', actor: 'Duewatch', group: 'reminders' },
+  reminder_send_uncertain: {
+    title: 'Reminder send uncertain — stopped automatically',
+    actor: 'Duewatch',
+    group: 'reminders',
+  },
   reminder_skipped: { title: 'Skipped a reminder', actor: 'You', group: 'reminders' },
   payment_recorded: { title: 'Recorded a payment', actor: 'You', group: 'payments' },
   invoice_marked_paid: { title: 'Marked invoice paid', actor: 'You', group: 'payments' },

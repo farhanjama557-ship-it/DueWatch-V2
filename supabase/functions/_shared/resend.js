@@ -8,6 +8,15 @@ const RESEND_API_URL = 'https://api.resend.com/emails'
 // before going live; see DEPLOY.md §4.
 const DEFAULT_FROM = 'Duewatch <onboarding@resend.dev>'
 
+// HIGH 1 (post-2A.1 execution safety review-fix): a missing API key is a
+// provable pre-send failure — checkable without making an external
+// request. Callers of the execution-claim boundary must check this BEFORE
+// acquiring a durable claim, so a misconfigured deployment never
+// permanently consumes an execution identity for zero external attempts.
+export function isProviderConfigured() {
+  return Boolean(Deno.env.get('RESEND_API_KEY'))
+}
+
 export async function sendEmail({ to, subject, text, from, idempotencyKey }) {
   const apiKey = Deno.env.get('RESEND_API_KEY')
   if (!apiKey) {
