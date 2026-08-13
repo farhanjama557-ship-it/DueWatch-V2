@@ -26,6 +26,21 @@
 // userId parameter, and RULE_SNAPSHOT_FIELDS for exactly what changed and
 // why. `ruleSchedule.js`'s `nextScheduledAction()` is no longer used by
 // this module for authorization — see selectAuthorizingRule for why.
+//
+// --- Second review-fix pass (2026-08-12) ---
+// A further independent adversarial review of f82936c found four more
+// issues: (1) handledKeys/pendingInvoiceIds silently defaulted to empty
+// Sets when omitted, recreating the original permissive failure mode --
+// they are now required, explicit Sets (see the isValidExecutionHistory
+// check in both entry points); (2) revalidateAuthority checked the prior
+// rule in isolation but never confirmed CURRENT policy, taken as a whole,
+// still selects that same rule -- see the "current policy reselection"
+// step near the end of revalidateAuthority; (3) permission derivation
+// trusted autopilotSettings without proving it belonged to the caller's
+// own tenant -- see derivePermission's settingsOwnedByTenant check;
+// (4) equal-sort_order ties were broken by rule id, a secondary ordering
+// never proven to match the real scheduler -- selectAuthorizingRule now
+// fails closed (AMBIGUOUS_RULE_PRECEDENCE) on a genuine tie instead.
 
 import { daysOverdue, daysUntil } from './format.js'
 import { ruleMatches } from './ruleSchedule.js'
@@ -42,14 +57,25 @@ export const ACTION_SEND_REMINDER = 'send_reminder'
 // both sides of the contract.
 export const AUTHORITY_BLOCK_REASONS = Object.freeze({
   TENANT_MISMATCH: 'tenant_mismatch',
+  // Distinct from "checked and found none" (an explicit, valid, empty
+  // Set). This means the caller did not establish the state at all --
+  // omitted or malformed input -- which must never be silently treated as
+  // "there is none." See selectAuthorizingRule / isValidExecutionHistory.
+  EXECUTION_HISTORY_UNAVAILABLE: 'execution_history_unavailable',
   PENDING_ACTION_EXISTS: 'pending_action_exists',
   ALREADY_HANDLED: 'already_handled',
+  // Two or more currently-open candidate rules share the same winning
+  // sort_order. The real scheduler's ORDER BY sort_order ascending has no
+  // proven secondary ordering for exact ties, so which one it would
+  // actually pick is unknown -- this fails closed rather than guessing.
+  AMBIGUOUS_RULE_PRECEDENCE: 'ambiguous_rule_precedence',
 })
 
 export const REVALIDATION_OUTCOMES = Object.freeze({
   VALID: 'valid',
   PRIOR_AUTHORITY_INVALID: 'prior_authority_invalid',
   TENANT_MISMATCH: AUTHORITY_BLOCK_REASONS.TENANT_MISMATCH,
+  EXECUTION_HISTORY_UNAVAILABLE: AUTHORITY_BLOCK_REASONS.EXECUTION_HISTORY_UNAVAILABLE,
   RULE_NOT_FOUND: 'rule_not_found',
   MALFORMED_RULE_STATE: 'malformed_rule_state',
   RULE_DISABLED: 'rule_disabled',
@@ -57,6 +83,14 @@ export const REVALIDATION_OUTCOMES = Object.freeze({
   INVOICE_NO_LONGER_MATCHES: 'invoice_no_longer_matches',
   PENDING_ACTION_EXISTS: AUTHORITY_BLOCK_REASONS.PENDING_ACTION_EXISTS,
   ALREADY_HANDLED: AUTHORITY_BLOCK_REASONS.ALREADY_HANDLED,
+  AMBIGUOUS_RULE_PRECEDENCE: AUTHORITY_BLOCK_REASONS.AMBIGUOUS_RULE_PRECEDENCE,
+  // The prior rule itself is still individually valid -- exists, enabled,
+  // unchanged hash, still matches, not handled/pending -- but current
+  // founder policy AS A WHOLE, re-evaluated fresh, now selects a
+  // different rule (e.g. a newly-enabled or newly-matching rule with
+  // earlier/higher precedence). Never silently transferred; the old
+  // recommendation is simply stale.
+  POLICY_SELECTION_CHANGED: 'policy_selection_changed',
 })
 
 // Canonical policy-relevant fields for the rule snapshot fingerprint.
@@ -206,18 +240,12 @@ function isValidDueDate(value) {
   return date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day
 }
 
-function sortRulesForSelection(rules) {
-  // Selection must reflect persisted policy precedence (sort_order
-  // ascending — exactly how supabase/functions/autopilot-scheduler/
-  // index.ts fetches rules before calling planRun()), not whatever order
-  // the caller happened to pass them in. Ties (equal sort_order) break on
-  // rule id so selection stays fully deterministic rather than depending
-  // on Array.prototype.sort's stability as an implicit contract.
-  return [...rules].sort((a, b) => {
-    if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order
-    if (a.id === b.id) return 0
-    return String(a.id) < String(b.id) ? -1 : 1
-  })
+// A Set the caller explicitly constructed (even if empty) is evidence they
+// checked; anything else (undefined, an array, null, ...) means the
+// caller never established the state at all. Those are NOT equivalent --
+// see the doctrine note on AUTHORITY_BLOCK_REASONS.EXECUTION_HISTORY_UNAVAILABLE.
+function isValidExecutionHistory(value) {
+  return value instanceof Set
 }
 
 // Selects which rule, if any, currently authorizes an action for this
@@ -225,49 +253,61 @@ function sortRulesForSelection(rules) {
 //
 // This mirrors supabase/functions/_shared/rules.js's planRun() selection:
 // the first enabled, not-yet-handled-for-this-invoice rule (in persisted
-// sort_order-ascending precedence, see sortRulesForSelection) whose window
-// currently matches, on an invoice that doesn't already have a pending
-// action. It deliberately does NOT use src/lib/ruleSchedule.js's
-// nextScheduledAction(), which picks the *most advanced* matching rule
-// (largest trigger_days) — that function's own comment already discloses
-// it is "the closest honest approximation" for a browser display line with
-// no access to execution history (handledKeys/pendingInvoiceIds), not a
+// sort_order-ascending precedence) whose window currently matches, on an
+// invoice that doesn't already have a pending action. It deliberately does
+// NOT use src/lib/ruleSchedule.js's nextScheduledAction(), which picks the
+// *most advanced* matching rule (largest trigger_days) — that function's
+// own comment already discloses it is "the closest honest approximation"
+// for a browser display line with no access to execution history, not a
 // claim of parity with what the scheduler will actually do. This authority
-// boundary is load-bearing (a future action-time gate depends on it), so it
-// has to agree with the real scheduler's actual decision, not the closest
-// approximation available without that history — see HIGH 1 in the Phase
-// 2A.1 adversarial review.
+// boundary is load-bearing, so it has to agree with the real scheduler's
+// actual decision — see HIGH 1 in the first Phase 2A.1 adversarial review.
 //
-// handledKeys/pendingInvoiceIds are accepted as explicit Sets, matching
-// planRun()'s own parameters exactly (`${invoiceId}:${ruleId}` keys, and
-// invoice ids respectively). They default to empty when omitted — this
-// module never tries to derive them from `events`, since no event schema
-// in this app currently proves that exact relationship (deriving it would
-// be inference, which the review explicitly prohibited). A caller that
-// doesn't yet have real execution history available gets the same
-// permissive behavior the first candidate had; wiring real history into a
-// caller is later work, not this checkpoint's.
+// handledKeys/pendingInvoiceIds must already be real Sets by the time this
+// runs — evaluateNextActionAuthority/revalidateAuthority validate that via
+// isValidExecutionHistory() before ever calling this function (second
+// review pass, HIGH 1); this function trusts them.
+//
+// Precedence ties: the real scheduler's `.order('sort_order', { ascending:
+// true })` has no proven secondary ordering for two rules sharing the same
+// sort_order, so if the currently-open candidate set has more than one
+// rule at the winning (lowest) sort_order, this fails closed as
+// AMBIGUOUS_RULE_PRECEDENCE rather than guessing via rule id or array
+// position (second review pass, MEDIUM 2). A duplicate sort_order on a
+// rule that isn't itself an open candidate (disabled, non-matching, or
+// already handled) never participates and cannot create a false
+// ambiguity.
 function selectAuthorizingRule({ invoice, rules, handledKeys, pendingInvoiceIds, now }) {
   if (!invoice || invoice.paid) return { rule: null, blockedReason: null }
 
-  const safeHandledKeys = handledKeys instanceof Set ? handledKeys : new Set()
-  const safePendingIds = pendingInvoiceIds instanceof Set ? pendingInvoiceIds : new Set()
-
-  if (safePendingIds.has(invoice.id)) {
+  if (pendingInvoiceIds.has(invoice.id)) {
     return { rule: null, blockedReason: AUTHORITY_BLOCK_REASONS.PENDING_ACTION_EXISTS }
   }
 
-  const ordered = sortRulesForSelection(rules.filter((r) => r.enabled))
   let sawHandledMatch = false
-  for (const rule of ordered) {
+  const openCandidates = []
+  for (const rule of rules) {
+    if (!rule.enabled) continue
     if (!ruleMatches(rule, invoice, now)) continue
-    if (safeHandledKeys.has(`${invoice.id}:${rule.id}`)) {
+    if (handledKeys.has(`${invoice.id}:${rule.id}`)) {
       sawHandledMatch = true
       continue
     }
-    return { rule, blockedReason: null }
+    openCandidates.push(rule)
   }
-  return { rule: null, blockedReason: sawHandledMatch ? AUTHORITY_BLOCK_REASONS.ALREADY_HANDLED : null }
+
+  if (openCandidates.length === 0) {
+    return { rule: null, blockedReason: sawHandledMatch ? AUTHORITY_BLOCK_REASONS.ALREADY_HANDLED : null }
+  }
+
+  const minSortOrder = Math.min(...openCandidates.map((r) => r.sort_order))
+  const winners = openCandidates.filter((r) => r.sort_order === minSortOrder)
+
+  if (winners.length > 1) {
+    return { rule: null, blockedReason: AUTHORITY_BLOCK_REASONS.AMBIGUOUS_RULE_PRECEDENCE }
+  }
+
+  return { rule: winners[0], blockedReason: null }
 }
 
 // `events` (evaluate) / `currentEvents` (revalidate) are accepted for
@@ -319,13 +359,23 @@ function deriveFacts(invoice, now) {
 // from CURRENT settings, never carried over from a prior evaluation.
 // Missing/unset autopilotSettings default to the safest reading:
 // autopilot not enabled, approval required.
-function derivePermission({ autopilotSettings, invoice }) {
+//
+// canActAutomatically additionally requires autopilotSettings.user_id to
+// match the caller's own userId (second review pass, MEDIUM 1) — a
+// load-bearing autonomy decision must not be granted from a settings
+// object a future caller might accidentally supply for a different
+// tenant. requiresApproval itself is left unaffected by that check: it
+// describes what the (unproven-ownership) settings object says, which is
+// inert on its own — the dangerous step is specifically permitting
+// automatic execution, not reporting a fact about a settings row.
+function derivePermission({ autopilotSettings, invoice, userId }) {
+  const settingsOwnedByCaller = Boolean(userId) && autopilotSettings?.user_id === userId
   const autopilotEnabled = autopilotSettings?.enabled === true
   const requiresApproval = autopilotSettings?.approval_required !== false
   const invoicePaused = invoice?.autopilot_paused === true
   return {
     requiresApproval,
-    canActAutomatically: autopilotEnabled && !invoicePaused && !requiresApproval,
+    canActAutomatically: settingsOwnedByCaller && autopilotEnabled && !invoicePaused && !requiresApproval,
   }
 }
 
@@ -348,15 +398,26 @@ const UNAUTHORIZED_PERMISSION = Object.freeze({ requiresApproval: null, canActAu
  * rule, also owned by userId, that is well-formed, currently enabled, and
  * currently matches (via ruleMatches — never nextScheduledAction, see
  * selectAuthorizingRule); the invoice's due_date provably valid; the
- * invoice not already holding a pending action; and this exact rule/invoice
- * pair not already in handledKeys.
+ * invoice not already holding a pending action; this exact rule/invoice
+ * pair not already in handledKeys; and, when multiple rules currently
+ * qualify, an unambiguous (non-tied) winning sort_order.
  *
  * userId is required. Without it, or when the invoice doesn't belong to
  * it, this returns closed with no derived facts at all — see MEDIUM 1 in
- * the Phase 2A.1 adversarial review: returning facts about an invoice that
- * doesn't provably belong to the caller's tenant would itself be a
- * cross-tenant leak, a different and more severe class of problem than an
- * over-eager recommendation.
+ * the first Phase 2A.1 adversarial review: returning facts about an
+ * invoice that doesn't provably belong to the caller's tenant would itself
+ * be a cross-tenant leak, a different and more severe class of problem
+ * than an over-eager recommendation.
+ *
+ * handledKeys and pendingInvoiceIds are also required — they must be real
+ * `Set` instances, even if empty (second review pass, HIGH 1). An empty
+ * `Set` means "the caller checked and found none"; omitting them, or
+ * passing something that isn't a `Set`, means the caller never
+ * established that state at all, and this returns closed with
+ * blockedReason: 'execution_history_unavailable' (facts still included —
+ * this is a "not enough evidence to grant policy" case, not a tenant
+ * boundary). Never inferred from `events` — no event schema in this app
+ * currently proves that exact relationship.
  */
 export function evaluateNextActionAuthority({
   userId,
@@ -390,6 +451,10 @@ export function evaluateNextActionAuthority({
     return closed(facts)
   }
 
+  if (!isValidExecutionHistory(handledKeys) || !isValidExecutionHistory(pendingInvoiceIds)) {
+    return closed(facts, AUTHORITY_BLOCK_REASONS.EXECUTION_HISTORY_UNAVAILABLE)
+  }
+
   const safeRules = (Array.isArray(rules) ? rules : [])
     .filter(isWellFormedRule)
     .filter((r) => r.user_id === userId)
@@ -421,7 +486,7 @@ export function evaluateNextActionAuthority({
       evaluatedAt,
       blockedReason: null,
     },
-    permission: derivePermission({ autopilotSettings, invoice }),
+    permission: derivePermission({ autopilotSettings, invoice, userId }),
   }
 }
 
@@ -440,8 +505,23 @@ export function evaluateNextActionAuthority({
  *
  * Render-time authorization is never sufficient for execution. This is the
  * pure re-check every future Approve/Send/Schedule boundary must call
- * first. It never substitutes a different rule for the one that originally
- * authorized the recommendation — it re-checks that exact rule ID only.
+ * first. It re-checks that exact prior rule ID first (existence, tenant,
+ * well-formedness, enabled, unchanged snapshot hash, still matching, not
+ * handled/pending) — never substituting a different rule at that stage —
+ * and then, only once that rule individually still holds, re-runs full
+ * current-policy selection (the same selectAuthorizingRule() primitive
+ * evaluateNextActionAuthority uses) to confirm CURRENT policy as a whole
+ * still picks this same rule (second review pass, HIGH 2). A rule that
+ * still technically matches but has been superseded by a newly-enabled or
+ * newly-matching earlier-precedence rule is stale
+ * ('policy_selection_changed'), never silently transferred to the new
+ * winner and never kept alive on the old one.
+ *
+ * currentHandledKeys/currentPendingInvoiceIds are required real `Set`
+ * instances, exactly like evaluateNextActionAuthority's handledKeys/
+ * pendingInvoiceIds — omitted or malformed input returns closed with
+ * outcome 'execution_history_unavailable' rather than assuming empty
+ * (second review pass, HIGH 1).
  *
  * Returns { outcome, checkedRuleId, authority, permission }. `outcome` is
  * one of REVALIDATION_OUTCOMES; only 'valid' means the prior recommendation
@@ -487,6 +567,10 @@ export function revalidateAuthority({
     return closed(REVALIDATION_OUTCOMES.TENANT_MISMATCH)
   }
 
+  if (!isValidExecutionHistory(currentHandledKeys) || !isValidExecutionHistory(currentPendingInvoiceIds)) {
+    return closed(REVALIDATION_OUTCOMES.EXECUTION_HISTORY_UNAVAILABLE, priorAuthority.basis.ruleId)
+  }
+
   const ruleId = priorAuthority.basis.ruleId
   const rules = Array.isArray(currentRules) ? currentRules : []
   // Look up the exact rule that originally authorized this recommendation.
@@ -508,14 +592,34 @@ export function revalidateAuthority({
     return closed(REVALIDATION_OUTCOMES.INVOICE_NO_LONGER_MATCHES, ruleId)
   }
 
-  const safeHandledKeys = currentHandledKeys instanceof Set ? currentHandledKeys : new Set()
-  const safePendingIds = currentPendingInvoiceIds instanceof Set ? currentPendingInvoiceIds : new Set()
-
-  if (safePendingIds.has(invoice.id)) {
+  if (currentPendingInvoiceIds.has(invoice.id)) {
     return closed(REVALIDATION_OUTCOMES.PENDING_ACTION_EXISTS, ruleId)
   }
-  if (safeHandledKeys.has(`${invoice.id}:${rule.id}`)) {
+  if (currentHandledKeys.has(`${invoice.id}:${rule.id}`)) {
     return closed(REVALIDATION_OUTCOMES.ALREADY_HANDLED, ruleId)
+  }
+
+  // The prior rule individually still holds -- but that alone is not
+  // enough (second review pass, HIGH 2). Re-run the exact same
+  // deterministic selection primitive evaluateNextActionAuthority uses,
+  // against current rules/invoice/execution history, and require it to
+  // still pick this exact rule. If current policy as a whole would now
+  // select a different (e.g. newly-enabled, earlier-precedence) rule
+  // instead, the old recommendation is stale -- never silently
+  // transferred to whatever current policy would pick, and never kept
+  // alive just because this one rule, considered in isolation, still
+  // technically matches.
+  const safeCurrentRules = rules.filter(isWellFormedRule).filter((r) => r.user_id === userId)
+  const currentSelection = selectAuthorizingRule({
+    invoice,
+    rules: safeCurrentRules,
+    handledKeys: currentHandledKeys,
+    pendingInvoiceIds: currentPendingInvoiceIds,
+    now,
+  })
+
+  if (!currentSelection.rule || currentSelection.rule.id !== ruleId) {
+    return closed(currentSelection.blockedReason || REVALIDATION_OUTCOMES.POLICY_SELECTION_CHANGED, ruleId)
   }
 
   return {
@@ -531,6 +635,6 @@ export function revalidateAuthority({
     // Always current permission — an approval-setting change since the
     // prior evaluation must be reflected even when the rule itself is
     // still perfectly valid.
-    permission: derivePermission({ autopilotSettings: currentAutopilotSettings, invoice }),
+    permission: derivePermission({ autopilotSettings: currentAutopilotSettings, invoice, userId }),
   }
 }
