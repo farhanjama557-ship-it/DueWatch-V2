@@ -63,3 +63,41 @@ export function buildIdempotencyKey(identity) {
   }
   return key
 }
+
+// Third review-fix pass, MEDIUM: when a caller loses the race to acquire an
+// execution claim, both real acquireClaim adapters (autopilot-scheduler and
+// send-reminder-email) look up the prior claim's real status. If THAT
+// lookup itself errors, the caller must never collapse it into `null` —
+// upstream, `null` reads as "no known status," which claimLostMessage below
+// (and any future caller) would otherwise report as a generic "already in
+// progress," inventing a state nobody actually observed. A query failure is
+// its own distinct, explicit outcome.
+export const EXISTING_CLAIM_STATUS_UNKNOWN = 'unknown_status_query_failed'
+
+// `error` is whatever the status-lookup query returned in its `error` slot
+// (or any other error the adapter needs to fail closed on); `status` is the
+// real column value when the read succeeded. A query error always wins,
+// regardless of what (if anything) `status` also holds.
+export function resolveExistingClaimStatus({ error, status } = {}) {
+  if (error) return EXISTING_CLAIM_STATUS_UNKNOWN
+  return status ?? null
+}
+
+// Shared, human-facing copy for a CLAIM_LOST outcome — both real adapters
+// (scheduler auto-send logging and the founder-facing approval endpoint)
+// use the exact same vocabulary so "sent"/"uncertain"/"send_failed"/unknown
+// are never described inconsistently depending on which caller lost the
+// race.
+export function claimLostMessage(existingStatus) {
+  if (existingStatus === CLAIM_STATUS.SENT) return 'This reminder has already been sent.'
+  if (existingStatus === CLAIM_STATUS.UNCERTAIN) {
+    return 'A previous attempt to send this reminder had an uncertain outcome and was not automatically retried. Check Activity before trying again.'
+  }
+  if (existingStatus === CLAIM_STATUS.SEND_FAILED) {
+    return 'A previous attempt to send this reminder failed. Check Activity before trying again.'
+  }
+  if (existingStatus === EXISTING_CLAIM_STATUS_UNKNOWN) {
+    return "Duewatch found an existing execution record but couldn't verify its status. No new reminder was sent."
+  }
+  return 'Another request for this reminder is already in progress.'
+}

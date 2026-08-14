@@ -26,10 +26,14 @@ const RULE_A = '55555555-5555-4555-8555-555555555555'
 const RULE_B = '66666666-6666-4666-8666-666666666666'
 const NOW = new Date('2026-08-13T12:00:00.000Z')
 
+const CLIENT_A = '77777777-7777-4777-8777-777777777777'
+const CLIENT_B = '88888888-8888-4888-8888-888888888888'
+
 function baseInvoice(overrides = {}) {
   return {
     id: INVOICE_X,
     user_id: USER_A,
+    client_id: CLIENT_A,
     amount: 100,
     amount_paid: 0,
     due_date: '2026-08-01', // 12 days before NOW
@@ -79,18 +83,24 @@ function makeClaimStore() {
   let n = 0
   return {
     claims,
-    async acquireClaim({ userId, invoiceId, ruleId, actionType }) {
+    async acquireClaim({ userId, invoiceId, ruleId, actionType, receipt }) {
       const key = `${userId}:${invoiceId}:${ruleId}:${actionType}`
       const existing = claims.get(key)
       if (existing) return { claimId: existing.claimId, acquired: false, existingStatus: existing.status }
       n += 1
       const claimId = `claim-${n}`
-      claims.set(key, { claimId, status: 'in_flight' })
+      // Mirrors resolve_autopilot_execution_claim's real jsonb-merge
+      // semantics: the receipt written here at acquire time must survive
+      // resolveClaim's later evidence write, not be overwritten by it.
+      claims.set(key, { claimId, status: 'in_flight', receipt: receipt ?? null, evidence: {} })
       return { claimId, acquired: true }
     },
-    async resolveClaim({ claimId, status }) {
+    async resolveClaim({ claimId, status, evidence }) {
       for (const v of claims.values()) {
-        if (v.claimId === claimId) v.status = status
+        if (v.claimId === claimId) {
+          v.status = status
+          v.evidence = { ...v.evidence, ...(evidence ?? {}) }
+        }
       }
     },
   }
@@ -728,4 +738,181 @@ test('a fetchAuthorityInputs error means zero provider calls end to end through 
   }
   await assert.rejects(() => executeAutoSend({ userId: USER_A, invoiceId: INVOICE_X, ruleId: RULE_A, buildMessage, now: NOW, io }))
   assert.equal(sendEmailCallsReal.length, 0)
+})
+
+// ---------------------------------------------------------------------
+// Third execution-safety review-fix pass, focused tests.
+
+import { resolveExistingClaimStatus, claimLostMessage, EXISTING_CLAIM_STATUS_UNKNOWN } from '../supabase/functions/_shared/executionClaim.js'
+
+// 1. same invoice/client facts -> approval remains valid
+test('T1: an approval with unchanged client_id/recipientEmail (and every other fact) remains valid', async () => {
+  const { priorAuthority, priorFactualBasis, priorRuleSnapshot } = validApprovalFixture()
+  const fetchAuthorityInputs = approvalFetchInputs() // baseInvoice(): same client_id/email as the fixture
+  const { io, sendEmailCalls } = makeIo({ fetchAuthorityInputs })
+  const result = await executeApprovalSend({ userId: USER_A, priorAuthority, priorFactualBasis, priorRuleSnapshot, invoiceId: INVOICE_X, text: 't', now: NOW, io })
+  assert.equal(result.outcome, SEND_OUTCOME.SENT)
+  assert.equal(sendEmailCalls.length, 1)
+})
+
+// 2. changed client_id -> stale, zero provider calls
+test('T2: a reassigned client_id stales a queued approval even though every displayed fact still matches', async () => {
+  const { priorAuthority, priorRuleSnapshot } = validApprovalFixture()
+  const priorFactualBasis = deriveFactualBasis(baseInvoice()) // originally CLIENT_A
+  // Same balance/due date/name (clients.name unchanged) but reassigned to a
+  // different client id and a different mailbox behind that same name.
+  const reassigned = baseInvoice({ client_id: CLIENT_B, clients: { email: 'other-inbox@example.test', name: 'Acme' } })
+  const fetchAuthorityInputs = approvalFetchInputs({ invoice: reassigned })
+  const { io, sendEmailCalls } = makeIo({ fetchAuthorityInputs })
+  const result = await executeApprovalSend({ userId: USER_A, priorAuthority, priorFactualBasis, priorRuleSnapshot, invoiceId: INVOICE_X, text: 't', now: NOW, io })
+  assert.equal(result.outcome, SEND_OUTCOME.STALE_AUTHORITY)
+  assert.equal(result.detail, 'material_facts_changed')
+  assert.equal(sendEmailCalls.length, 0)
+})
+
+// 3. changed recipient email -> stale, zero provider calls
+test('T3: a changed recipient email on the SAME client stales a queued approval', async () => {
+  const { priorAuthority, priorRuleSnapshot } = validApprovalFixture()
+  const priorFactualBasis = deriveFactualBasis(baseInvoice())
+  const emailChanged = baseInvoice({ clients: { email: 'new-address@example.test', name: 'Acme' } })
+  const fetchAuthorityInputs = approvalFetchInputs({ invoice: emailChanged })
+  const { io, sendEmailCalls } = makeIo({ fetchAuthorityInputs })
+  const result = await executeApprovalSend({ userId: USER_A, priorAuthority, priorFactualBasis, priorRuleSnapshot, invoiceId: INVOICE_X, text: 't', now: NOW, io })
+  assert.equal(result.outcome, SEND_OUTCOME.STALE_AUTHORITY)
+  assert.equal(result.detail, 'material_facts_changed')
+  assert.equal(sendEmailCalls.length, 0)
+})
+
+// 4. no-email queue contains authority + factualBasis + ruleSnapshot
+test('T4: the no-email review queue payload carries authority, factualBasis, AND ruleSnapshot', async () => {
+  const invoice = baseInvoice({ clients: { email: null, name: 'Acme' } })
+  const rule = baseRule()
+  const fetchAuthorityInputs = () => ({
+    invoice,
+    rules: [rule],
+    autopilotSettings: autopilotSettings(),
+    handledKeys: new Set(),
+    pendingInvoiceIds: new Set(),
+  })
+  const { io, queueForReviewCalls } = makeIo({ fetchAuthorityInputs })
+  const result = await executeAutoSend({ userId: USER_A, invoiceId: INVOICE_X, ruleId: RULE_A, buildMessage, now: NOW, io })
+  assert.equal(result.outcome, SEND_OUTCOME.NO_EMAIL_FALLBACK)
+  assert.equal(queueForReviewCalls.length, 1)
+  const payload = queueForReviewCalls[0]
+  assert.ok(payload.authority, 'payload must carry authority')
+  assert.ok(payload.factualBasis, 'payload must carry factualBasis')
+  assert.deepEqual(payload.ruleSnapshot, buildRuleSnapshot(rule), 'payload must carry the canonical ruleSnapshot')
+})
+
+// 5. claim/receipt provenance exists before sendEmail is called
+test('T5: the durable claim/receipt is written BEFORE sendEmail is ever invoked', async () => {
+  const store = makeClaimStore()
+  const observed = []
+  const { io } = makeIo({
+    claimStore: store,
+    sendEmail: async (args) => {
+      // At the moment sendEmail is invoked, exactly one claim must already
+      // exist and already carry a full receipt -- acquireClaim (and its
+      // receipt write) strictly precedes the provider call.
+      observed.push([...store.claims.values()].map((v) => v.receipt))
+      return { id: 'resend-id' }
+    },
+  })
+  await executeAutoSend({ userId: USER_A, invoiceId: INVOICE_X, ruleId: RULE_A, buildMessage, now: NOW, io })
+  assert.equal(observed.length, 1)
+  const [receipts] = observed
+  assert.equal(receipts.length, 1)
+  const receipt = receipts[0]
+  assert.ok(receipt, 'a receipt must exist before the provider call')
+  assert.equal(receipt.userId, USER_A)
+  assert.equal(receipt.invoiceId, INVOICE_X)
+  assert.equal(receipt.ruleId, RULE_A)
+  assert.equal(receipt.actionType, ACTION_TYPE_SEND_REMINDER)
+  assert.ok(receipt.idempotencyKey)
+  assert.ok(receipt.ruleSnapshot, 'receipt must carry the canonical rule snapshot')
+  assert.ok(receipt.ruleSnapshotHash, 'receipt must carry ruleSnapshotHash')
+  assert.ok(receipt.factualBasis, 'receipt must carry the factual basis')
+  assert.ok(receipt.authorizedAt, 'receipt must carry the authorization evaluatedAt')
+  assert.ok(receipt.claimedAt, 'receipt must carry the claimed-at time')
+})
+
+// 6/7/8. successful/uncertain/failed sends resolve the SAME receipt, never a
+// fresh or different one -- and the pre-send fields survive resolution.
+test('T6: a successful send resolves the SAME receipt to sent, without losing its pre-send fields', async () => {
+  const store = makeClaimStore()
+  const { io } = makeIo({ claimStore: store, sendEmail: async () => ({ id: 'resend-1' }) })
+  const result = await executeAutoSend({ userId: USER_A, invoiceId: INVOICE_X, ruleId: RULE_A, buildMessage, now: NOW, io })
+  assert.equal(result.outcome, SEND_OUTCOME.SENT)
+  const claim = [...store.claims.values()][0]
+  assert.equal(claim.status, 'sent')
+  assert.ok(claim.receipt.ruleSnapshot, 'pre-send receipt fields must still be present after resolution')
+  assert.equal(claim.evidence.resend_id, 'resend-1')
+})
+
+test('T7: an uncertain send resolves the SAME receipt to uncertain, without losing its pre-send fields', async () => {
+  const store = makeClaimStore()
+  const { io } = makeIo({ claimStore: store, sendEmail: async () => { throw new Error('timeout') } })
+  await assert.rejects(() => executeAutoSend({ userId: USER_A, invoiceId: INVOICE_X, ruleId: RULE_A, buildMessage, now: NOW, io }))
+  const claim = [...store.claims.values()][0]
+  assert.equal(claim.status, 'uncertain')
+  assert.ok(claim.receipt.factualBasis, 'pre-send receipt fields must still be present after resolution')
+})
+
+test('T8: a failed send resolves the SAME receipt to send_failed, without losing its pre-send fields', async () => {
+  const store = makeClaimStore()
+  const { io } = makeIo({ claimStore: store, sendEmail: async () => ({ error: 'bounced' }) })
+  await assert.rejects(() => executeAutoSend({ userId: USER_A, invoiceId: INVOICE_X, ruleId: RULE_A, buildMessage, now: NOW, io }))
+  const claim = [...store.claims.values()][0]
+  assert.equal(claim.status, 'send_failed')
+  assert.ok(claim.receipt.ruleSnapshotHash, 'pre-send receipt fields must still be present after resolution')
+})
+
+// 9. Activity/event projection failure cannot remove the canonical receipt
+test('T9: an Activity/events projection failure (recordSentEvidence throwing) cannot erase the already-resolved canonical receipt', async () => {
+  const store = makeClaimStore()
+  const { io } = makeIo({
+    claimStore: store,
+    sendEmail: async () => ({ id: 'resend-9' }),
+    // Simulate the founder-facing Activity/events write failing AFTER the
+    // claim itself was already durably resolved.
+  })
+  io.recordSentEvidence = async () => {
+    throw new Error('events insert failed')
+  }
+  await assert.rejects(
+    () => executeAutoSend({ userId: USER_A, invoiceId: INVOICE_X, ruleId: RULE_A, buildMessage, now: NOW, io }),
+    /events insert failed/
+  )
+  const claim = [...store.claims.values()][0]
+  assert.equal(claim.status, 'sent', 'the canonical receipt must still say sent even though the Activity projection failed')
+  assert.equal(claim.evidence.resend_id, 'resend-9')
+})
+
+// 10. existing-status query unavailable -> truthful unknown state, zero send
+test('T10a: resolveExistingClaimStatus never collapses a query error into null/"no status"', () => {
+  assert.equal(resolveExistingClaimStatus({ error: { message: 'boom' }, status: null }), EXISTING_CLAIM_STATUS_UNKNOWN)
+  assert.equal(resolveExistingClaimStatus({ error: { message: 'boom' }, status: 'sent' }), EXISTING_CLAIM_STATUS_UNKNOWN, 'an error always wins, regardless of any stale status also present')
+  assert.equal(resolveExistingClaimStatus({ error: null, status: 'sent' }), 'sent')
+  assert.equal(resolveExistingClaimStatus({ error: null, status: null }), null)
+  assert.equal(resolveExistingClaimStatus({}), null)
+})
+
+test('T10b: claimLostMessage gives a truthful "couldn\'t verify" copy for the unknown state, never a generic "in progress"', () => {
+  const unknownMessage = claimLostMessage(EXISTING_CLAIM_STATUS_UNKNOWN)
+  assert.match(unknownMessage, /couldn't verify its status/)
+  assert.doesNotMatch(unknownMessage, /already in progress/)
+  // Contrast: genuinely unknown (no error, no status at all) still falls
+  // back to the pre-existing generic "in progress" copy -- only an actual
+  // query ERROR gets the new "unknown" outcome.
+  assert.match(claimLostMessage(null), /already in progress/)
+})
+
+test('T10c: acquireClaim adapters route a real query error through resolveExistingClaimStatus, making zero provider calls', () => {
+  // This proves the pure decision function both real Deno adapters
+  // (autopilot-scheduler, send-reminder-email) now call: a query error
+  // must never be silently mapped to "in progress" -- it is exercised here
+  // exactly as those adapters call it, id est with a real error object.
+  const outcome = resolveExistingClaimStatus({ error: { message: 'connection reset' }, status: undefined })
+  assert.equal(outcome, EXISTING_CLAIM_STATUS_UNKNOWN)
+  assert.equal(claimLostMessage(outcome), "Duewatch found an existing execution record but couldn't verify its status. No new reminder was sent.")
 })

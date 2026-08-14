@@ -46,6 +46,7 @@ import { sendEmail, isProviderConfigured } from '../_shared/resend.js'
 import { corsHeaders } from '../_shared/cors.js'
 import { executeApprovalSend, SEND_OUTCOME } from '../_shared/autopilotExecutionCore.js'
 import { fetchAuthorityInputs } from '../_shared/autopilotAuthorityInputs.js'
+import { resolveExistingClaimStatus, claimLostMessage } from '../_shared/executionClaim.js'
 
 Deno.serve(async (req) => {
   // Browser preflight — must return the CORS headers with no auth check,
@@ -222,17 +223,6 @@ async function handleApprovalSend({ admin, userId, awaitingSignatureId, editedBo
   }
 }
 
-function claimLostMessage(existingStatus) {
-  if (existingStatus === 'sent') return 'This reminder has already been sent.'
-  if (existingStatus === 'uncertain') {
-    return 'A previous attempt to send this reminder had an uncertain outcome and was not automatically retried. Check Activity before trying again.'
-  }
-  if (existingStatus === 'send_failed') {
-    return 'A previous attempt to send this reminder failed. Check Activity before trying again.'
-  }
-  return 'Another request for this reminder is already in progress.'
-}
-
 // Real, Supabase-backed implementation of autopilotExecutionCore's `io`
 // interface for the approval-backed path. Every write's error is checked
 // and thrown, not silently ignored.
@@ -248,40 +238,43 @@ function buildApprovalIo({ admin, userId, row }) {
       return fetchAuthorityInputs(admin, { userId, invoiceId, excludeAwaitingSignatureId: row.id })
     },
     isProviderConfigured,
-    async acquireClaim({ userId: uid, invoiceId, ruleId, actionType, idempotencyKey }) {
+    async acquireClaim({ userId: uid, invoiceId, ruleId, actionType, idempotencyKey, receipt }) {
       const { data, error } = await admin.rpc('acquire_autopilot_execution_claim', {
         p_user_id: uid,
         p_invoice_id: invoiceId,
         p_rule_id: ruleId,
         p_action_type: actionType,
         p_idempotency_key: idempotencyKey,
+        p_receipt: receipt ?? {},
       })
       if (error) throw error
       const claimRow = data?.[0]
       if (claimRow?.acquired) {
         return { claimId: claimRow.claim_id, acquired: true }
       }
+      // Third pass, MEDIUM: a failed status lookup must never be silently
+      // read as "no status" (see resolveExistingClaimStatus's doc comment).
       let existingStatus = null
       if (claimRow?.claim_id) {
-        const { data: existing } = await admin
+        const { data: existing, error: statusErr } = await admin
           .from('autopilot_execution_claims')
           .select('status')
           .eq('id', claimRow.claim_id)
           .maybeSingle()
-        existingStatus = existing?.status ?? null
+        existingStatus = resolveExistingClaimStatus({ error: statusErr, status: existing?.status })
       }
       return { claimId: claimRow?.claim_id, acquired: false, existingStatus }
     },
     async resolveClaim({ claimId, status, providerMessageId, evidence }) {
-      const { error } = await admin
-        .from('autopilot_execution_claims')
-        .update({
-          status,
-          resolved_at: nowIso(),
-          provider_message_id: providerMessageId ?? null,
-          evidence: evidence ?? {},
-        })
-        .eq('id', claimId)
+      // Third pass, HIGH: resolution MERGES into the claim's evidence (via
+      // the SQL function) rather than overwriting it, so the receipt
+      // written at acquireClaim time is never clobbered.
+      const { error } = await admin.rpc('resolve_autopilot_execution_claim', {
+        p_claim_id: claimId,
+        p_status: status,
+        p_provider_message_id: providerMessageId ?? null,
+        p_evidence: evidence ?? {},
+      })
       if (error) throw error
     },
     sendEmail,
@@ -291,7 +284,7 @@ function buildApprovalIo({ admin, userId, row }) {
       // rather than silently creating a duplicate draft.
       throw new Error('This client has no email on file.')
     },
-    async recordSentEvidence({ claimId, sendResult, authority, reason, text }) {
+    async recordSentEvidence({ claimId, sendResult, authority, reason, text, ruleSnapshot }) {
       const { error: remErr } = await admin.from('reminders').insert({
         invoice_id: row.invoice_id,
         user_id: userId,
@@ -325,12 +318,15 @@ function buildApprovalIo({ admin, userId, row }) {
           rule_id: authority?.basis?.ruleId ?? null,
           rule_name: authority?.basis?.ruleName ?? null,
           rule_snapshot_hash: authority?.ruleSnapshotHash ?? null,
+          // MEDIUM (third pass): the full canonical rule snapshot alongside
+          // its hash — defense-in-depth durable evidence, not a replacement.
+          rule_snapshot: ruleSnapshot ?? null,
           authorized_at: authority?.evaluatedAt ?? null,
         },
       })
       if (evErr) throw evErr
     },
-    async recordFailureEvidence({ claimId, error, authority, reason }) {
+    async recordFailureEvidence({ claimId, error, authority, reason, ruleSnapshot }) {
       const { error: evErr } = await admin.from('events').insert({
         user_id: userId,
         event_type: 'reminder_send_failed',
@@ -346,12 +342,15 @@ function buildApprovalIo({ admin, userId, row }) {
           rule_id: authority?.basis?.ruleId ?? null,
           rule_name: authority?.basis?.ruleName ?? null,
           rule_snapshot_hash: authority?.ruleSnapshotHash ?? null,
+          // MEDIUM (third pass): the full canonical rule snapshot alongside
+          // its hash — defense-in-depth durable evidence, not a replacement.
+          rule_snapshot: ruleSnapshot ?? null,
           authorized_at: authority?.evaluatedAt ?? null,
         },
       })
       if (evErr) throw evErr
     },
-    async recordUncertainEvidence({ claimId, error, authority, reason }) {
+    async recordUncertainEvidence({ claimId, error, authority, reason, ruleSnapshot }) {
       const { error: evErr } = await admin.from('events').insert({
         user_id: userId,
         event_type: 'reminder_send_uncertain',
@@ -368,6 +367,9 @@ function buildApprovalIo({ admin, userId, row }) {
           rule_id: authority?.basis?.ruleId ?? null,
           rule_name: authority?.basis?.ruleName ?? null,
           rule_snapshot_hash: authority?.ruleSnapshotHash ?? null,
+          // MEDIUM (third pass): the full canonical rule snapshot alongside
+          // its hash — defense-in-depth durable evidence, not a replacement.
+          rule_snapshot: ruleSnapshot ?? null,
           authorized_at: authority?.evaluatedAt ?? null,
         },
       })

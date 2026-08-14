@@ -34,6 +34,7 @@ import { reminderDraft, explainRule } from '../_shared/draftTemplate.js'
 import { evaluateNextActionAuthority, buildRuleSnapshot } from '../_shared/nextActionAuthority.js'
 import { executeAutoSend, SEND_OUTCOME, deriveFactualBasis } from '../_shared/autopilotExecutionCore.js'
 import { fetchHandledState, fetchAuthorityInputs } from '../_shared/autopilotAuthorityInputs.js'
+import { resolveExistingClaimStatus } from '../_shared/executionClaim.js'
 
 const MAX_PER_RUN = 10 // safety rail: Resend rate limits + no surprise batches
 
@@ -196,13 +197,14 @@ function buildIo({ userId, invoiceId }) {
       return fetchAuthorityInputs(admin, { userId, invoiceId: id })
     },
     isProviderConfigured,
-    async acquireClaim({ userId: uid, invoiceId: iid, ruleId, actionType, idempotencyKey }) {
+    async acquireClaim({ userId: uid, invoiceId: iid, ruleId, actionType, idempotencyKey, receipt }) {
       const { data, error } = await admin.rpc('acquire_autopilot_execution_claim', {
         p_user_id: uid,
         p_invoice_id: iid,
         p_rule_id: ruleId,
         p_action_type: actionType,
         p_idempotency_key: idempotencyKey,
+        p_receipt: receipt ?? {},
       })
       if (error) throw error
       const row = data?.[0]
@@ -212,32 +214,34 @@ function buildIo({ userId, invoiceId }) {
       // MEDIUM (existing claim outcome truthfulness): look up the REAL
       // prior status so a blocked caller can say what's actually known
       // (sent / send_failed / uncertain / in_flight) instead of a generic
-      // "already handled."
+      // "already handled." Third pass, MEDIUM: a failure of THIS lookup
+      // itself must never be silently read as "no status" — that would
+      // invent an "in progress" claim nobody actually observed.
       let existingStatus = null
       if (row?.claim_id) {
-        const { data: existing } = await admin
+        const { data: existing, error: statusErr } = await admin
           .from('autopilot_execution_claims')
           .select('status')
           .eq('id', row.claim_id)
           .maybeSingle()
-        existingStatus = existing?.status ?? null
+        existingStatus = resolveExistingClaimStatus({ error: statusErr, status: existing?.status })
       }
       return { claimId: row?.claim_id, acquired: false, existingStatus }
     },
     async resolveClaim({ claimId, status, providerMessageId, evidence }) {
-      const { error } = await admin
-        .from('autopilot_execution_claims')
-        .update({
-          status,
-          resolved_at: new Date().toISOString(),
-          provider_message_id: providerMessageId ?? null,
-          evidence: evidence ?? {},
-        })
-        .eq('id', claimId)
+      // Third pass, HIGH: resolution MERGES into the claim's evidence
+      // (via the SQL function) rather than overwriting it, so the receipt
+      // written at acquireClaim time is never clobbered.
+      const { error } = await admin.rpc('resolve_autopilot_execution_claim', {
+        p_claim_id: claimId,
+        p_status: status,
+        p_provider_message_id: providerMessageId ?? null,
+        p_evidence: evidence ?? {},
+      })
       if (error) throw error
     },
     sendEmail,
-    async queueForReview({ draft, draftReason, tone, authority, factualBasis }) {
+    async queueForReview({ draft, draftReason, tone, authority, factualBasis, ruleSnapshot }) {
       const { error } = await admin.from('awaiting_signature').insert({
         user_id: userId,
         invoice_id: invoiceId,
@@ -250,12 +254,16 @@ function buildIo({ userId, invoiceId }) {
           rule_name: authority?.basis?.ruleName ?? null,
           authority,
           factualBasis,
+          // HIGH: a no-email fallback row must be exactly as approvable as
+          // any other awaiting_signature row — handleApprovalSend requires
+          // authority + factualBasis + ruleSnapshot all present.
+          ruleSnapshot,
         },
         status: 'pending',
       })
       if (error) throw error
     },
-    async recordSentEvidence({ claimId, sendResult, authority, reason, text }) {
+    async recordSentEvidence({ claimId, sendResult, authority, reason, text, ruleSnapshot }) {
       const nowIso = new Date().toISOString()
       const { error: remErr } = await admin.from('reminders').insert({
         invoice_id: invoiceId,
@@ -287,12 +295,16 @@ function buildIo({ userId, invoiceId }) {
           rule_id: authority?.basis?.ruleId ?? null,
           rule_name: authority?.basis?.ruleName ?? null,
           rule_snapshot_hash: authority?.ruleSnapshotHash ?? null,
+          // MEDIUM (third pass): the final receipt also carries the full
+          // canonical rule snapshot, not just its hash — defense-in-depth
+          // durable evidence alongside rule_snapshot_hash, which stays put.
+          rule_snapshot: ruleSnapshot ?? null,
           authorized_at: authority?.evaluatedAt ?? null,
         },
       })
       if (evErr) throw evErr
     },
-    async recordFailureEvidence({ claimId, error, authority, reason }) {
+    async recordFailureEvidence({ claimId, error, authority, reason, ruleSnapshot }) {
       // HIGH 2 (first pass): distinct event_type so this never renders as
       // "Sent a reminder" -- a truthful failure receipt, not a silent
       // automation.
@@ -311,12 +323,16 @@ function buildIo({ userId, invoiceId }) {
           rule_id: authority?.basis?.ruleId ?? null,
           rule_name: authority?.basis?.ruleName ?? null,
           rule_snapshot_hash: authority?.ruleSnapshotHash ?? null,
+          // MEDIUM (third pass): the final receipt also carries the full
+          // canonical rule snapshot, not just its hash — defense-in-depth
+          // durable evidence alongside rule_snapshot_hash, which stays put.
+          rule_snapshot: ruleSnapshot ?? null,
           authorized_at: authority?.evaluatedAt ?? null,
         },
       })
       if (evErr) throw evErr
     },
-    async recordUncertainEvidence({ claimId, error, authority, reason }) {
+    async recordUncertainEvidence({ claimId, error, authority, reason, ruleSnapshot }) {
       // HIGH 2 (first pass): visible, durable evidence that Duewatch
       // stopped and will not auto-retry because completion could not be
       // proven.
@@ -336,6 +352,10 @@ function buildIo({ userId, invoiceId }) {
           rule_id: authority?.basis?.ruleId ?? null,
           rule_name: authority?.basis?.ruleName ?? null,
           rule_snapshot_hash: authority?.ruleSnapshotHash ?? null,
+          // MEDIUM (third pass): the final receipt also carries the full
+          // canonical rule snapshot, not just its hash — defense-in-depth
+          // durable evidence alongside rule_snapshot_hash, which stays put.
+          rule_snapshot: ruleSnapshot ?? null,
           authorized_at: authority?.evaluatedAt ?? null,
         },
       })

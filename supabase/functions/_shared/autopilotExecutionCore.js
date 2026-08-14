@@ -51,6 +51,16 @@ function formatShortDate(value) {
 // re-derived at execution time to detect drift (a partial payment
 // changing the balance, a due-date correction, a client rename) — never
 // inferred by parsing the draft's own natural-language text.
+//
+// Third review-fix pass, BLOCKER: displayed facts are not the only thing
+// that must stay pinned to the invoice that authorized a draft — the
+// RECIPIENT is. clientId/recipientEmail are captured here (not just
+// clientName, which is cosmetic) and exact-compared at execution time so a
+// reassignment of the invoice to a different client, or a changed email on
+// the same client, stales the queued draft and forces fresh review — even
+// if every displayed fact happens to still read identically. Deliberately
+// NOT part of the execution identity (see executionClaim.js): they gate
+// whether a queued draft may still be sent, not which claim row it maps to.
 export function deriveFactualBasis(invoice) {
   return {
     invoiceId: invoice.id,
@@ -58,6 +68,8 @@ export function deriveFactualBasis(invoice) {
     balance: formatMoney((Number(invoice.amount) || 0) - (Number(invoice.amount_paid) || 0)),
     dueDate: formatShortDate(invoice.due_date),
     clientName: invoice.clients?.name || 'No client',
+    clientId: invoice.client_id ?? null,
+    recipientEmail: invoice.clients?.email ?? null,
   }
 }
 
@@ -68,7 +80,9 @@ export function factualBasisMatches(prior, current) {
     prior.invNum === current.invNum &&
     prior.balance === current.balance &&
     prior.dueDate === current.dueDate &&
-    prior.clientName === current.clientName
+    prior.clientName === current.clientName &&
+    prior.clientId === current.clientId &&
+    prior.recipientEmail === current.recipientEmail
   )
 }
 
@@ -117,7 +131,21 @@ export function ruleSnapshotsMatch(prior, current) {
 // current authority (and, for approvals, current material facts) has
 // already been confirmed by their own (different) re-check — this is the
 // literal shared execution boundary BLOCKER 1 requires.
-async function runClaimedSend({ userId, invoiceId, ruleId, invoice, subject, text, reason, tone, authority, io }) {
+async function runClaimedSend({
+  userId,
+  invoiceId,
+  ruleId,
+  invoice,
+  subject,
+  text,
+  reason,
+  tone,
+  authority,
+  factualBasis,
+  ruleSnapshot,
+  io,
+}) {
+  const resolvedFactualBasis = factualBasis ?? deriveFactualBasis(invoice)
   const to = invoice?.clients?.email
   if (!to) {
     await io.queueForReview({
@@ -126,7 +154,13 @@ async function runClaimedSend({ userId, invoiceId, ruleId, invoice, subject, tex
       draftReason: reason,
       tone,
       authority,
-      factualBasis: deriveFactualBasis(invoice),
+      factualBasis: resolvedFactualBasis,
+      // HIGH: handleApprovalSend requires authority + factualBasis +
+      // ruleSnapshot before it will ever revalidate a queued draft. A
+      // no-email fallback row is exactly as "queued for founder review" as
+      // any other awaiting_signature row, so it must carry the same three
+      // receipts — never just the first two.
+      ruleSnapshot,
     })
     return { outcome: SEND_OUTCOME.NO_EMAIL_FALLBACK }
   }
@@ -145,12 +179,35 @@ async function runClaimedSend({ userId, invoiceId, ruleId, invoice, subject, tex
     throw new Error(`Cannot acquire an execution claim: malformed identity for invoice ${invoiceId}, rule ${ruleId}`)
   }
 
+  // Third review-fix pass, HIGH: the durable claim row itself IS the
+  // canonical execution receipt — it must carry enough provenance to
+  // answer "what did Duewatch decide, and why" BEFORE any external
+  // request is made, so a crash between acquiring the claim and resolving
+  // it (or a later Activity/events projection failure — see below) can
+  // never erase that provenance. Never attempt to make the provider call
+  // and this write one transaction; the claim row existing first is what
+  // makes at-most-once safe, and this receipt rides along on that same
+  // pre-send write.
+  const receipt = {
+    userId,
+    invoiceId,
+    ruleId,
+    actionType: ACTION_TYPE_SEND_REMINDER,
+    idempotencyKey,
+    ruleSnapshot: ruleSnapshot ?? null,
+    ruleSnapshotHash: authority?.ruleSnapshotHash ?? null,
+    factualBasis: resolvedFactualBasis,
+    authorizedAt: authority?.evaluatedAt ?? null,
+    claimedAt: new Date().toISOString(),
+  }
+
   const claim = await io.acquireClaim({
     userId,
     invoiceId,
     ruleId,
     actionType: ACTION_TYPE_SEND_REMINDER,
     idempotencyKey,
+    receipt,
   })
   if (!claim?.acquired) {
     // Lost the race, or already durably handled. Zero provider-send calls
@@ -172,8 +229,11 @@ async function runClaimedSend({ userId, invoiceId, ruleId, invoice, subject, tex
     await io.resolveClaim({ claimId: claim.claimId, status: 'uncertain', evidence: { error: message } })
     // HIGH 2 (first pass): an uncertain attempt must leave visible durable
     // evidence that Duewatch stopped and will not auto-retry, distinct
-    // from both "sent" and a definite failure — never silent.
-    await io.recordUncertainEvidence({ claimId: claim.claimId, error: message, authority, reason, text })
+    // from both "sent" and a definite failure — never silent. The claim
+    // row was ALREADY resolved above; if this next write fails, the
+    // canonical receipt still truthfully says "uncertain" (see MEDIUM,
+    // canonical rule snapshot section, below).
+    await io.recordUncertainEvidence({ claimId: claim.claimId, error: message, authority, reason, text, ruleSnapshot })
     throw err
   }
 
@@ -185,7 +245,7 @@ async function runClaimedSend({ userId, invoiceId, ruleId, invoice, subject, tex
       status: 'send_failed',
       evidence: { error: sendResult.error },
     })
-    await io.recordFailureEvidence({ claimId: claim.claimId, error: sendResult.error, authority, reason, text })
+    await io.recordFailureEvidence({ claimId: claim.claimId, error: sendResult.error, authority, reason, text, ruleSnapshot })
     throw new Error(sendResult.error)
   }
 
@@ -195,7 +255,7 @@ async function runClaimedSend({ userId, invoiceId, ruleId, invoice, subject, tex
     providerMessageId: sendResult.id || null,
     evidence: { resend_id: sendResult.id || null },
   })
-  await io.recordSentEvidence({ claimId: claim.claimId, sendResult, authority, reason, text })
+  await io.recordSentEvidence({ claimId: claim.claimId, sendResult, authority, reason, text, ruleSnapshot })
 
   return { outcome: SEND_OUTCOME.SENT, claimId: claim.claimId, providerMessageId: sendResult.id || null }
 }
@@ -244,6 +304,8 @@ export async function executeAutoSend({ userId, invoiceId, ruleId, buildMessage,
     reason,
     tone: rule.tone,
     authority: evaluation.authority,
+    factualBasis,
+    ruleSnapshot: buildRuleSnapshot(rule),
     io,
   })
 }
@@ -295,6 +357,10 @@ export async function executeApprovalSend({
 
   const currentFactualBasis = deriveFactualBasis(inputs.invoice)
   if (!factualBasisMatches(priorFactualBasis, currentFactualBasis)) {
+    // BLOCKER: covers clientId/recipientEmail drift (invoice reassigned to
+    // a different client, or the client's email changed) exactly the same
+    // way it already covered balance/due-date/name drift — a single
+    // exact-field comparison, no separate identity-specific branch needed.
     return { outcome: SEND_OUTCOME.STALE_AUTHORITY, detail: 'material_facts_changed' }
   }
 
@@ -307,6 +373,8 @@ export async function executeApprovalSend({
     text,
     reason,
     authority: revalidation.authority,
+    factualBasis: currentFactualBasis,
+    ruleSnapshot: buildRuleSnapshot(currentRule),
     io,
   })
 }
