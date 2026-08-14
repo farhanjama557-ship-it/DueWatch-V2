@@ -8,6 +8,11 @@ import {
   isAuthorizedForAutomaticHandling,
   toPendingInvoiceIds,
   toHandledKeys,
+  classifyPulseAuthority,
+  classifyPulseRowState,
+  countBlockedDecisions,
+  PULSE_STATE,
+  PULSE_ROW_STATE,
 } from '../src/lib/pulseAuthority.js'
 import { AUTHORITY_BLOCK_REASONS } from '../src/lib/nextActionAuthority.js'
 
@@ -380,6 +385,215 @@ test('toHandledKeys is intentionally semantically equivalent to the Deno fetchHa
 })
 
 // ---------------------------------------------------------------------
+// Second adversarial review pass, HIGH 1: classifyPulseAuthority() must
+// give a truthful, DISTINCT display state for every authority outcome —
+// never collapsed into "No matching rule" for anything that isn't
+// genuinely "authority ran and found no rule."
+
+test('HIGH1: classifyPulseAuthority gives DISTINCT states for no-rule vs already-handled vs pending vs unavailable', () => {
+  const noRule = classifyPulseAuthority({
+    recommendation: null,
+    authority: { authorized: false, blockedReason: null },
+    permission: { canActAutomatically: false },
+  })
+  const alreadyHandled = classifyPulseAuthority({
+    recommendation: null,
+    authority: { authorized: false, blockedReason: AUTHORITY_BLOCK_REASONS.ALREADY_HANDLED },
+    permission: { canActAutomatically: false },
+  })
+  const pending = classifyPulseAuthority({
+    recommendation: null,
+    authority: { authorized: false, blockedReason: AUTHORITY_BLOCK_REASONS.PENDING_ACTION_EXISTS },
+    permission: { canActAutomatically: false },
+  })
+  const unavailable = classifyPulseAuthority(null)
+
+  const states = [noRule.state, alreadyHandled.state, pending.state, unavailable.state]
+  assert.deepEqual(states, [
+    PULSE_STATE.NO_RULE,
+    PULSE_STATE.ALREADY_HANDLED,
+    PULSE_STATE.AWAITING_APPROVAL,
+    PULSE_STATE.NEEDS_REVIEW_UNAVAILABLE,
+  ])
+  // Every one of the four must be a DIFFERENT value -- the whole point of
+  // this fix.
+  assert.equal(new Set(states).size, 4, 'all four states must be pairwise distinct')
+
+  // And none of the labels is a raw developer enum string.
+  for (const result of [noRule, alreadyHandled, pending, unavailable]) {
+    assert.doesNotMatch(result.label, /^[a-z_]+$/, 'label must be human copy, never a raw enum string')
+  }
+})
+
+test('HIGH1: authorized + canActAutomatically -> AUTHORIZED_AUTOMATIC; authorized + approval required -> AUTHORIZED_APPROVAL_REQUIRED (also distinct)', () => {
+  const automatic = classifyPulseAuthority({
+    authority: { authorized: true, blockedReason: null },
+    permission: { canActAutomatically: true },
+  })
+  const approvalRequired = classifyPulseAuthority({
+    authority: { authorized: true, blockedReason: null },
+    permission: { canActAutomatically: false },
+  })
+  assert.equal(automatic.state, PULSE_STATE.AUTHORIZED_AUTOMATIC)
+  assert.equal(approvalRequired.state, PULSE_STATE.AUTHORIZED_APPROVAL_REQUIRED)
+  assert.notEqual(automatic.state, approvalRequired.state)
+})
+
+test('HIGH1: malformed/ambiguous authority state -> a "needs review / couldn\'t verify" state, never "No matching rule"', () => {
+  const malformed = classifyPulseAuthority({
+    authority: { authorized: false, blockedReason: AUTHORITY_BLOCK_REASONS.MALFORMED_RULE_STATE },
+    permission: { canActAutomatically: false },
+  })
+  const ambiguous = classifyPulseAuthority({
+    authority: { authorized: false, blockedReason: AUTHORITY_BLOCK_REASONS.AMBIGUOUS_RULE_PRECEDENCE },
+    permission: { canActAutomatically: false },
+  })
+  assert.equal(malformed.state, PULSE_STATE.NEEDS_REVIEW_MALFORMED)
+  assert.equal(ambiguous.state, PULSE_STATE.NEEDS_REVIEW_MALFORMED)
+  assert.notEqual(malformed.state, PULSE_STATE.NO_RULE)
+  assert.match(malformed.label, /couldn't verify/i)
+})
+
+test('HIGH1: an unrecognized/future blockedReason value fails closed to "needs review," never defaults to "No matching rule"', () => {
+  const unknown = classifyPulseAuthority({
+    authority: { authorized: false, blockedReason: 'some_future_reason_this_module_has_never_seen' },
+    permission: { canActAutomatically: false },
+  })
+  assert.equal(unknown.state, PULSE_STATE.NEEDS_REVIEW_MALFORMED)
+})
+
+test('HIGH1: classifyPulseRowState gives distinct row states for awaiting vs automated vs already-handled vs needs-review vs manual', () => {
+  const awaitingIds = new Set(['inv-awaiting'])
+  const empty = new Set()
+
+  const awaiting = classifyPulseRowState('inv-awaiting', { awaitingInvoiceIds: awaitingIds, evaluation: null })
+  const automated = classifyPulseRowState('inv-2', {
+    awaitingInvoiceIds: empty,
+    evaluation: { authority: { authorized: true }, permission: { canActAutomatically: true } },
+  })
+  const alreadyHandled = classifyPulseRowState('inv-3', {
+    awaitingInvoiceIds: empty,
+    evaluation: { authority: { authorized: false, blockedReason: AUTHORITY_BLOCK_REASONS.ALREADY_HANDLED } },
+  })
+  const needsReview = classifyPulseRowState('inv-4', { awaitingInvoiceIds: empty, evaluation: null })
+  const manual = classifyPulseRowState('inv-5', {
+    awaitingInvoiceIds: empty,
+    evaluation: { authority: { authorized: false, blockedReason: null } },
+  })
+
+  assert.deepEqual(
+    [awaiting, automated, alreadyHandled, needsReview, manual],
+    [
+      PULSE_ROW_STATE.AWAITING_APPROVAL,
+      PULSE_ROW_STATE.AUTOMATED,
+      PULSE_ROW_STATE.ALREADY_HANDLED,
+      PULSE_ROW_STATE.NEEDS_REVIEW,
+      PULSE_ROW_STATE.MANUAL,
+    ]
+  )
+})
+
+// ---------------------------------------------------------------------
+// Second adversarial review pass, HIGH 2: a rule-query FAILURE must not
+// become "genuinely zero rules" -- evaluatePulseAuthority must never call
+// evaluateNextActionAuthority with an unavailable rule list (which would
+// silently coerce to [] and misreport "no rule matches" as fact).
+
+test('HIGH2: rules === null (query failed) -> every invoice evaluates to null (unavailable), never treated as zero rules', () => {
+  const invoice = baseInvoice()
+  const result = evaluatePulseAuthority({
+    userId: USER_A,
+    invoices: [invoice],
+    rules: null, // the DataContext shape for "the rule query failed"
+    autopilotSettings: autopilotSettings(),
+    ...EMPTY,
+    now: NOW,
+  })
+  const evaluation = result.get(invoice.id)
+  assert.equal(evaluation, null)
+  // Downstream classification must say "couldn't verify," never "No
+  // matching rule" (which would be a false claim of a checked, real fact).
+  const classified = classifyPulseAuthority(evaluation)
+  assert.equal(classified.state, PULSE_STATE.NEEDS_REVIEW_UNAVAILABLE)
+  assert.notEqual(classified.state, PULSE_STATE.NO_RULE)
+})
+
+test('HIGH2: rules === [] (query succeeded, zero rows) -> a REAL evaluation runs and genuinely reports no matching rule', () => {
+  const invoice = baseInvoice()
+  const result = evaluatePulseAuthority({
+    userId: USER_A,
+    invoices: [invoice],
+    rules: [], // a real, successful, empty result -- distinct from null
+    autopilotSettings: autopilotSettings(),
+    ...EMPTY,
+    now: NOW,
+  })
+  const evaluation = result.get(invoice.id)
+  assert.notEqual(evaluation, null, 'a real empty rule list must still produce a real evaluation, not the unavailable sentinel')
+  assert.equal(evaluation.authority.authorized, false)
+  const classified = classifyPulseAuthority(evaluation)
+  assert.equal(classified.state, PULSE_STATE.NO_RULE)
+})
+
+test('HIGH2: isAuthorizedForAutomaticHandling is safely false when rules were unavailable (no automatic-handling claim)', () => {
+  const invoice = baseInvoice()
+  const result = evaluatePulseAuthority({
+    userId: USER_A,
+    invoices: [invoice],
+    rules: null,
+    autopilotSettings: autopilotSettings(),
+    ...EMPTY,
+    now: NOW,
+  })
+  assert.equal(isAuthorizedForAutomaticHandling(result.get(invoice.id)), false)
+})
+
+// ---------------------------------------------------------------------
+// Second adversarial review pass, MEDIUM 1: decision counts must be
+// mutually exclusive -- one overdue invoice with one pending approval
+// counts as exactly one founder decision, never two.
+
+test('MEDIUM1: an overdue invoice with a pending approval is NOT double-counted by countBlockedDecisions', () => {
+  const invoice = baseInvoice() // overdue (baseInvoice's due_date is -20 days)
+  const rule = baseRule()
+  const awaitingInvoiceIds = new Set([invoice.id]) // this invoice has a pending draft
+  const pulseAuthority = evaluatePulseAuthority({
+    userId: USER_A,
+    invoices: [invoice],
+    rules: [rule],
+    autopilotSettings: autopilotSettings(),
+    handledKeys: new Set(),
+    pendingInvoiceIds: new Set([invoice.id]),
+    now: NOW,
+  })
+  const blockedCount = countBlockedDecisions([invoice], { awaitingInvoiceIds, pulseAuthority })
+  // The founder-facing total is awaitingCount (1, from the real
+  // awaiting_signature row count) + blockedCount -- blockedCount must be
+  // 0 here, or this single invoice would count as two decisions.
+  assert.equal(blockedCount, 0)
+  const decisionsNeeded = 1 /* awaitingCount */ + blockedCount
+  assert.equal(decisionsNeeded, 1, 'exactly one founder decision, not two')
+})
+
+test('MEDIUM1: a DIFFERENT overdue invoice with no pending approval and no working automation IS counted as blocked', () => {
+  const pendingInvoice = baseInvoice({ id: 'inv-pending' })
+  const blockedInvoice = baseInvoice({ id: 'inv-blocked' })
+  const rule = baseRule()
+  const awaitingInvoiceIds = new Set([pendingInvoice.id])
+  const pulseAuthority = evaluatePulseAuthority({
+    userId: USER_A,
+    invoices: [pendingInvoice, blockedInvoice],
+    rules: [], // no rule -> MANUAL for whichever invoice isn't awaiting
+    autopilotSettings: autopilotSettings(),
+    handledKeys: new Set(),
+    pendingInvoiceIds: new Set([pendingInvoice.id]),
+    now: NOW,
+  })
+  const blockedCount = countBlockedDecisions([pendingInvoice, blockedInvoice], { awaitingInvoiceIds, pulseAuthority })
+  assert.equal(blockedCount, 1)
+})
+
+// ---------------------------------------------------------------------
 // Static checks on Dashboard.jsx — mirrors the existing convention (see
 // tests/dataContextEventsProjection.test.mjs) for properties that require
 // a full React/Supabase render harness to prove at runtime, and are
@@ -424,4 +638,25 @@ test('10: Dashboard.jsx computes authority once via evaluatePulseAuthority and r
   const content = readDashboardSource()
   assert.match(content, /evaluatePulseAuthority/)
   assert.match(content, /isAuthorizedForAutomaticHandling/)
+})
+
+// ---------------------------------------------------------------------
+// Second adversarial review pass, MEDIUM 2: remove remaining unsupported
+// Pulse copy -- an unconditional "reminder scheduled" claim, last_reminder
+// (a past timestamp only) turned into a future-scheduling claim, and an
+// events-window-derived "Everything is handled" overclaim.
+
+test('MEDIUM2: Dashboard.jsx never claims an unconditional/unproven "reminder scheduled"', () => {
+  const content = readDashboardSource()
+  assert.doesNotMatch(content, /reminder scheduled/i)
+})
+
+test('MEDIUM2: Dashboard.jsx never claims "Everything is handled" from the recent-events window alone', () => {
+  const content = readDashboardSource()
+  assert.doesNotMatch(content, /everything is handled/i)
+})
+
+test('MEDIUM2: the old "Duewatch Will Do Next" heading (implying a persisted schedule) is gone', () => {
+  const content = readDashboardSource()
+  assert.doesNotMatch(content, /duewatch will do next/i)
 })

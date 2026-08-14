@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useState, useCallback, useRef } f
 import { supabase } from '../lib/supabase'
 import { useAuth } from './AuthContext'
 import { daysOverdue, daysUntil } from '../lib/format'
-import { fetchAutopilotRules, fetchAutopilotSettings } from '../lib/autopilot'
+import { fetchAutopilotSettings } from '../lib/autopilot'
 import { toPendingInvoiceIds, toHandledKeys } from '../lib/pulseAuthority'
 
 // Matches supabase/functions/_shared/executionClaim.js's ACTION_TYPE_SEND_REMINDER.
@@ -263,10 +263,32 @@ export function DataProvider({ children }) {
         return null
       })
 
-    // Real rules, for the Top Invoices "why" text and the "Duewatch will do
-    // next" panel — the same engine the scheduler itself uses (ruleSchedule.js
-    // mirrors _shared/rules.js), not a generic heuristic.
-    const rulesPromise = fetchAutopilotRules(user.id).catch(() => [])
+    // Phase 2A.2 HIGH fix: this is Pulse's own rules fetch, deliberately
+    // NOT routed through fetchAutopilotRules() (autopilot.js), which
+    // collapses a query error into `[]` — appropriate for its other
+    // callers (InvoiceDetailPanel, CognitiveCompose, the Autopilot
+    // settings page), which are display-only and already treat "no rules"
+    // and "couldn't load rules" the same way, but wrong for Pulse's
+    // authority contract: a failed rule query must never be read as
+    // "genuinely zero rules exist" (evaluatePulseAuthority would then
+    // truthfully-but-wrongly conclude "no rule matches" instead of
+    // "couldn't verify"). `data` is null only on failure/`.catch()` —
+    // never on a real "zero rules" result. Changing fetchAutopilotRules()
+    // itself was deliberately avoided so none of its other callers'
+    // behavior changes.
+    const rulesPromise = supabase
+      .from('autopilot_rules')
+      .select('*')
+      .eq('user_id', user.id)
+      .order('sort_order', { ascending: true })
+      .then((r) => {
+        if (r.error) console.warn('autopilot_rules query failed:', r.error.message)
+        return r.error ? null : r.data || []
+      })
+      .catch((err) => {
+        console.warn('autopilot_rules query threw:', err.message)
+        return null
+      })
 
     // Real counts since the previous session, for "Since your last visit".
     // Only fired on the first load of this session, and only when there's a
@@ -402,7 +424,12 @@ export function DataProvider({ children }) {
         }))
     )
     setLastAutopilotRun(lastRun || null)
-    setAutopilotRules(rules || [])
+    // Phase 2A.2 HIGH fix: `rules` is null only when the query itself
+    // failed — preserved as null, never downgraded to `[]`, so
+    // evaluatePulseAuthority can tell "checked, zero rules" apart from
+    // "couldn't check." (`autopilotRules` is used only by Pulse/Dashboard;
+    // no other consumer of this context field exists today.)
+    setAutopilotRules(rules)
     setCollectedThisMonth(collected || 0)
     setCollectedLastMonth(collectedLast?.sum || 0)
     setCollectedLastMonthCount(collectedLast?.count || 0)

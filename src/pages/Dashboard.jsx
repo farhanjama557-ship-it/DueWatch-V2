@@ -7,7 +7,16 @@ import InvoiceDetailPanel from '../components/InvoiceDetailPanel'
 import SignatureSection from '../components/SignatureSection'
 import CognitiveCompose from '../features/reminders/CognitiveCompose'
 import { ruleTiming } from '../lib/autopilot'
-import { evaluatePulseAuthority, isAuthorizedForAutomaticHandling } from '../lib/pulseAuthority'
+import {
+  evaluatePulseAuthority,
+  isAuthorizedForAutomaticHandling,
+  classifyPulseAuthority,
+  classifyPulseRowState,
+  countBlockedDecisions,
+  PULSE_STATE,
+  PULSE_STATE_COPY,
+  PULSE_ROW_STATE,
+} from '../lib/pulseAuthority'
 import { activityMeta, activityDescription, activityIcon, isPaymentEvent } from '../lib/activity'
 import {
   formatMoney,
@@ -56,30 +65,35 @@ function KpiCard({ Icon, label, value, valueColor, trend, support }) {
 // old day-count urgency heuristics and its old rule-schedule-lookup helper
 // are both gone from this file entirely: an authorized invoice explains
 // the exact granted rule and its timing; an unauthorized one gets a plain,
-// neutral fact — never a softened or implied recommendation.
-// `last_reminder` is surfaced as a bare timestamp fact only — this app has
-// no evidence source proving anything about whether a client replied, so
-// nothing here is ever derived from that silence.
+// truthful fact for its EXACT state — never collapsed into "No matching
+// rule" for every non-authorized case (adversarial-review HIGH fix: that
+// was false for an already-handled, awaiting-approval, or
+// couldn't-verify state alike). `last_reminder` is surfaced as a bare
+// timestamp fact only — this app has no evidence source proving anything
+// about whether a client replied, so nothing here is ever derived from
+// that silence.
 function reasonFor(evaluation, autopilotRules, invoice) {
-  if (evaluation?.authority?.authorized) {
+  const classified = classifyPulseAuthority(evaluation)
+  if (
+    classified.state === PULSE_STATE.AUTHORIZED_AUTOMATIC ||
+    classified.state === PULSE_STATE.AUTHORIZED_APPROVAL_REQUIRED
+  ) {
     const rule = autopilotRules.find((r) => r.id === evaluation.authority.basis?.ruleId)
     if (rule) {
       return { text: `${rule.name} — ${ruleTiming(rule)}`, tone: rule.tone === 'firm' ? 'orange' : 'blue' }
     }
+    // Authorized but the granted rule can't be found in the loaded list
+    // (shouldn't happen, but never silently claim "No matching rule" for
+    // a genuinely authorized state) — fail closed to "couldn't verify."
+    return { text: PULSE_STATE_COPY[PULSE_STATE.NEEDS_REVIEW_MALFORMED], tone: null }
   }
-  const lastReminderNote = invoice.last_reminder
-    ? ` — last reminder ${formatShortDate(invoice.last_reminder)}`
-    : ''
-  return { text: `No matching rule${lastReminderNote}`, tone: null }
-}
-
-// What the Top Invoices row's action column should actually offer, given
-// this invoice's real workflow state. "automated" requires a REAL granted
-// authorization that also permits automatic execution — never inferred
-// from a schedule lookup alone.
-function rowActionState(inv, { awaitingInvoiceIds, evaluation }) {
-  if (awaitingInvoiceIds.has(inv.id)) return 'awaiting'
-  return isAuthorizedForAutomaticHandling(evaluation) ? 'automated' : 'manual'
+  if (classified.state === PULSE_STATE.NO_RULE) {
+    const lastReminderNote = invoice.last_reminder
+      ? ` — last reminder ${formatShortDate(invoice.last_reminder)}`
+      : ''
+    return { text: `No matching rule${lastReminderNote}`, tone: null }
+  }
+  return { text: classified.label, tone: null }
 }
 
 // Real, functional invoice/client search — not a decorative input. The ⌘K
@@ -212,7 +226,10 @@ function WorkingOn({ autopilotEnabled, eligibleCount }) {
     <section className="rail-section">
       <div className="rail-section-head">
         <CalendarClock size={15} />
-        <span>Duewatch Will Do Next</span>
+        {/* Adversarial-review MEDIUM fix: renamed from "Duewatch Will Do
+            Next" — the only thing actually proven here is authorization,
+            not a persisted scheduler schedule of upcoming actions. */}
+        <span>Authorized for Autopilot</span>
       </div>
       {items.length === 0 ? (
         <p className="rail-section-line">
@@ -251,7 +268,9 @@ function Upcoming({ dueSoon }) {
                 <span className="rail-upcoming-client">{inv.clients?.name || 'No client'}</span>
                 <span className="rail-upcoming-detail">
                   Due {until === 0 ? 'today' : until === 1 ? 'tomorrow' : `in ${until} days`}
-                  {inv.last_reminder ? ' · reminder scheduled' : ''}
+                  {/* MEDIUM fix: last_reminder proves only a past timestamp,
+                      never a future "scheduled" claim. */}
+                  {inv.last_reminder ? ` · last reminder ${formatShortDate(inv.last_reminder)}` : ''}
                 </span>
               </li>
             )
@@ -278,7 +297,9 @@ function RailActivity({ events }) {
         <div className="rail-section-head">
           <span>Evidence</span>
         </div>
-        <p className="rail-empty">Everything is handled. Nothing needs your attention today.</p>
+        {/* MEDIUM fix: the old copy here claimed a sweeping all-clear
+            status that a 20-row recent-events window can't actually prove. */}
+        <p className="rail-empty">No recent activity recorded.</p>
       </section>
     )
   }
@@ -423,6 +444,12 @@ export default function Dashboard() {
       now: new Date(),
     })
 
+    // MEDIUM fix (adversarial review): computed here (not per-render in
+    // the component body) so blockedCount below can use the SAME
+    // mutually-exclusive classification the Action column renders — a
+    // pending-approval invoice can never also be counted as blocked.
+    const awaitingInvoiceIds = new Set(awaitingSignature.map((a) => a.invoice_id))
+
     let outstandingTotal = 0
     const needsAttention = []
     const dueSoon = []
@@ -458,13 +485,16 @@ export default function Dashboard() {
     needsAttention.sort((a, b) => daysOverdue(b.due_date) - daysOverdue(a.due_date))
     dueSoon.sort((a, b) => daysUntil(a.due_date) - daysUntil(b.due_date))
 
-    // Of the overdue invoices specifically, the ones NOT authorized for
-    // automatic handling are the ones that genuinely need a founder
-    // decision — being overdue while Autopilot has real, granted authority
-    // over it isn't a decision, it's Autopilot doing its job.
-    const blockedCount = needsAttention.filter(
-      (inv) => !isAuthorizedForAutomaticHandling(pulseAuthority.get(inv.id))
-    ).length
+    // MEDIUM fix (adversarial review): mutually exclusive with
+    // awaitingCount (both ultimately built from classifyPulseRowState — a
+    // row counts here only when it is NOT already AWAITING_APPROVAL,
+    // ALREADY_HANDLED, or AUTOMATED), so one overdue invoice with a
+    // pending approval is counted exactly once, never in both
+    // awaitingCount and blockedCount. NEEDS_REVIEW invoices (rule/
+    // execution-history unavailable) are counted too — Duewatch genuinely
+    // cannot vouch for those, which is itself a reason for the founder to
+    // look, same as a real open decision.
+    const blockedCount = countBlockedDecisions(needsAttention, { awaitingInvoiceIds, pulseAuthority })
 
     return {
       outstandingTotal,
@@ -476,8 +506,9 @@ export default function Dashboard() {
       handlingCount,
       blockedCount,
       pulseAuthority,
+      awaitingInvoiceIds,
     }
-  }, [invoices, autopilotRules, autopilotSettings, handledKeys, pendingInvoiceIds, userId])
+  }, [invoices, autopilotRules, autopilotSettings, handledKeys, pendingInvoiceIds, userId, awaitingSignature])
 
   if (loading) {
     return <div className="brief-loading">Loading your brief…</div>
@@ -492,13 +523,10 @@ export default function Dashboard() {
   // A genuine human decision is either a draft literally waiting on the
   // founder's approval, or an overdue invoice Autopilot has no real,
   // working path to act on (off, individually paused, no matching rule,
-  // or an unresolved send error) — not every overdue invoice. Most overdue
-  // invoices are Autopilot's job, not a decision; conflating the two is
-  // exactly the overcount this headline used to make.
+  // unresolved send error, or a rule/history state Duewatch couldn't
+  // verify) — not every overdue invoice, and never double-counted with
+  // awaitingCount (see blockedCount's own doc comment in `derived`).
   const decisionsNeeded = awaitingCount + derived.blockedCount
-  // Plain computation, not a hook — safe to sit after the loading/error
-  // early returns above.
-  const awaitingInvoiceIds = new Set(awaitingSignature.map((a) => a.invoice_id))
 
   // Real, deterministic status headline — a plain read of already-computed
   // counts, never a fabricated qualitative assessment. Mirrors the same
@@ -673,7 +701,10 @@ export default function Dashboard() {
                             const od = daysOverdue(inv.due_date)
                             const evaluation = derived.pulseAuthority.get(inv.id)
                             const reco = reasonFor(evaluation, autopilotRules, inv)
-                            const actionState = rowActionState(inv, { awaitingInvoiceIds, evaluation })
+                            const actionState = classifyPulseRowState(inv.id, {
+                              awaitingInvoiceIds: derived.awaitingInvoiceIds,
+                              evaluation,
+                            })
                             return (
                               <tr key={inv.id} onClick={() => setSelected(inv)}>
                                 <td>{inv.invoice_number || '—'}</td>
@@ -692,7 +723,7 @@ export default function Dashboard() {
                                   </span>
                                 </td>
                                 <td>
-                                  {actionState === 'awaiting' ? (
+                                  {actionState === PULSE_ROW_STATE.AWAITING_APPROVAL ? (
                                     <button
                                       type="button"
                                       className="row-action row-action-passive"
@@ -703,12 +734,25 @@ export default function Dashboard() {
                                     >
                                       Awaiting approval
                                     </button>
-                                  ) : actionState === 'automated' ? (
+                                  ) : actionState === PULSE_ROW_STATE.AUTOMATED ? (
                                     // Phase 2A.2: "Autopilot handling" implied
                                     // execution that hasn't happened yet — a
                                     // granted authorization is not itself an
                                     // action taken.
                                     <span className="row-action-label">Authorized: automatic</span>
+                                  ) : actionState === PULSE_ROW_STATE.ALREADY_HANDLED ? (
+                                    // HIGH fix: never present a "Choose
+                                    // action" affordance as if nothing has
+                                    // happened yet, when a claim or a
+                                    // resolved draft already exists for this
+                                    // exact invoice+rule.
+                                    <span className="row-action-label">Already handled</span>
+                                  ) : actionState === PULSE_ROW_STATE.NEEDS_REVIEW ? (
+                                    // HIGH fix: rule/execution-history state
+                                    // Duewatch couldn't verify — never
+                                    // silently offered as an ordinary open
+                                    // decision.
+                                    <span className="row-action-label">Needs review</span>
                                   ) : (
                                     // Phase 2A.2: zero-authority state gets a
                                     // neutral affordance only — never a
@@ -745,14 +789,25 @@ export default function Dashboard() {
                     <p className="brief-empty">Nothing due in the next 14 days.</p>
                   ) : (
                     <ul className="invoice-list">
-                      {derived.dueSoon.map((inv) => (
-                        <InvoiceRow
-                          key={inv.id}
-                          invoice={inv}
-                          secondary={`Due ${formatShortDate(inv.due_date)} · ${inv.invoice_number || 'No number'} · reminder scheduled`}
-                          onClick={() => setSelected(inv)}
-                        />
-                      ))}
+                      {derived.dueSoon.map((inv) => {
+                        // MEDIUM fix: the old suffix here was an
+                        // unconditional, unproven cadence claim on every
+                        // row. Only note automatic handling when this
+                        // exact invoice is genuinely authorized for it —
+                        // otherwise state the due date
+                        // fact alone.
+                        const authorizedNote = isAuthorizedForAutomaticHandling(derived.pulseAuthority.get(inv.id))
+                          ? ' · authorized for automatic handling'
+                          : ''
+                        return (
+                          <InvoiceRow
+                            key={inv.id}
+                            invoice={inv}
+                            secondary={`Due ${formatShortDate(inv.due_date)} · ${inv.invoice_number || 'No number'}${authorizedNote}`}
+                            onClick={() => setSelected(inv)}
+                          />
+                        )
+                      })}
                     </ul>
                   )}
                 </section>
