@@ -1,14 +1,13 @@
 import { useState, useMemo, useEffect, useRef } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { History, CalendarClock, CalendarCheck, Clock, RefreshCw } from 'lucide-react'
+import { History, CalendarClock, CalendarCheck, RefreshCw } from 'lucide-react'
 import { useData, isOutstanding, balanceOf } from '../context/DataContext'
 import Avatar from '../components/Avatar'
 import InvoiceDetailPanel from '../components/InvoiceDetailPanel'
 import SignatureSection from '../components/SignatureSection'
 import CognitiveCompose from '../features/reminders/CognitiveCompose'
-import { recommendFor } from '../lib/recommend'
 import { ruleTiming } from '../lib/autopilot'
-import { nextScheduledAction } from '../lib/ruleSchedule'
+import { evaluatePulseAuthority, isAuthorizedForAutomaticHandling } from '../lib/pulseAuthority'
 import { activityMeta, activityDescription, activityIcon, isPaymentEvent } from '../lib/activity'
 import {
   formatMoney,
@@ -52,35 +51,35 @@ function KpiCard({ Icon, label, value, valueColor, trend, support }) {
   )
 }
 
-// Real Autopilot-rule-aware reason when one genuinely matches; otherwise the
-// generic (still honest, just less specific) day-count heuristic.
-function reasonFor(inv, autopilotEnabled, autopilotRules) {
-  if (autopilotEnabled && autopilotRules.length > 0) {
-    const match = nextScheduledAction(autopilotRules, inv)
-    if (match?.eligible) {
-      const toneTone = { friendly: 'blue', professional: 'blue', firm: 'orange' }
-      return {
-        action: `Autopilot: ${match.rule.name}`,
-        explanation: `Matches your "${match.rule.name}" rule — ${ruleTiming(match.rule)}.`,
-        badge: 'Autopilot rule',
-        tone: toneTone[match.rule.tone] || 'blue',
-      }
+// Phase 2A.2 — FACTS MAY BE DERIVED. POLICY MUST BE GRANTED. The "Reason"
+// column text now comes ONLY from a real authority evaluation — this app's
+// old day-count urgency heuristics and its old rule-schedule-lookup helper
+// are both gone from this file entirely: an authorized invoice explains
+// the exact granted rule and its timing; an unauthorized one gets a plain,
+// neutral fact — never a softened or implied recommendation.
+// `last_reminder` is surfaced as a bare timestamp fact only — this app has
+// no evidence source proving anything about whether a client replied, so
+// nothing here is ever derived from that silence.
+function reasonFor(evaluation, autopilotRules, invoice) {
+  if (evaluation?.authority?.authorized) {
+    const rule = autopilotRules.find((r) => r.id === evaluation.authority.basis?.ruleId)
+    if (rule) {
+      return { text: `${rule.name} — ${ruleTiming(rule)}`, tone: rule.tone === 'firm' ? 'orange' : 'blue' }
     }
   }
-  return recommendFor(inv)
+  const lastReminderNote = invoice.last_reminder
+    ? ` — last reminder ${formatShortDate(invoice.last_reminder)}`
+    : ''
+  return { text: `No matching rule${lastReminderNote}`, tone: null }
 }
 
 // What the Top Invoices row's action column should actually offer, given
-// this invoice's real workflow state — not "Draft Reminder" unconditionally
-// on every row regardless of whether a draft already exists or Autopilot
-// already has it covered.
-function rowActionState(inv, { awaitingInvoiceIds, autopilotEnabled, autopilotRules, events }) {
+// this invoice's real workflow state. "automated" requires a REAL granted
+// authorization that also permits automatic execution — never inferred
+// from a schedule lookup alone.
+function rowActionState(inv, { awaitingInvoiceIds, evaluation }) {
   if (awaitingInvoiceIds.has(inv.id)) return 'awaiting'
-  const latestEvent = events.find((e) => e.invoice_id === inv.id)
-  const hasUnresolvedError = latestEvent?.lifecycle_state === 'error'
-  const autopilotHasThis =
-    autopilotEnabled && !inv.autopilot_paused && Boolean(nextScheduledAction(autopilotRules, inv)) && !hasUnresolvedError
-  return autopilotHasThis ? 'automated' : 'manual'
+  return isAuthorizedForAutomaticHandling(evaluation) ? 'automated' : 'manual'
 }
 
 // Real, functional invoice/client search — not a decorative input. The ⌘K
@@ -195,16 +194,18 @@ function SinceLastVisitBanner({ data }) {
   )
 }
 
-function WorkingOn({ autopilotEnabled, eligibleCount, outstandingCount }) {
+// Phase 2A.2: the old fixed daily-cadence line is removed — no persisted
+// scheduler schedule in this app actually proves when the next run is.
+// Every remaining line is grounded in a real authority evaluation
+// (eligibleCount counts invoices isAuthorizedForAutomaticHandling() found
+// true), never a fabricated cadence claim.
+function WorkingOn({ autopilotEnabled, eligibleCount }) {
   const items = []
-  if (autopilotEnabled) {
-    items.push({ Icon: Clock, text: 'Next check: tomorrow morning' })
-    if (outstandingCount > 0 && eligibleCount > 0) {
-      items.push({
-        Icon: RefreshCw,
-        text: `${eligibleCount} ${eligibleCount === 1 ? 'invoice' : 'invoices'} ready for a reminder`,
-      })
-    }
+  if (autopilotEnabled && eligibleCount > 0) {
+    items.push({
+      Icon: RefreshCw,
+      text: `${eligibleCount} ${eligibleCount === 1 ? 'invoice is' : 'invoices are'} authorized for automatic handling`,
+    })
   }
 
   return (
@@ -215,7 +216,7 @@ function WorkingOn({ autopilotEnabled, eligibleCount, outstandingCount }) {
       </div>
       {items.length === 0 ? (
         <p className="rail-section-line">
-          {autopilotEnabled ? 'Nothing scheduled beyond tomorrow’s check.' : 'Autopilot is off. Nothing is scheduled.'}
+          {autopilotEnabled ? 'Nothing currently authorized.' : 'Autopilot is off. Nothing is scheduled.'}
         </p>
       ) : (
         <ul className="rail-work-list">
@@ -339,6 +340,7 @@ function AutopilotNudge({ visible, onDismiss }) {
 
 export default function Dashboard() {
   const {
+    userId,
     invoices,
     events,
     name,
@@ -346,7 +348,10 @@ export default function Dashboard() {
     error,
     refresh,
     autopilotEnabled,
+    autopilotSettings,
     autopilotRules,
+    handledKeys,
+    pendingInvoiceIds,
     awaitingSignature,
     resolveSignatureLocal,
     sinceLastVisit,
@@ -396,30 +401,27 @@ export default function Dashboard() {
 
     const DUE_SOON_DAYS = 14
 
-    // Most recent event for a given invoice, if any is in the loaded
-    // (recent) window — `events` is already newest-first, so the first
-    // match per invoice_id is its latest. An invoice whose latest event is
-    // a failed send has a real, unresolved problem no automation will fix
-    // on its own; older invoices outside that recent window default to
-    // "no known error" rather than guessing.
-    function hasUnresolvedError(inv) {
-      const latest = events.find((e) => e.invoice_id === inv.id)
-      return latest?.lifecycle_state === 'error'
-    }
-
-    // True only when Autopilot genuinely has this invoice covered: it's
-    // on, this specific invoice isn't paused, a rule actually applies
-    // (now or later), and nothing about it failed. Everything else —
-    // Autopilot off, no matching rule, an individual pause, an unresolved
-    // send error — is a real gap only a human can close.
-    function hasWorkingAutomation(inv) {
-      return (
-        autopilotEnabled &&
-        !inv.autopilot_paused &&
-        Boolean(nextScheduledAction(autopilotRules, inv)) &&
-        !hasUnresolvedError(inv)
-      )
-    }
+    // Phase 2A.2 — ONE authority evaluation per invoice, computed here and
+    // reused by every component below (KPIs, the overdue table's Reason/
+    // Action columns, the rail) — never independently re-decided. A real
+    // handledKeys/pendingInvoiceIds Set means "checked, here's what's
+    // true"; null (a failed query — see DataContext) is passed straight
+    // through so evaluateNextActionAuthority fails every evaluation closed
+    // with execution_history_unavailable, exactly like the Deno execution
+    // boundary. This already supersedes the old hand-rolled
+    // hasUnresolvedError/hasWorkingAutomation checks: a prior claim (any
+    // status, including a failed/uncertain send) durably blocks that exact
+    // rule from being selected as authority again via handledKeys, so it
+    // can never be miscounted as automated.
+    const pulseAuthority = evaluatePulseAuthority({
+      userId,
+      invoices: outstanding,
+      rules: autopilotRules,
+      autopilotSettings,
+      handledKeys,
+      pendingInvoiceIds,
+      now: new Date(),
+    })
 
     let outstandingTotal = 0
     const needsAttention = []
@@ -447,21 +449,22 @@ export default function Dashboard() {
         dueSoon.push(inv)
       }
 
-      if (!inv.autopilot_paused && nextScheduledAction(autopilotRules, inv)?.eligible) {
+      if (isAuthorizedForAutomaticHandling(pulseAuthority.get(inv.id))) {
         eligibleForNextCheck += 1
+        handlingCount += 1
       }
-
-      if (hasWorkingAutomation(inv)) handlingCount += 1
     }
 
     needsAttention.sort((a, b) => daysOverdue(b.due_date) - daysOverdue(a.due_date))
     dueSoon.sort((a, b) => daysUntil(a.due_date) - daysUntil(b.due_date))
 
-    // Of the overdue invoices specifically, the ones Autopilot does NOT
-    // have real working coverage for are the ones that actually need a
-    // human — being overdue while Autopilot is actively on the case isn't
-    // a decision, it's Autopilot doing its job.
-    const blockedCount = needsAttention.filter((inv) => !hasWorkingAutomation(inv)).length
+    // Of the overdue invoices specifically, the ones NOT authorized for
+    // automatic handling are the ones that genuinely need a founder
+    // decision — being overdue while Autopilot has real, granted authority
+    // over it isn't a decision, it's Autopilot doing its job.
+    const blockedCount = needsAttention.filter(
+      (inv) => !isAuthorizedForAutomaticHandling(pulseAuthority.get(inv.id))
+    ).length
 
     return {
       outstandingTotal,
@@ -472,8 +475,9 @@ export default function Dashboard() {
       eligibleForNextCheck,
       handlingCount,
       blockedCount,
+      pulseAuthority,
     }
-  }, [invoices, autopilotRules, autopilotEnabled, events])
+  }, [invoices, autopilotRules, autopilotSettings, handledKeys, pendingInvoiceIds, userId])
 
   if (loading) {
     return <div className="brief-loading">Loading your brief…</div>
@@ -573,10 +577,14 @@ export default function Dashboard() {
       </div>
 
       <div className="brief-header-sub">
+        {/* Phase 2A.2: "Duewatch is handling N automatically" implied
+            execution that hasn't happened yet — a real granted
+            authorization is not the same claim as an action already taken
+            (see permission.canActAutomatically). */}
         <p className="brief-subline">
           You collected <b>{formatMoney(collectedThisMonth)}</b> this month. {formatMoney(derived.outstandingTotal)}{' '}
-          remains outstanding. Duewatch is handling {derived.handlingCount} automatically, {awaitingCount}{' '}
-          {awaitingCount === 1 ? 'awaits' : 'await'} your approval, and{' '}
+          remains outstanding. {derived.handlingCount} {derived.handlingCount === 1 ? 'is' : 'are'} authorized for
+          automatic handling, {awaitingCount} {awaitingCount === 1 ? 'awaits' : 'await'} your approval, and{' '}
           <span className="o">
             {derived.blockedCount} {derived.blockedCount === 1 ? 'needs' : 'need'} you directly
           </span>
@@ -604,9 +612,12 @@ export default function Dashboard() {
               value={formatMoney(derived.outstandingTotal)}
               support={`across ${derived.outstandingCount} ${derived.outstandingCount === 1 ? 'invoice' : 'invoices'}`}
             />
+            {/* Phase 2A.2: this counts every overdue invoice, not only ones
+                with a genuine authority/workflow reason for founder
+                attention — "Overdue" is the honest label for that. */}
             <KpiCard
               Icon={AttentionIcon}
-              label="Need Attention"
+              label="Overdue"
               value={attentionCount}
               valueColor="var(--amber)"
               support={attentionCount === 1 ? 'overdue invoice' : 'overdue invoices'}
@@ -626,10 +637,12 @@ export default function Dashboard() {
           ) : (
             <>
               <div className="brief-row-2col">
-                {/* Top invoices to focus on — manual/non-Autopilot items */}
+                {/* Phase 2A.2: renamed from "Top invoices to focus on" — this
+                    list is a plain days-overdue sort, not a founder-granted
+                    priority policy, and the old title implied the latter. */}
                 <section className="brief-card">
                   <div className="section-head">
-                    <h2 className="section-title">Top invoices to focus on</h2>
+                    <h2 className="section-title">Most overdue invoices</h2>
                     {attentionCount > 0 && <span className="section-count">{attentionCount}</span>}
                   </div>
                   {attentionCount === 0 ? (
@@ -658,13 +671,9 @@ export default function Dashboard() {
                         <tbody>
                           {derived.needsAttention.map((inv) => {
                             const od = daysOverdue(inv.due_date)
-                            const reco = reasonFor(inv, autopilotEnabled, autopilotRules)
-                            const actionState = rowActionState(inv, {
-                              awaitingInvoiceIds,
-                              autopilotEnabled,
-                              autopilotRules,
-                              events,
-                            })
+                            const evaluation = derived.pulseAuthority.get(inv.id)
+                            const reco = reasonFor(evaluation, autopilotRules, inv)
+                            const actionState = rowActionState(inv, { awaitingInvoiceIds, evaluation })
                             return (
                               <tr key={inv.id} onClick={() => setSelected(inv)}>
                                 <td>{inv.invoice_number || '—'}</td>
@@ -672,7 +681,15 @@ export default function Dashboard() {
                                 <td className="top-invoices-table-amount">{formatMoney(balanceOf(inv))}</td>
                                 <td>{od}</td>
                                 <td>
-                                  <span className={`top-invoices-table-reason tone-${reco.tone}`}>{reco.explanation}</span>
+                                  <span
+                                    className={
+                                      reco.tone
+                                        ? `top-invoices-table-reason tone-${reco.tone}`
+                                        : 'top-invoices-table-reason'
+                                    }
+                                  >
+                                    {reco.text}
+                                  </span>
                                 </td>
                                 <td>
                                   {actionState === 'awaiting' ? (
@@ -687,8 +704,15 @@ export default function Dashboard() {
                                       Awaiting approval
                                     </button>
                                   ) : actionState === 'automated' ? (
-                                    <span className="row-action-label">Autopilot handling</span>
+                                    // Phase 2A.2: "Autopilot handling" implied
+                                    // execution that hasn't happened yet — a
+                                    // granted authorization is not itself an
+                                    // action taken.
+                                    <span className="row-action-label">Authorized: automatic</span>
                                   ) : (
+                                    // Phase 2A.2: zero-authority state gets a
+                                    // neutral affordance only — never a
+                                    // specific action recommendation.
                                     <button
                                       type="button"
                                       className="row-action"
@@ -697,7 +721,7 @@ export default function Dashboard() {
                                         setComposeInvoice(inv)
                                       }}
                                     >
-                                      Draft Reminder
+                                      Choose action
                                     </button>
                                   )}
                                 </td>
@@ -750,11 +774,7 @@ export default function Dashboard() {
             />
           </div>
 
-          <WorkingOn
-            autopilotEnabled={autopilotEnabled}
-            eligibleCount={derived.eligibleForNextCheck}
-            outstandingCount={derived.outstandingCount}
-          />
+          <WorkingOn autopilotEnabled={autopilotEnabled} eligibleCount={derived.eligibleForNextCheck} />
 
           <Upcoming dueSoon={derived.dueSoon} />
 
