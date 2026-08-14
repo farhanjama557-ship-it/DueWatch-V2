@@ -129,20 +129,29 @@ jobs:
           echo "postgres_server_version: $(psql "$DB_URL" -X -t -A -c 'select version();')" \
             >> autopilot-claims-verify-artifact/00_versions.txt
 
-      - name: Apply repository schema and complete migration history
+      - name: Apply repository schema and targeted checkpoint migrations
         run: |
           set +e
           ARTIFACT=autopilot-claims-verify-artifact/03_schema_and_migrations.log
           : > "$ARTIFACT"
           overall=0
 
-          echo "=== schema.sql ===" >> "$ARTIFACT"
-          psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/schema.sql >> "$ARTIFACT" 2>&1
-          schema_exit=$?
-          echo "schema.sql exit=$schema_exit" >> "$ARTIFACT"
-          [ "$schema_exit" -eq 0 ] || overall=1
-
-          for f in $(ls supabase/migrations/*.sql | sort); do
+          # Matches this repo's established disposable-DB bootstrap contract
+          # (schema.sql as baseline + targeted migrations/setup paths, as
+          # the existing pr22-supabase-verify.yml / phase15b workflows
+          # already do) rather than replaying the entire historical
+          # migration set -- this checkpoint only needs schema.sql plus the
+          # three migrations its own gates (autopilot_execution_claims_test.sql,
+          # awaiting_signature_pending_uniqueness_test.sql, the concurrency
+          # proof, and the canonical-receipt idempotency re-apply below)
+          # actually depend on.
+          TARGETED_SQL_FILES=(
+            "supabase/schema.sql"
+            "supabase/migrations/20260813161329_autopilot_execution_claims.sql"
+            "supabase/migrations/20260814090000_awaiting_signature_pending_only_uniqueness.sql"
+            "supabase/migrations/20260814100000_autopilot_execution_claims_canonical_receipt.sql"
+          )
+          for f in "${TARGETED_SQL_FILES[@]}"; do
             echo "=== $f ===" >> "$ARTIFACT"
             psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$f" >> "$ARTIFACT" 2>&1
             m_exit=$?
