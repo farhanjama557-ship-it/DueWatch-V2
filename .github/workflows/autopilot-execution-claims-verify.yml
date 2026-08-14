@@ -1,0 +1,269 @@
+name: "Autopilot Execution Claims CI Verification"
+
+# CI-only verification for PR #36 (claude/autopilot-execution-idempotency,
+# third execution-safety review-fix pass: recipient-bound factual basis,
+# no-email rule snapshot, pre-send canonical receipt, truthful claim-status
+# errors). Runs entirely against a disposable `supabase start` stack on this
+# GitHub-hosted runner. No Supabase account token, no remote/hosted project
+# reference, and no production or staging credentials are used or present
+# anywhere in this workflow -- the stack is destroyed when the job ends.
+#
+# This workflow is CI infrastructure only: it does not modify any source,
+# migration, SQL test, or JS test file, and it triggers only on this
+# checkpoint's own branch/PR -- not a general-purpose pipeline for every
+# branch in the repo.
+on:
+  push:
+    branches:
+      - claude/autopilot-execution-idempotency
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: autopilot-execution-claims-verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: "Verify Autopilot execution-claims checkpoint against local Supabase"
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@v4
+
+      - name: Record workflow identity and environment
+        run: |
+          mkdir -p autopilot-claims-verify-artifact
+          {
+            echo "workflow_run_id: ${{ github.run_id }}"
+            echo "workflow_run_attempt: ${{ github.run_attempt }}"
+            echo "workflow_job: ${{ github.job }}"
+            echo "workflow_ref: ${{ github.ref }}"
+            echo "github_sha: ${{ github.sha }}"
+            echo "runner_os: $(uname -a)"
+            echo "docker_version: $(docker --version)"
+          } > autopilot-claims-verify-artifact/00_versions.txt
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Record Node/npm versions
+        run: |
+          {
+            echo "node_version: $(node --version)"
+            echo "npm_version: $(npm --version)"
+          } >> autopilot-claims-verify-artifact/00_versions.txt
+
+      - name: Run complete JavaScript suite
+        run: |
+          set +e
+          npm test > autopilot-claims-verify-artifact/01_js_tests.log 2>&1
+          js_exit=$?
+          cat autopilot-claims-verify-artifact/01_js_tests.log
+          js_test_count=$(grep -E '^# tests [0-9]+' autopilot-claims-verify-artifact/01_js_tests.log | tail -1 | grep -oE '[0-9]+' || echo "unknown")
+          js_pass_count=$(grep -E '^# pass [0-9]+' autopilot-claims-verify-artifact/01_js_tests.log | tail -1 | grep -oE '[0-9]+' || echo "unknown")
+          {
+            echo "js_test_exit=$js_exit"
+            echo "js_test_count=$js_test_count"
+            echo "js_pass_count=$js_pass_count"
+          } >> autopilot-claims-verify-artifact/EXIT_CODE_SUMMARY.txt
+          exit $js_exit
+
+      - name: Deno module-resolution check (both edge functions)
+        run: |
+          set +e
+          npx --yes deno info supabase/functions/autopilot-scheduler/index.ts \
+            > autopilot-claims-verify-artifact/02a_deno_info_scheduler.log 2>&1
+          scheduler_exit=$?
+          npx --yes deno info supabase/functions/send-reminder-email/index.ts \
+            > autopilot-claims-verify-artifact/02b_deno_info_send_reminder_email.log 2>&1
+          send_exit=$?
+          cat autopilot-claims-verify-artifact/02a_deno_info_scheduler.log
+          cat autopilot-claims-verify-artifact/02b_deno_info_send_reminder_email.log
+          deno_exit=0
+          [ "$scheduler_exit" -eq 0 ] || deno_exit=1
+          [ "$send_exit" -eq 0 ] || deno_exit=1
+          {
+            echo "deno_info_scheduler_exit=$scheduler_exit"
+            echo "deno_info_send_reminder_email_exit=$send_exit"
+            echo "deno_module_resolution_exit=$deno_exit"
+          } >> autopilot-claims-verify-artifact/EXIT_CODE_SUMMARY.txt
+          exit $deno_exit
+
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: 2.111.0
+
+      - name: Record Supabase CLI / Postgres client versions
+        run: |
+          {
+            echo "supabase_cli_version: $(supabase --version)"
+            echo "psql_version: $(psql --version)"
+          } >> autopilot-claims-verify-artifact/00_versions.txt
+
+      - name: Start disposable local Supabase stack
+        run: supabase start
+
+      - name: Resolve disposable database URL
+        run: |
+          supabase status -o env > /tmp/autopilot_claims_supabase_status.env
+          DB_URL=$(grep '^DB_URL=' /tmp/autopilot_claims_supabase_status.env | cut -d '=' -f2- | tr -d '"')
+          if [ -z "$DB_URL" ]; then
+            echo "Failed to resolve local DB_URL" >&2
+            exit 1
+          fi
+          echo "DB_URL=$DB_URL" >> "$GITHUB_ENV"
+          rm -f /tmp/autopilot_claims_supabase_status.env
+
+      - name: Record local Postgres server version
+        run: |
+          echo "postgres_server_version: $(psql "$DB_URL" -X -t -A -c 'select version();')" \
+            >> autopilot-claims-verify-artifact/00_versions.txt
+
+      - name: Apply repository schema and targeted checkpoint migrations
+        run: |
+          set +e
+          ARTIFACT=autopilot-claims-verify-artifact/03_schema_and_migrations.log
+          : > "$ARTIFACT"
+          overall=0
+
+          # Matches this repo's established disposable-DB bootstrap contract
+          # (schema.sql as baseline + targeted migrations/setup paths, as
+          # the existing pr22-supabase-verify.yml / phase15b workflows
+          # already do) rather than replaying the entire historical
+          # migration set -- this checkpoint only needs schema.sql plus the
+          # three migrations its own gates (autopilot_execution_claims_test.sql,
+          # awaiting_signature_pending_uniqueness_test.sql, the concurrency
+          # proof, and the canonical-receipt idempotency re-apply below)
+          # actually depend on.
+          TARGETED_SQL_FILES=(
+            "supabase/schema.sql"
+            "supabase/migrations/20260813161329_autopilot_execution_claims.sql"
+            "supabase/migrations/20260814090000_awaiting_signature_pending_only_uniqueness.sql"
+            "supabase/migrations/20260814100000_autopilot_execution_claims_canonical_receipt.sql"
+          )
+          for f in "${TARGETED_SQL_FILES[@]}"; do
+            echo "=== $f ===" >> "$ARTIFACT"
+            psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$f" >> "$ARTIFACT" 2>&1
+            m_exit=$?
+            echo "$f exit=$m_exit" >> "$ARTIFACT"
+            [ "$m_exit" -eq 0 ] || overall=1
+          done
+
+          cat "$ARTIFACT"
+          echo "schema_and_migrations_exit=$overall" >> autopilot-claims-verify-artifact/EXIT_CODE_SUMMARY.txt
+          exit $overall
+
+      - name: Re-apply the canonical-receipt migration (idempotency proof)
+        if: always()
+        run: |
+          set +e
+          psql "$DB_URL" -v ON_ERROR_STOP=1 \
+            -f supabase/migrations/20260814100000_autopilot_execution_claims_canonical_receipt.sql \
+            > autopilot-claims-verify-artifact/04_canonical_receipt_migration_rerun.log 2>&1
+          rerun_exit=$?
+          cat autopilot-claims-verify-artifact/04_canonical_receipt_migration_rerun.log
+          echo "canonical_receipt_migration_rerun_exit=$rerun_exit" >> autopilot-claims-verify-artifact/EXIT_CODE_SUMMARY.txt
+          exit $rerun_exit
+
+      - name: Run autopilot_execution_claims_test.sql
+        if: always()
+        run: |
+          set +e
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/tests/autopilot_execution_claims_test.sql \
+            > autopilot-claims-verify-artifact/05_autopilot_execution_claims_test.log 2>&1
+          process_exit=$?
+          cat autopilot-claims-verify-artifact/05_autopilot_execution_claims_test.log
+          gate_exit=1
+          if [ "$process_exit" -eq 0 ] \
+             && grep -q 'TEST GROUP PASS: claim_acquire_and_repeat_blocked' autopilot-claims-verify-artifact/05_autopilot_execution_claims_test.log \
+             && grep -q 'TEST GROUP PASS: claim_blocks_regardless_of_status' autopilot-claims-verify-artifact/05_autopilot_execution_claims_test.log \
+             && grep -q 'TEST GROUP PASS: claim_identity_independence' autopilot-claims-verify-artifact/05_autopilot_execution_claims_test.log \
+             && grep -q 'TEST GROUP PASS: claim_malformed_and_missing_identity_fails_closed' autopilot-claims-verify-artifact/05_autopilot_execution_claims_test.log \
+             && grep -q 'TEST GROUP PASS: claim_tenant_boundary_rls' autopilot-claims-verify-artifact/05_autopilot_execution_claims_test.log; then
+            gate_exit=0
+          fi
+          echo "autopilot_execution_claims_test_process_exit=$process_exit" >> autopilot-claims-verify-artifact/EXIT_CODE_SUMMARY.txt
+          echo "autopilot_execution_claims_test_gate_exit=$gate_exit" >> autopilot-claims-verify-artifact/EXIT_CODE_SUMMARY.txt
+          exit $gate_exit
+
+      - name: Run awaiting_signature_pending_uniqueness_test.sql
+        if: always()
+        run: |
+          set +e
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/tests/awaiting_signature_pending_uniqueness_test.sql \
+            > autopilot-claims-verify-artifact/06_awaiting_signature_pending_uniqueness_test.log 2>&1
+          process_exit=$?
+          cat autopilot-claims-verify-artifact/06_awaiting_signature_pending_uniqueness_test.log
+          gate_exit=1
+          if [ "$process_exit" -eq 0 ] \
+             && grep -q 'TEST GROUP PASS: multiple_rules_approved_historically_coexist' autopilot-claims-verify-artifact/06_awaiting_signature_pending_uniqueness_test.log \
+             && grep -q 'TEST GROUP PASS: only_one_pending_ask_per_invoice_at_a_time' autopilot-claims-verify-artifact/06_awaiting_signature_pending_uniqueness_test.log \
+             && grep -q 'TEST GROUP PASS: rule_b_approval_write_never_fails_because_rule_a_already_approved' autopilot-claims-verify-artifact/06_awaiting_signature_pending_uniqueness_test.log; then
+            gate_exit=0
+          fi
+          echo "awaiting_signature_pending_uniqueness_test_process_exit=$process_exit" >> autopilot-claims-verify-artifact/EXIT_CODE_SUMMARY.txt
+          echo "awaiting_signature_pending_uniqueness_test_gate_exit=$gate_exit" >> autopilot-claims-verify-artifact/EXIT_CODE_SUMMARY.txt
+          exit $gate_exit
+
+      - name: Run real-function concurrency proof
+        if: always()
+        run: |
+          set +e
+          chmod +x supabase/tests/autopilot_execution_claims_concurrency_proof.sh
+          # The script's own `psql -d "$DB"` accepts a full libpq connection
+          # URI just as well as a bare database name, so DB_URL (already
+          # resolved above from `supabase status`) can be passed directly --
+          # no separate host/port/user extraction needed.
+          supabase/tests/autopilot_execution_claims_concurrency_proof.sh "$DB_URL" \
+            > autopilot-claims-verify-artifact/07_concurrency_proof.log 2>&1
+          proof_exit=$?
+          cat autopilot-claims-verify-artifact/07_concurrency_proof.log
+          gate_exit=1
+          if [ "$proof_exit" -eq 0 ] \
+             && grep -q 'AUTOPILOT EXECUTION CLAIM CONCURRENCY PROOF PASSED' autopilot-claims-verify-artifact/07_concurrency_proof.log; then
+            gate_exit=0
+          fi
+          echo "concurrency_proof_process_exit=$proof_exit" >> autopilot-claims-verify-artifact/EXIT_CODE_SUMMARY.txt
+          echo "concurrency_proof_gate_exit=$gate_exit" >> autopilot-claims-verify-artifact/EXIT_CODE_SUMMARY.txt
+          exit $gate_exit
+
+      - name: Vite production build
+        if: always()
+        run: |
+          set +e
+          npm run build > autopilot-claims-verify-artifact/08_build.log 2>&1
+          build_exit=$?
+          cat autopilot-claims-verify-artifact/08_build.log
+          echo "build_exit=$build_exit" >> autopilot-claims-verify-artifact/EXIT_CODE_SUMMARY.txt
+          exit $build_exit
+
+      - name: Tear down disposable local Supabase stack
+        if: always()
+        run: supabase stop --no-backup || true
+
+      - name: Finalize evidence summary
+        if: always()
+        run: |
+          {
+            echo "github_sha=${{ github.sha }}"
+            echo "workflow_run_id=${{ github.run_id }}"
+          } >> autopilot-claims-verify-artifact/EXIT_CODE_SUMMARY.txt
+          cat autopilot-claims-verify-artifact/EXIT_CODE_SUMMARY.txt
+
+      - name: Upload sanitized verification artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: autopilot-execution-claims-verification
+          path: autopilot-claims-verify-artifact/
+          retention-days: 14
