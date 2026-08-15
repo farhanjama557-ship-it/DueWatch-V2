@@ -43,8 +43,8 @@
      `.app{grid-template-columns:210px 1fr 300px}`. The center column is
      the reference's own unbounded `1fr` — no shell-wide max-width here on
      purpose; see .app-shell's comment. */
-  --sidebar-w: 216px;
-  --rail-w: 280px;
+  --sidebar-w: 226px;
+  --rail-w: 274px;
 
   /* Shared dark-charcoal palette — the "Duewatch itself" zones (nav sidebar
      + right rail). Applied by re-pointing the generic --surface/--border/
@@ -433,7 +433,7 @@ table {
 .content {
   flex: 1;
   background: var(--bg);
-  padding: 24px 28px;
+  padding: 18px 25px 24px 31px;
   min-width: 0;
   /* .sidebar is position:fixed (removed from .app-shell's flex flow) so it
      can be genuinely full-height regardless of scroll/content — this
@@ -455,6 +455,7 @@ table {
    brand terracotta. Real status facts live below it (.brief-status-line /
    .brief-attention-line), not crammed into this line. */
 .brief-greeting {
+  margin-top: 7px;
   font-size: 30px;
   font-weight: 800;
   letter-spacing: -0.02em;
@@ -482,7 +483,7 @@ table {
   display: flex;
   align-items: center;
   gap: 8px;
-  width: 280px;
+  width: 300px;
   height: 36px;
   padding: 0 10px;
   background: var(--surface);
@@ -601,7 +602,7 @@ table {
 
 .brief-header-sub {
   margin-top: 2px;
-  margin-bottom: 10px;
+  margin-bottom: 0;
 }
 
 .brief-status-line {
@@ -617,10 +618,11 @@ table {
 }
 
 .brief-attention-line {
-  font-size: 13px;
+  display: inline;
+  margin-left: 8px;
+  font-size: 12px;
   font-weight: 500;
   color: var(--text-muted);
-  margin-top: 4px;
 }
 
 .brief-attention-line.has-attention {
@@ -683,7 +685,7 @@ table {
   display: flex;
   align-items: flex-start;
   gap: 0;
-  margin-top: 16px;
+  margin-top: 12px;
 }
 
 .brief-main {
@@ -704,7 +706,9 @@ table {
      signature-*, invoice-row, handled-list, etc.) already reads these same
      custom properties, so this alone re-themes the reused components
      without forking their CSS. Same shared palette as .sidebar. */
-  --surface: var(--dw-charcoal-surface);
+  --surface: #1D1F24;
+  --dw-charcoal-surface-raised: #1D1F24;
+  --dw-charcoal-border: #282A30;
   --border: var(--dw-charcoal-border);
   --bg: var(--dw-charcoal);
   --text-primary: var(--dw-charcoal-text);
@@ -716,7 +720,7 @@ table {
   flex-shrink: 0;
   background: var(--dw-charcoal);
   border-left: 1px solid var(--dw-charcoal-border);
-  padding: 18px 14px;
+  padding: 15px 13px 12px;
   color: var(--text-primary);
   display: flex;
   flex-direction: column;
@@ -836,7 +840,7 @@ table {
 .rail-section {
   background: var(--dw-charcoal-surface-raised, var(--dw-charcoal-surface));
   border: 1px solid var(--dw-charcoal-border);
-  border-radius: 11px;
+  border-radius: 9px;
   padding: 12px 13px 13px;
 }
 
@@ -850,6 +854,32 @@ table {
   text-transform: uppercase;
   color: var(--dw-charcoal-text-secondary);
   margin-bottom: 10px;
+}
+
+.rail-subsection-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 14px 0 5px;
+  padding-top: 12px;
+  border-top: 1px solid var(--dw-charcoal-border);
+  color: var(--dw-charcoal-text-secondary);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.rail-operations {
+  min-height: 190px;
+}
+
+.rail-approval-section .section-head {
+  margin-bottom: 10px;
+}
+
+.pulse-rail > .rail-section:last-child {
+  min-height: 216px;
 }
 
 .rail-section-line {
@@ -1002,15 +1032,17 @@ table {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 12px;
-  margin: 0 0 14px;
+  height: 136px;
+  margin: 0 0 12px;
 }
 
 .kpi-card {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 12px;
-  padding: 13px 14px;
-  min-height: 108px;
+  padding: 15px 16px;
+  height: 136px;
+  min-height: 136px;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
@@ -1058,7 +1090,7 @@ table {
 }
 
 .kpi-value {
-  margin-top: 10px;
+  margin-top: 12px;
   font-size: 24px;
   font-weight: 800;
   color: var(--text-primary);
@@ -1068,7 +1100,7 @@ table {
 }
 
 .kpi-support {
-  margin-top: 4px;
+  margin-top: 6px;
   font-size: 10.5px;
   color: var(--text-muted);
 }
@@ -1097,18 +1129,18 @@ table {
 .brief-banner {
   background: linear-gradient(90deg, var(--primary-tint), var(--surface));
   border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 13px 16px;
+  border-radius: 10px;
+  padding: 7px 11px;
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 14px;
+  gap: 9px;
+  margin-bottom: 12px;
 }
 
 .brief-banner-icon {
-  width: 30px;
-  height: 30px;
-  border-radius: 8px;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
   background: var(--surface);
   border: 1px solid var(--border);
   display: flex;
@@ -1116,6 +1148,13 @@ table {
   justify-content: center;
   color: var(--primary);
   flex-shrink: 0;
+}
+
+.brief-banner > div {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
 }
 
 .brief-banner-title {
@@ -1127,7 +1166,7 @@ table {
 .brief-banner-detail {
   font-size: 11.5px;
   color: var(--text-secondary);
-  margin-top: 2px;
+  margin-top: 0;
 }
 
 .brief-banner-cta {
@@ -1187,14 +1226,13 @@ table {
    grid2 proportions. */
 .brief-row-2col {
   display: grid;
-  /* Widened from 1.15fr/0.85fr — the overdue table's real min-width
-     (its six columns summed, incl. the action column wide enough for
-     "Rule requires approval") didn't fit inside the narrower share and
-     was getting cut off by .top-invoices-table-wrap's overflow-x:auto
-     with no visible scrollbar affordance. This split gives it enough
-     room to render in full at the target desktop viewport. */
-  grid-template-columns: 1.4fr 0.6fr;
+  /* The visual target is intentionally close to balanced. Width pressure
+     belongs inside the table's fixed column budget, not in a starved Due
+     Soon card, so the factual list and the upcoming-work view retain equal
+     architectural weight. */
+  grid-template-columns: 1.12fr 0.88fr;
   gap: 14px;
+  min-height: 307px;
   margin-bottom: 14px;
   /* Stretch (not start) — Due Soon's card matches the overdue table's real
      height instead of shrinking to its own shorter content and leaving an
@@ -1211,6 +1249,9 @@ table {
      out past .brief-row-2col's own width instead of honoring the 1.15fr/
      0.85fr split. */
   min-width: 0;
+  min-height: 307px;
+  position: relative;
+  padding-bottom: 42px;
 }
 
 /* Due Soon: section head stays pinned top; the real content below it
@@ -1226,7 +1267,24 @@ table {
   flex: 1;
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  justify-content: flex-start;
+}
+
+.brief-card-link {
+  position: absolute;
+  left: 16px;
+  bottom: 13px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--primary-hover);
+  font-size: 11px;
+  font-weight: 650;
+  text-decoration: none;
+}
+
+.brief-card-link:hover {
+  color: var(--primary);
 }
 
 /* --- Invoice rows --- */
@@ -1379,7 +1437,7 @@ table {
 
 .top-invoices-table {
   width: 100%;
-  min-width: 550px;
+  min-width: 441px;
   border-collapse: collapse;
   /* Explicit per-column widths below only take effect under fixed layout
      — with the default auto layout, the browser redistributes width by
@@ -1389,21 +1447,21 @@ table {
   table-layout: fixed;
 }
 
-.top-invoices-table col.col-invoice { width: 62px; }
-.top-invoices-table col.col-client { width: 84px; }
+.top-invoices-table col.col-invoice { width: 54px; }
+.top-invoices-table col.col-client { width: 60px; }
 /* Wide enough that a real dollar amount ($4,200.00) never truncates —
    an ellipsis on money is worse than the modest extra horizontal scroll
    it costs at the very narrowest desktop width this table supports. */
-.top-invoices-table col.col-amount { width: 72px; }
-.top-invoices-table col.col-days { width: 34px; }
+.top-invoices-table col.col-amount { width: 60px; }
+.top-invoices-table col.col-days { width: 26px; }
 /* The one column that should wrap rather than force horizontal scroll for
    its own sake — fixed so it reliably wraps at ~2 lines instead of
    collapsing to a single-word-wide strip. */
-.top-invoices-table col.col-reason { width: 130px; }
+.top-invoices-table col.col-reason { width: 127px; }
 /* Wide enough that the longest real action label ("Authorized · approval
    required") never clips against the table edge at the target desktop
    viewport. */
-.top-invoices-table col.col-action { width: 168px; }
+.top-invoices-table col.col-action { width: 114px; }
 
 .top-invoices-table thead th {
   text-align: left;
@@ -1412,7 +1470,7 @@ table {
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--text-muted);
-  padding: 0 8px 7px;
+  padding: 0 6px 7px;
   white-space: nowrap;
 }
 
@@ -1422,8 +1480,8 @@ table {
 }
 
 .top-invoices-table tbody td {
-  padding: 9px 8px;
-  font-size: 11.5px;
+  padding: 8px 5px;
+  font-size: 11px;
   color: var(--text-secondary);
   border-top: 0.5px solid var(--border-soft);
   white-space: nowrap;
@@ -1442,6 +1500,7 @@ table {
 }
 
 .top-invoices-table-client {
+  font-size: 11px;
   font-weight: 600;
   color: var(--text-primary);
 }
@@ -1473,7 +1532,7 @@ table {
   align-items: baseline;
   gap: 6px;
   white-space: normal;
-  line-height: 1.35;
+  line-height: 1.3;
   font-weight: 500;
   color: var(--text-secondary);
 }
@@ -1502,6 +1561,15 @@ table {
   overflow: visible;
   text-overflow: clip;
   text-align: right;
+}
+
+/* The compact Pulse table owns a tighter button treatment than the
+   reusable row action elsewhere. This preserves the complete label inside
+   the near-even middle grid without changing its meaning or behavior. */
+.top-invoices-table .row-action,
+.top-invoices-table .row-action-passive {
+  padding-inline: 6px;
+  font-size: 11px;
 }
 
 /* Purely a visual read of the raw day count (see Dashboard.jsx) — never
@@ -3727,14 +3795,17 @@ table {
    "Duewatch is actively operating," with real deterministic counts as the
    proof underneath. */
 .working-on-strip {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  align-items: center;
   gap: 9px;
   background: linear-gradient(120deg, var(--lavender), var(--primary-tint));
   border: 1px solid var(--lavender-deep);
   border-radius: 12px;
-  padding: 14px 16px 15px;
-  margin-bottom: 14px;
+  height: 81px;
+  padding: 13px 16px;
+  margin-bottom: 12px;
 }
 
 .working-on-strip-title {
@@ -3770,11 +3841,32 @@ table {
   gap: 10px 0;
 }
 
+.working-on-strip-cta {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border: 1px solid rgba(218, 119, 86, 0.28);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.48);
+  color: var(--primary-hover);
+  font-size: 11.5px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.working-on-strip-cta:hover {
+  background: var(--surface);
+}
+
 .working-on-strip-list li {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12.5px;
+  font-size: 11.5px;
   font-weight: 500;
   color: var(--text-secondary);
   padding: 0 16px;
@@ -3792,6 +3884,16 @@ table {
 }
 
 @media (max-width: 880px) {
+  .working-on-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .working-on-strip-cta {
+    grid-column: 1;
+    grid-row: auto;
+    justify-self: start;
+  }
+
   .working-on-strip-list li {
     border-left: none;
     padding: 0;
@@ -3804,13 +3906,14 @@ table {
    this block is visual treatment only, no state logic.
    ============================================================ */
 .assistant-panel {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 150px 220px;
   align-items: center;
-  justify-content: space-between;
-  gap: 24px;
-  margin-top: 4px;
-  padding: 24px 32px 24px 28px;
-  border-radius: 18px;
+  gap: 0;
+  margin-top: 0;
+  height: 154px;
+  padding: 0;
+  border-radius: 11px;
   border: 1px solid var(--lavender-deep);
   background: linear-gradient(135deg, #FFF3EA 0%, var(--lavender) 100%);
   overflow: hidden;
@@ -3823,11 +3926,11 @@ table {
 .assistant-panel::after {
   content: '';
   position: absolute;
-  right: -40px;
+  right: 55px;
   top: 50%;
   transform: translateY(-50%);
-  width: 260px;
-  height: 260px;
+  width: 220px;
+  height: 220px;
   border-radius: 50%;
   background: radial-gradient(circle, rgba(218, 119, 86, 0.16) 0%, rgba(218, 119, 86, 0) 70%);
   pointer-events: none;
@@ -3839,8 +3942,9 @@ table {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 8px;
+  gap: 5px;
   min-width: 0;
+  padding-right: 23px;
 }
 
 .assistant-panel-status {
@@ -3868,36 +3972,125 @@ table {
 }
 
 .assistant-panel-title {
-  font-size: 21px;
+  font-size: 17px;
   font-weight: 800;
   color: var(--text-primary);
   letter-spacing: -0.015em;
 }
 
 .assistant-panel-subtitle {
-  font-size: 13px;
+  font-size: 11px;
   font-weight: 600;
   color: var(--primary-hover);
 }
 
 .assistant-panel-mission {
-  font-size: 13.5px;
+  font-size: 11.5px;
+  line-height: 1.55;
   color: var(--text-secondary);
-  max-width: 46ch;
+  max-width: 27ch;
 }
 
 .assistant-panel-cta {
-  margin-top: 10px;
+  margin-top: 2px;
+  height: 32px;
+  padding: 0 11px;
+  font-size: 10.5px;
 }
 
 .assistant-mark {
   position: relative;
   z-index: 1;
   flex-shrink: 0;
+  width: 168px;
+  height: 150px;
+  align-self: flex-end;
+  object-fit: contain;
+  object-position: center bottom;
+  transform: translateX(-17px);
 }
 
-.assistant-eye {
-  transition: transform 200ms ease;
+.assistant-snapshot {
+  align-self: stretch;
+  min-width: 0;
+  padding: 17px 20px;
+  position: relative;
+  z-index: 1;
+}
+
+.assistant-snapshot h2 {
+  margin: 0 0 18px;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.assistant-snapshot-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.assistant-snapshot-metrics > div {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  column-gap: 9px;
+  min-width: 0;
+  margin-right: 12px;
+  padding-right: 12px;
+  border-right: 1px solid var(--border-soft);
+}
+
+.assistant-snapshot-metrics > div:last-child {
+  margin-right: 0;
+  padding-right: 0;
+  border-right: 0;
+}
+
+.assistant-snapshot-metrics svg {
+  grid-row: 1 / 3;
+  width: 38px;
+  height: 38px;
+  padding: 9px;
+  border-radius: 50%;
+  box-sizing: border-box;
+  background: #ECFAF1;
+  color: var(--green);
+}
+
+.assistant-snapshot-metrics > div:nth-child(2) svg {
+  background: #EDF8FE;
+  color: #2CA7DA;
+}
+
+.assistant-snapshot-metrics > div:nth-child(3) svg {
+  background: var(--primary-tint);
+  color: var(--primary-hover);
+}
+
+.assistant-snapshot-metrics > div:nth-child(4) svg {
+  background: #FFF8E9;
+  color: var(--amber);
+}
+
+.assistant-snapshot-metrics strong {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 15px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assistant-snapshot-metrics span {
+  grid-column: 2;
+  font-size: 9px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.assistant-snapshot-metrics small {
+  color: var(--text-muted);
+  font-size: 8.5px;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -3908,12 +4101,22 @@ table {
 
 @media (max-width: 640px) {
   .assistant-panel {
-    flex-direction: column;
+    height: auto;
+    grid-template-columns: 1fr;
     align-items: flex-start;
     text-align: left;
   }
+  .assistant-snapshot-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 18px 0;
+  }
+  .assistant-panel-text {
+    padding: 0 20px 20px;
+  }
   .assistant-mark {
     align-self: center;
+    justify-self: center;
+    transform: none;
   }
 }
 

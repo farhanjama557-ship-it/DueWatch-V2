@@ -182,11 +182,12 @@ function InvoiceRow({ invoice, secondary, onClick }) {
   )
 }
 
-// "Since your last visit" — relocated from a dark-rail section into the
-// north-star mockup's compact banner treatment at the top of the white
-// canvas. Same real Checked/Drafted facts, same real-empty-state rule:
-// omitted entirely when there's no prior visit to diff against.
-function SinceLastVisitBanner({ data }) {
+// Keep the real visit-delta facts, but fold them into the operating strip
+// below instead of spending a full-width row on sparse production data.
+// This is presentation-only: the same Checked/Drafted values from
+// DataContext are returned verbatim, and an unprovable/empty delta is still
+// omitted entirely.
+function sinceLastVisitSummary(data) {
   if (!data) return null
   const parts = []
   if (data.checked > 0) {
@@ -196,18 +197,7 @@ function SinceLastVisitBanner({ data }) {
     parts.push(`Drafted ${data.drafted} ${data.drafted === 1 ? 'reminder' : 'reminders'}`)
   }
   if (parts.length === 0) return null
-
-  return (
-    <div className="brief-banner">
-      <span className="brief-banner-icon">
-        <History size={15} />
-      </span>
-      <div>
-        <div className="brief-banner-title">Since your last visit</div>
-        <div className="brief-banner-detail">{parts.join(' · ')}</div>
-      </div>
-    </div>
-  )
+  return `Since your last visit: ${parts.join(' · ')}`
 }
 
 // Phase 2A.2: the old fixed daily-cadence line is removed — no persisted
@@ -215,7 +205,7 @@ function SinceLastVisitBanner({ data }) {
 // Every remaining line is grounded in a real authority evaluation
 // (eligibleCount counts invoices isAuthorizedForAutomaticHandling() found
 // true), never a fabricated cadence claim.
-function WorkingOn({ autopilotEnabled, eligibleCount, settingsUnavailable }) {
+function RailOperations({ autopilotEnabled, eligibleCount, settingsUnavailable, dueSoon }) {
   const items = []
   if (autopilotEnabled && eligibleCount > 0) {
     items.push({
@@ -234,8 +224,10 @@ function WorkingOn({ autopilotEnabled, eligibleCount, settingsUnavailable }) {
       ? 'Nothing currently authorized.'
       : 'Autopilot is off. Nothing is scheduled.'
 
+  const upcoming = dueSoon.slice(0, 4)
+
   return (
-    <section className="rail-section">
+    <section className="rail-section rail-operations">
       <div className="rail-section-head">
         <CalendarClock size={15} />
         {/* Adversarial-review MEDIUM fix: renamed from "Duewatch Will Do
@@ -255,23 +247,16 @@ function WorkingOn({ autopilotEnabled, eligibleCount, settingsUnavailable }) {
           ))}
         </ul>
       )}
-    </section>
-  )
-}
 
-function Upcoming({ dueSoon }) {
-  const items = dueSoon.slice(0, 4)
-  return (
-    <section className="rail-section">
-      <div className="rail-section-head">
+      <div className="rail-subsection-head">
         <CalendarCheck size={15} />
         <span>Upcoming</span>
       </div>
-      {items.length === 0 ? (
+      {upcoming.length === 0 ? (
         <p className="rail-empty">Nothing due in the next 14 days.</p>
       ) : (
         <ul className="rail-upcoming-list">
-          {items.map((inv) => {
+          {upcoming.map((inv) => {
             const until = daysUntil(inv.due_date)
             return (
               <li key={inv.id} className="rail-upcoming-item">
@@ -291,13 +276,13 @@ function Upcoming({ dueSoon }) {
   )
 }
 
-// Last 5 events, newest first, with payment events bubbled to the top of
+// Last 3 events, newest first, with payment events bubbled to the top of
 // that recent window (still newest-first within each group).
 function pickRecentActivity(events) {
   const recent = events.slice(0, 8)
   const payments = recent.filter(isPaymentEvent)
   const rest = recent.filter((e) => !isPaymentEvent(e))
-  return [...payments, ...rest].slice(0, 5)
+  return [...payments, ...rest].slice(0, 3)
 }
 
 // Evidence and Autopilot are different concepts — this badge must never
@@ -398,8 +383,11 @@ function AutopilotNudge({ visible, onDismiss }) {
 // mirrors the exact Phase 2A.2 vocabulary (never "handled automatically" —
 // that implies execution that hasn't happened yet). Renders nothing at all
 // (not an empty placeholder) when there's genuinely nothing to report.
-function WorkingOnStrip({ remindersSent, handlingCount, decisionsNeeded }) {
+function WorkingOnStrip({ remindersSent, handlingCount, decisionsNeeded, visitSummary }) {
   const items = []
+  if (visitSummary) {
+    items.push({ Icon: History, text: visitSummary })
+  }
   if (remindersSent > 0) {
     items.push({
       Icon: RemindersIcon,
@@ -436,6 +424,9 @@ function WorkingOnStrip({ remindersSent, handlingCount, decisionsNeeded }) {
           </li>
         ))}
       </ul>
+      <Link to="/activity" className="working-on-strip-cta">
+        View activity <ArrowRightIcon width={14} height={14} />
+      </Link>
     </section>
   )
 }
@@ -723,20 +714,20 @@ export default function Dashboard() {
         <p className="brief-status-line">
           You collected <b>{formatMoney(collectedThisMonth)}</b> this month.{' '}
           {formatMoney(derived.outstandingTotal)} remains outstanding.
+          {/* Phase 2A.2: "Duewatch is handling N automatically" implied
+              execution that hasn't happened yet — a real granted
+              authorization is not the same claim as an action already taken
+              (see permission.canActAutomatically). Natural conditional
+              copy — never a zero-value clause; see attentionParts above. */}
+          <span className={`brief-attention-line${decisionsNeeded > 0 ? ' has-attention' : ''}`}>
+            {attentionLine}
+          </span>
         </p>
-        {/* Phase 2A.2: "Duewatch is handling N automatically" implied
-            execution that hasn't happened yet — a real granted
-            authorization is not the same claim as an action already taken
-            (see permission.canActAutomatically). Natural conditional
-            copy — never a zero-value clause; see attentionParts above. */}
-        <p className={`brief-attention-line${decisionsNeeded > 0 ? ' has-attention' : ''}`}>{attentionLine}</p>
       </div>
 
       <div className="brief-shell">
         {/* ---- White canvas: the business ---- */}
         <div className="brief-main">
-          <SinceLastVisitBanner data={sinceLastVisit} />
-
           <section className="kpi-grid">
             <KpiCard
               Icon={CollectedIcon}
@@ -774,6 +765,7 @@ export default function Dashboard() {
             remindersSent={derived.remindersSent}
             handlingCount={derived.handlingCount}
             decisionsNeeded={decisionsNeeded}
+            visitSummary={sinceLastVisitSummary(sinceLastVisit)}
           />
 
           {!hasAnyInvoices ? (
@@ -936,6 +928,9 @@ export default function Dashboard() {
                       </table>
                     </div>
                   )}
+                  <Link to="/invoices" className="brief-card-link">
+                    View all invoices <ArrowRightIcon width={14} height={14} />
+                  </Link>
                 </section>
 
                 {/* Due Soon — real scheduled/due invoices occupying the space
@@ -953,8 +948,7 @@ export default function Dashboard() {
                     {derived.dueSoon.length === 0 ? (
                       <p className="brief-empty">Nothing due in the next 14 days.</p>
                     ) : (
-                      <>
-                        <ul className="invoice-list">
+                      <ul className="invoice-list">
                           {derived.dueSoon.map((inv) => {
                             // MEDIUM fix: the old suffix here was an
                             // unconditional, unproven cadence claim on every
@@ -975,14 +969,11 @@ export default function Dashboard() {
                             )
                           })}
                         </ul>
-                        {/* Deterministically true whenever this renders — the
-                            list above is the exhaustive dueSoon set (no
-                            slice), so there is never a hidden remainder to
-                            imply. */}
-                        <p className="due-soon-footer">No other invoices due soon.</p>
-                      </>
                     )}
                   </div>
+                  <Link to="/invoices" className="brief-card-link">
+                    View invoices <ArrowRightIcon width={14} height={14} />
+                  </Link>
                 </section>
               </div>
 
@@ -990,27 +981,35 @@ export default function Dashboard() {
             </>
           )}
 
-          <DuewatchAssistant />
+          <DuewatchAssistant
+            snapshot={{
+              openInvoices: derived.outstandingCount,
+              outstandingBalance: formatMoney(derived.outstandingTotal),
+              overdueInvoices: attentionCount,
+              remindersSent: derived.remindersSent,
+            }}
+          />
         </div>
 
         {/* ---- Dark rail: Duewatch itself ---- */}
         <aside className="pulse-rail">
-          <div ref={signatureSectionRef}>
-            <SignatureSection
-              items={awaitingSignature}
-              onResolved={resolveSignatureLocal}
-              onEdit={openEditFirst}
-              title="Needs your approval"
-            />
-          </div>
+          {awaitingSignature.length > 0 && (
+            <div ref={signatureSectionRef} className="rail-section rail-approval-section">
+              <SignatureSection
+                items={awaitingSignature}
+                onResolved={resolveSignatureLocal}
+                onEdit={openEditFirst}
+                title="Needs your approval"
+              />
+            </div>
+          )}
 
-          <WorkingOn
+          <RailOperations
             autopilotEnabled={autopilotEnabled}
             eligibleCount={derived.eligibleForNextCheck}
             settingsUnavailable={autopilotSettingsUnavailable}
+            dueSoon={derived.dueSoon}
           />
-
-          <Upcoming dueSoon={derived.dueSoon} />
 
           <RailActivity events={events} lastSyncedAt={lastSyncedAt} />
         </aside>
