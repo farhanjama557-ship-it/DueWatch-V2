@@ -72,8 +72,8 @@ function KpiCard({ Icon, label, value, valueColor, trend, support }) {
 // timestamp fact only — this app has no evidence source proving anything
 // about whether a client replied, so nothing here is ever derived from
 // that silence.
-function reasonFor(evaluation, autopilotRules, invoice, settingsUnavailable) {
-  const classified = classifyPulseAuthority(evaluation, { settingsUnavailable })
+function reasonFor(evaluation, autopilotRules, invoice, settingsUnavailable, autopilotSettings) {
+  const classified = classifyPulseAuthority(evaluation, { settingsUnavailable, autopilotSettings, invoice })
   if (
     classified.state === PULSE_STATE.AUTHORIZED_AUTOMATIC ||
     classified.state === PULSE_STATE.AUTHORIZED_APPROVAL_REQUIRED
@@ -507,6 +507,7 @@ export default function Dashboard() {
       awaitingInvoiceIds,
       pulseAuthority,
       settingsUnavailable: autopilotSettingsUnavailable,
+      autopilotSettings,
     })
 
     return {
@@ -730,11 +731,19 @@ export default function Dashboard() {
                           {derived.needsAttention.map((inv) => {
                             const od = daysOverdue(inv.due_date)
                             const evaluation = derived.pulseAuthority.get(inv.id)
-                            const reco = reasonFor(evaluation, autopilotRules, inv, autopilotSettingsUnavailable)
+                            const reco = reasonFor(
+                              evaluation,
+                              autopilotRules,
+                              inv,
+                              autopilotSettingsUnavailable,
+                              autopilotSettings
+                            )
                             const actionState = classifyPulseRowState(inv.id, {
                               awaitingInvoiceIds: derived.awaitingInvoiceIds,
                               evaluation,
                               settingsUnavailable: autopilotSettingsUnavailable,
+                              autopilotSettings,
+                              invoice: inv,
                             })
                             return (
                               <tr key={inv.id} onClick={() => setSelected(inv)}>

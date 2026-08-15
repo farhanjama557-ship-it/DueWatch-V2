@@ -89,9 +89,23 @@ export function isAuthorizedForAutomaticHandling(evaluation) {
 // one generic one — a founder should never be told "action history"
 // couldn't be verified when the real cause was the rule query or the
 // Autopilot settings query failing instead.
+//
+// Third review-fix pass, HIGH: `canActAutomatically === false` is not one
+// fact, it's the negation of a conjunction — nextActionAuthority.js's own
+// derivePermission() computes it as
+// `settingsOwnedByCaller && autopilotEnabled && !invoicePaused && !requiresApproval`.
+// A single AUTHORIZED_APPROVAL_REQUIRED state for every "authorized but
+// not automatic" case was therefore false whenever the REAL reason was
+// Autopilot being off or this specific invoice being paused, not approval
+// policy. AUTOPILOT_OFF and PAUSED are added below, read directly from the
+// same real inputs (autopilotSettings, invoice.autopilot_paused) Pulse
+// already has loaded — never a second derivation of policy, just reading
+// facts that are already true regardless of what derivePermission computed.
 export const PULSE_STATE = Object.freeze({
   AUTHORIZED_AUTOMATIC: 'authorized_automatic',
   AUTHORIZED_APPROVAL_REQUIRED: 'authorized_approval_required',
+  AUTOPILOT_OFF: 'autopilot_off',
+  PAUSED: 'paused',
   AWAITING_APPROVAL: 'awaiting_approval',
   ALREADY_HANDLED: 'already_handled',
   NEEDS_REVIEW_RULES_UNAVAILABLE: 'needs_review_rules_unavailable',
@@ -105,6 +119,9 @@ export const PULSE_STATE = Object.freeze({
 // truthful sentences — never a raw AUTHORITY_BLOCK_REASONS string, never a
 // softened/urgency-implying claim.
 export const PULSE_STATE_COPY = Object.freeze({
+  [PULSE_STATE.AUTHORIZED_APPROVAL_REQUIRED]: 'Authorized · approval required',
+  [PULSE_STATE.AUTOPILOT_OFF]: 'Rule applies · Autopilot is off',
+  [PULSE_STATE.PAUSED]: 'Rule applies · paused for this invoice',
   [PULSE_STATE.AWAITING_APPROVAL]: 'Awaiting your approval',
   [PULSE_STATE.ALREADY_HANDLED]: 'Already handled',
   [PULSE_STATE.NEEDS_REVIEW_RULES_UNAVAILABLE]: "Duewatch couldn't verify the current rule state.",
@@ -124,18 +141,20 @@ export const PULSE_STATE_COPY = Object.freeze({
 // `settingsUnavailable` (HIGH fix, second review pass): the Autopilot
 // settings query failing is a THIRD, independent unavailable condition —
 // distinct from both the rule query and evaluateNextActionAuthority's own
-// execution-history check. It is passed in separately (not folded into
-// `evaluation`) because nextActionAuthority.js itself already handles a
-// missing settings object safely and conservatively (no automatic
-// permission, requiresApproval defaults true) — that internal behavior is
-// correct and untouched. The bug this fixes is purely a DISPLAY one: an
-// `evaluation` built from unavailable settings can still say
-// "authorized, approval required," which is true only in the narrow sense
-// that nextActionAuthority.js's safe default happens to read that way —
-// it must never be presented as an observed, real founder policy. When
-// settings are unavailable, this OVERRIDES any authorized/blocked reading
-// from `evaluation` and reports the real unknown instead.
-export function classifyPulseAuthority(evaluation, { settingsUnavailable = false } = {}) {
+// execution-history check. `autopilotSettings`/`invoice` (third pass,
+// HIGH): the SAME real, already-loaded inputs derivePermission() itself
+// reads — passed here only to explain WHY canActAutomatically is false,
+// never to recompute permission a second time.
+//
+// Third review-fix pass, MEDIUM: a PROVEN authority outcome (pending /
+// already-handled / execution-history-unavailable / malformed) has
+// nothing to do with settings and must be classified BEFORE
+// settingsUnavailable is even consulted — a failed settings query must
+// never mask or override a real "already handled" or "awaiting approval"
+// state. settingsUnavailable only matters once authority.authorized is
+// true, because permission interpretation is the only thing that
+// genuinely depends on settings.
+export function classifyPulseAuthority(evaluation, { settingsUnavailable = false, autopilotSettings = null, invoice = null } = {}) {
   if (!evaluation) {
     return {
       state: PULSE_STATE.NEEDS_REVIEW_RULES_UNAVAILABLE,
@@ -143,6 +162,48 @@ export function classifyPulseAuthority(evaluation, { settingsUnavailable = false
     }
   }
 
+  const { authority, permission } = evaluation
+
+  if (authority?.authorized !== true) {
+    switch (authority?.blockedReason) {
+      case AUTHORITY_BLOCK_REASONS.PENDING_ACTION_EXISTS:
+        return { state: PULSE_STATE.AWAITING_APPROVAL, label: PULSE_STATE_COPY[PULSE_STATE.AWAITING_APPROVAL] }
+      case AUTHORITY_BLOCK_REASONS.ALREADY_HANDLED:
+        return { state: PULSE_STATE.ALREADY_HANDLED, label: PULSE_STATE_COPY[PULSE_STATE.ALREADY_HANDLED] }
+      case AUTHORITY_BLOCK_REASONS.EXECUTION_HISTORY_UNAVAILABLE:
+        return {
+          state: PULSE_STATE.NEEDS_REVIEW_HISTORY_UNAVAILABLE,
+          label: PULSE_STATE_COPY[PULSE_STATE.NEEDS_REVIEW_HISTORY_UNAVAILABLE],
+        }
+      case AUTHORITY_BLOCK_REASONS.MALFORMED_RULE_STATE:
+      case AUTHORITY_BLOCK_REASONS.AMBIGUOUS_RULE_PRECEDENCE:
+      case AUTHORITY_BLOCK_REASONS.TENANT_MISMATCH:
+        // TENANT_MISMATCH should never legitimately occur for an invoice
+        // Pulse itself loaded for the signed-in founder — if it somehow
+        // does, treat it the same as "couldn't verify," never as "no rule."
+        return {
+          state: PULSE_STATE.NEEDS_REVIEW_MALFORMED,
+          label: PULSE_STATE_COPY[PULSE_STATE.NEEDS_REVIEW_MALFORMED],
+        }
+      case null:
+      case undefined:
+        // The one genuine case: authority ran, found no blocking condition,
+        // and simply found no rule that currently matches.
+        return { state: PULSE_STATE.NO_RULE, label: PULSE_STATE_COPY[PULSE_STATE.NO_RULE] }
+      default:
+        // An unrecognized/future blockedReason value fails closed to
+        // "needs review" rather than silently defaulting to "No matching
+        // rule."
+        return {
+          state: PULSE_STATE.NEEDS_REVIEW_MALFORMED,
+          label: PULSE_STATE_COPY[PULSE_STATE.NEEDS_REVIEW_MALFORMED],
+        }
+    }
+  }
+
+  // authority.authorized === true from here on: a real, granted rule
+  // matches. Only NOW does settings availability matter, since permission
+  // (may this run automatically?) is the one open question left.
   if (settingsUnavailable) {
     return {
       state: PULSE_STATE.NEEDS_REVIEW_SETTINGS_UNAVAILABLE,
@@ -150,45 +211,29 @@ export function classifyPulseAuthority(evaluation, { settingsUnavailable = false
     }
   }
 
-  const { authority, permission } = evaluation
-  if (authority?.authorized === true) {
-    return permission?.canActAutomatically === true
-      ? { state: PULSE_STATE.AUTHORIZED_AUTOMATIC, label: null }
-      : { state: PULSE_STATE.AUTHORIZED_APPROVAL_REQUIRED, label: null }
+  if (permission?.canActAutomatically === true) {
+    return { state: PULSE_STATE.AUTHORIZED_AUTOMATIC, label: null }
   }
 
-  switch (authority?.blockedReason) {
-    case AUTHORITY_BLOCK_REASONS.PENDING_ACTION_EXISTS:
-      return { state: PULSE_STATE.AWAITING_APPROVAL, label: PULSE_STATE_COPY[PULSE_STATE.AWAITING_APPROVAL] }
-    case AUTHORITY_BLOCK_REASONS.ALREADY_HANDLED:
-      return { state: PULSE_STATE.ALREADY_HANDLED, label: PULSE_STATE_COPY[PULSE_STATE.ALREADY_HANDLED] }
-    case AUTHORITY_BLOCK_REASONS.EXECUTION_HISTORY_UNAVAILABLE:
-      return {
-        state: PULSE_STATE.NEEDS_REVIEW_HISTORY_UNAVAILABLE,
-        label: PULSE_STATE_COPY[PULSE_STATE.NEEDS_REVIEW_HISTORY_UNAVAILABLE],
-      }
-    case AUTHORITY_BLOCK_REASONS.MALFORMED_RULE_STATE:
-    case AUTHORITY_BLOCK_REASONS.AMBIGUOUS_RULE_PRECEDENCE:
-    case AUTHORITY_BLOCK_REASONS.TENANT_MISMATCH:
-      // TENANT_MISMATCH should never legitimately occur for an invoice
-      // Pulse itself loaded for the signed-in founder — if it somehow
-      // does, treat it the same as "couldn't verify," never as "no rule."
-      return {
-        state: PULSE_STATE.NEEDS_REVIEW_MALFORMED,
-        label: PULSE_STATE_COPY[PULSE_STATE.NEEDS_REVIEW_MALFORMED],
-      }
-    case null:
-    case undefined:
-      // The one genuine case: authority ran, found no blocking condition,
-      // and simply found no rule that currently matches.
-      return { state: PULSE_STATE.NO_RULE, label: PULSE_STATE_COPY[PULSE_STATE.NO_RULE] }
-    default:
-      // An unrecognized/future blockedReason value fails closed to "needs
-      // review" rather than silently defaulting to "No matching rule."
-      return {
-        state: PULSE_STATE.NEEDS_REVIEW_MALFORMED,
-        label: PULSE_STATE_COPY[PULSE_STATE.NEEDS_REVIEW_MALFORMED],
-      }
+  // canActAutomatically is false — read the SAME real facts
+  // derivePermission() itself reads to say truthfully why, rather than
+  // collapsing every case into "approval required."
+  if (invoice?.autopilot_paused === true) {
+    return { state: PULSE_STATE.PAUSED, label: PULSE_STATE_COPY[PULSE_STATE.PAUSED] }
+  }
+  if (!autopilotSettings || autopilotSettings.enabled !== true) {
+    return { state: PULSE_STATE.AUTOPILOT_OFF, label: PULSE_STATE_COPY[PULSE_STATE.AUTOPILOT_OFF] }
+  }
+  if (permission?.requiresApproval === true) {
+    return { state: PULSE_STATE.AUTHORIZED_APPROVAL_REQUIRED, label: null }
+  }
+  // Enabled, not paused, requiresApproval false, yet canActAutomatically is
+  // still false — an inconsistent combination that shouldn't be reachable
+  // from Pulse's own tenant-scoped settings query, but fails closed rather
+  // than guessing.
+  return {
+    state: PULSE_STATE.NEEDS_REVIEW_MALFORMED,
+    label: PULSE_STATE_COPY[PULSE_STATE.NEEDS_REVIEW_MALFORMED],
   }
 }
 
@@ -221,9 +266,19 @@ export const PULSE_ROW_STATE = Object.freeze({
 // only as a fast, currently-visible-card precedence check — it can never
 // cause a real AWAITING_APPROVAL evaluation to be missed, only recognize
 // it slightly earlier.
-export function classifyPulseRowState(invoiceId, { awaitingInvoiceIds, evaluation, settingsUnavailable = false }) {
+//
+// Third review-fix pass, HIGH: AUTOPILOT_OFF and PAUSED both map to
+// MANUAL — a rule genuinely applies but nothing will act on it without a
+// founder decision, exactly like NO_RULE from a decision-counting/action-
+// column point of view, so these invoices are never silently dropped from
+// countBlockedDecisions below. `autopilotSettings`/`invoice` are threaded
+// straight through to classifyPulseAuthority, never re-derived here.
+export function classifyPulseRowState(
+  invoiceId,
+  { awaitingInvoiceIds, evaluation, settingsUnavailable = false, autopilotSettings = null, invoice = null }
+) {
   if (awaitingInvoiceIds.has(invoiceId)) return PULSE_ROW_STATE.AWAITING_APPROVAL
-  const classified = classifyPulseAuthority(evaluation, { settingsUnavailable })
+  const classified = classifyPulseAuthority(evaluation, { settingsUnavailable, autopilotSettings, invoice })
   switch (classified.state) {
     case PULSE_STATE.AWAITING_APPROVAL:
       return PULSE_ROW_STATE.AWAITING_APPROVAL
@@ -234,6 +289,8 @@ export function classifyPulseRowState(invoiceId, { awaitingInvoiceIds, evaluatio
     case PULSE_STATE.ALREADY_HANDLED:
       return PULSE_ROW_STATE.ALREADY_HANDLED
     case PULSE_STATE.NO_RULE:
+    case PULSE_STATE.AUTOPILOT_OFF:
+    case PULSE_STATE.PAUSED:
       return PULSE_ROW_STATE.MANUAL
     default:
       // Every "couldn't verify" state (rules/settings/history/malformed).
@@ -252,12 +309,17 @@ export function classifyPulseRowState(invoiceId, { awaitingInvoiceIds, evaluatio
 // AUTHORIZED_APPROVAL_REQUIRED on its own — that becomes a real decision
 // only once a draft actually exists (AWAITING_APPROVAL). MANUAL and
 // NEEDS_REVIEW both are open decisions right now.
-export function countBlockedDecisions(invoices, { awaitingInvoiceIds, pulseAuthority, settingsUnavailable = false }) {
+export function countBlockedDecisions(
+  invoices,
+  { awaitingInvoiceIds, pulseAuthority, settingsUnavailable = false, autopilotSettings = null }
+) {
   return (invoices || []).filter((inv) => {
     const state = classifyPulseRowState(inv.id, {
       awaitingInvoiceIds,
       evaluation: pulseAuthority.get(inv.id),
       settingsUnavailable,
+      autopilotSettings,
+      invoice: inv,
     })
     return state === PULSE_ROW_STATE.MANUAL || state === PULSE_ROW_STATE.NEEDS_REVIEW
   }).length

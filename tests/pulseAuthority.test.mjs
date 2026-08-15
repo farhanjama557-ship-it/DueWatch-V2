@@ -12,6 +12,7 @@ import {
   classifyPulseRowState,
   countBlockedDecisions,
   PULSE_STATE,
+  PULSE_STATE_COPY,
   PULSE_ROW_STATE,
 } from '../src/lib/pulseAuthority.js'
 import { AUTHORITY_BLOCK_REASONS } from '../src/lib/nextActionAuthority.js'
@@ -430,10 +431,13 @@ test('HIGH1: authorized + canActAutomatically -> AUTHORIZED_AUTOMATIC; authorize
     authority: { authorized: true, blockedReason: null },
     permission: { canActAutomatically: true },
   })
-  const approvalRequired = classifyPulseAuthority({
-    authority: { authorized: true, blockedReason: null },
-    permission: { canActAutomatically: false },
-  })
+  const approvalRequired = classifyPulseAuthority(
+    {
+      authority: { authorized: true, blockedReason: null },
+      permission: { canActAutomatically: false, requiresApproval: true },
+    },
+    { autopilotSettings: { enabled: true }, invoice: { autopilot_paused: false } }
+  )
   assert.equal(automatic.state, PULSE_STATE.AUTHORIZED_AUTOMATIC)
   assert.equal(approvalRequired.state, PULSE_STATE.AUTHORIZED_APPROVAL_REQUIRED)
   assert.notEqual(automatic.state, approvalRequired.state)
@@ -603,10 +607,17 @@ test('MEDIUM1: a DIFFERENT overdue invoice with no pending approval and no worki
 test('HIGH1 (3rd pass): settingsUnavailable=true overrides an otherwise-authorized evaluation to a distinct "couldn\'t verify Autopilot state" — never presented as observed policy', () => {
   const authorizedApprovalRequired = {
     authority: { authorized: true, blockedReason: null, basis: { ruleId: 'rule-1' } },
-    permission: { canActAutomatically: false },
+    permission: { canActAutomatically: false, requiresApproval: true },
   }
-  const withoutFailure = classifyPulseAuthority(authorizedApprovalRequired, { settingsUnavailable: false })
-  const withFailure = classifyPulseAuthority(authorizedApprovalRequired, { settingsUnavailable: true })
+  const settingsContext = { autopilotSettings: { enabled: true }, invoice: { autopilot_paused: false } }
+  const withoutFailure = classifyPulseAuthority(authorizedApprovalRequired, {
+    settingsUnavailable: false,
+    ...settingsContext,
+  })
+  const withFailure = classifyPulseAuthority(authorizedApprovalRequired, {
+    settingsUnavailable: true,
+    ...settingsContext,
+  })
 
   assert.equal(withoutFailure.state, PULSE_STATE.AUTHORIZED_APPROVAL_REQUIRED)
   assert.equal(withFailure.state, PULSE_STATE.NEEDS_REVIEW_SETTINGS_UNAVAILABLE)
@@ -715,9 +726,14 @@ test('HIGH2 (3rd pass): approved and skipped flows both converge to the same tru
 test('MEDIUM1 (3rd pass): an authorized-but-approval-required invoice gets its OWN row state, never MANUAL and never AWAITING_APPROVAL', () => {
   const evaluation = {
     authority: { authorized: true, blockedReason: null, basis: { ruleId: 'rule-1' } },
-    permission: { canActAutomatically: false },
+    permission: { canActAutomatically: false, requiresApproval: true },
   }
-  const state = classifyPulseRowState('inv-1', { awaitingInvoiceIds: new Set(), evaluation })
+  const state = classifyPulseRowState('inv-1', {
+    awaitingInvoiceIds: new Set(),
+    evaluation,
+    autopilotSettings: { enabled: true },
+    invoice: { autopilot_paused: false },
+  })
   assert.equal(state, PULSE_ROW_STATE.AUTHORIZED_APPROVAL_REQUIRED)
   assert.notEqual(state, PULSE_ROW_STATE.MANUAL)
   assert.notEqual(state, PULSE_ROW_STATE.AWAITING_APPROVAL)
@@ -738,7 +754,11 @@ test('MEDIUM1 (3rd pass): AUTHORIZED_APPROVAL_REQUIRED is never counted as a blo
   const evaluation = pulseAuthority.get(invoice.id)
   assert.equal(evaluation.authority.authorized, true)
   assert.equal(evaluation.permission.canActAutomatically, false)
-  const blockedCount = countBlockedDecisions([invoice], { awaitingInvoiceIds: new Set(), pulseAuthority })
+  const blockedCount = countBlockedDecisions([invoice], {
+    awaitingInvoiceIds: new Set(),
+    pulseAuthority,
+    autopilotSettings: autopilotSettings({ approval_required: true }),
+  })
   assert.equal(blockedCount, 0, 'authorized-approval-required alone is not yet an open founder decision')
 })
 
@@ -777,6 +797,228 @@ test('MEDIUM2 (3rd pass): all three unavailable causes (rules, settings, history
   const labels = [rulesUnavailable.label, settingsUnavailable.label, historyUnavailable.label]
   assert.equal(new Set(states).size, 3, 'all three unavailable states must be pairwise distinct')
   assert.equal(new Set(labels).size, 3, 'all three unavailable labels must be pairwise distinct')
+})
+
+// ---------------------------------------------------------------------
+// Fourth adversarial review pass, HIGH: canActAutomatically === false is
+// the negation of a conjunction (derivePermission: settingsOwnedByCaller
+// && autopilotEnabled && !invoicePaused && !requiresApproval) — Pulse must
+// not collapse every "not automatic" case into AUTHORIZED_APPROVAL_REQUIRED.
+// These four scenarios use the REAL evaluateNextActionAuthority() engine
+// (via evaluatePulseAuthority) end-to-end and must produce four distinct,
+// truthful Pulse states.
+
+test('4th HIGH: Autopilot disabled (enabled:false, approval_required:false) -> AUTOPILOT_OFF, not AUTHORIZED_APPROVAL_REQUIRED', () => {
+  const invoice = baseInvoice()
+  const rule = baseRule()
+  const settings = autopilotSettings({ enabled: false, approval_required: false })
+  const pulseAuthority = evaluatePulseAuthority({
+    userId: USER_A,
+    invoices: [invoice],
+    rules: [rule],
+    autopilotSettings: settings,
+    ...EMPTY,
+    now: NOW,
+  })
+  const evaluation = pulseAuthority.get(invoice.id)
+  assert.equal(evaluation.authority.authorized, true)
+  assert.equal(evaluation.permission.canActAutomatically, false)
+  const classified = classifyPulseAuthority(evaluation, { autopilotSettings: settings, invoice })
+  assert.equal(classified.state, PULSE_STATE.AUTOPILOT_OFF)
+})
+
+test('4th HIGH: invoice individually paused (enabled:true, approval_required:false, autopilot_paused:true) -> PAUSED, not AUTHORIZED_APPROVAL_REQUIRED', () => {
+  const invoice = baseInvoice({ autopilot_paused: true })
+  const rule = baseRule()
+  const settings = autopilotSettings({ enabled: true, approval_required: false })
+  const pulseAuthority = evaluatePulseAuthority({
+    userId: USER_A,
+    invoices: [invoice],
+    rules: [rule],
+    autopilotSettings: settings,
+    ...EMPTY,
+    now: NOW,
+  })
+  const evaluation = pulseAuthority.get(invoice.id)
+  assert.equal(evaluation.authority.authorized, true)
+  assert.equal(evaluation.permission.canActAutomatically, false)
+  const classified = classifyPulseAuthority(evaluation, { autopilotSettings: settings, invoice })
+  assert.equal(classified.state, PULSE_STATE.PAUSED)
+})
+
+test('4th HIGH: approval genuinely required (enabled:true, approval_required:true) -> AUTHORIZED_APPROVAL_REQUIRED', () => {
+  const invoice = baseInvoice()
+  const rule = baseRule()
+  const settings = autopilotSettings({ enabled: true, approval_required: true })
+  const pulseAuthority = evaluatePulseAuthority({
+    userId: USER_A,
+    invoices: [invoice],
+    rules: [rule],
+    autopilotSettings: settings,
+    ...EMPTY,
+    now: NOW,
+  })
+  const evaluation = pulseAuthority.get(invoice.id)
+  assert.equal(evaluation.authority.authorized, true)
+  assert.equal(evaluation.permission.canActAutomatically, false)
+  const classified = classifyPulseAuthority(evaluation, { autopilotSettings: settings, invoice })
+  assert.equal(classified.state, PULSE_STATE.AUTHORIZED_APPROVAL_REQUIRED)
+})
+
+test('4th HIGH: normal automatic case (enabled:true, approval_required:false, not paused) -> AUTHORIZED_AUTOMATIC', () => {
+  const invoice = baseInvoice()
+  const rule = baseRule()
+  const settings = autopilotSettings({ enabled: true, approval_required: false })
+  const pulseAuthority = evaluatePulseAuthority({
+    userId: USER_A,
+    invoices: [invoice],
+    rules: [rule],
+    autopilotSettings: settings,
+    ...EMPTY,
+    now: NOW,
+  })
+  const evaluation = pulseAuthority.get(invoice.id)
+  assert.equal(evaluation.permission.canActAutomatically, true)
+  const classified = classifyPulseAuthority(evaluation, { autopilotSettings: settings, invoice })
+  assert.equal(classified.state, PULSE_STATE.AUTHORIZED_AUTOMATIC)
+})
+
+test('4th HIGH: all four permission scenarios produce pairwise-distinct, truthful Pulse states', () => {
+  const rule = baseRule()
+  function classifyFor(settingsOverrides, invoiceOverrides = {}) {
+    const invoice = baseInvoice(invoiceOverrides)
+    const settings = autopilotSettings(settingsOverrides)
+    const pulseAuthority = evaluatePulseAuthority({
+      userId: USER_A,
+      invoices: [invoice],
+      rules: [rule],
+      autopilotSettings: settings,
+      ...EMPTY,
+      now: NOW,
+    })
+    return classifyPulseAuthority(pulseAuthority.get(invoice.id), { autopilotSettings: settings, invoice }).state
+  }
+  const states = [
+    classifyFor({ enabled: false, approval_required: false }),
+    classifyFor({ enabled: true, approval_required: false }, { autopilot_paused: true }),
+    classifyFor({ enabled: true, approval_required: true }),
+    classifyFor({ enabled: true, approval_required: false }),
+  ]
+  assert.deepEqual(states, [
+    PULSE_STATE.AUTOPILOT_OFF,
+    PULSE_STATE.PAUSED,
+    PULSE_STATE.AUTHORIZED_APPROVAL_REQUIRED,
+    PULSE_STATE.AUTHORIZED_AUTOMATIC,
+  ])
+  assert.equal(new Set(states).size, 4, 'all four permission scenarios must be pairwise distinct')
+})
+
+test('4th HIGH: countBlockedDecisions counts AUTOPILOT_OFF and PAUSED invoices as open decisions, never silently dropped', () => {
+  const rule = baseRule()
+  const offInvoice = baseInvoice({ id: 'inv-off' })
+  const pausedInvoice = baseInvoice({ id: 'inv-paused', autopilot_paused: true })
+  const offSettings = autopilotSettings({ enabled: false, approval_required: false })
+  const pulseAuthorityOff = evaluatePulseAuthority({
+    userId: USER_A,
+    invoices: [offInvoice],
+    rules: [rule],
+    autopilotSettings: offSettings,
+    ...EMPTY,
+    now: NOW,
+  })
+  const offCount = countBlockedDecisions([offInvoice], {
+    awaitingInvoiceIds: new Set(),
+    pulseAuthority: pulseAuthorityOff,
+    autopilotSettings: offSettings,
+  })
+  assert.equal(offCount, 1, 'an Autopilot-off overdue invoice must still count as an open founder decision')
+
+  const pausedSettings = autopilotSettings({ enabled: true, approval_required: false })
+  const pulseAuthorityPaused = evaluatePulseAuthority({
+    userId: USER_A,
+    invoices: [pausedInvoice],
+    rules: [rule],
+    autopilotSettings: pausedSettings,
+    ...EMPTY,
+    now: NOW,
+  })
+  const pausedCount = countBlockedDecisions([pausedInvoice], {
+    awaitingInvoiceIds: new Set(),
+    pulseAuthority: pulseAuthorityPaused,
+    autopilotSettings: pausedSettings,
+  })
+  assert.equal(pausedCount, 1, 'a paused overdue invoice must still count as an open founder decision')
+})
+
+// ---------------------------------------------------------------------
+// Fourth adversarial review pass, MEDIUM: a proven ALREADY_HANDLED /
+// AWAITING_APPROVAL authority outcome must survive a settings-query
+// failure — settingsUnavailable must only affect classification once
+// authority.authorized is confirmed true, never override an already-proven
+// blocked outcome.
+
+test('4th MEDIUM: already-handled invoice stays "Already handled" even when the settings query failed', () => {
+  const invoice = baseInvoice()
+  const rule = baseRule()
+  const pulseAuthority = evaluatePulseAuthority({
+    userId: USER_A,
+    invoices: [invoice],
+    rules: [rule],
+    autopilotSettings: autopilotSettings(),
+    handledKeys: new Set([`${invoice.id}:${rule.id}`]),
+    pendingInvoiceIds: new Set(),
+    now: NOW,
+  })
+  const evaluation = pulseAuthority.get(invoice.id)
+  assert.equal(evaluation.authority.blockedReason, AUTHORITY_BLOCK_REASONS.ALREADY_HANDLED)
+  const classified = classifyPulseAuthority(evaluation, { settingsUnavailable: true })
+  assert.equal(classified.state, PULSE_STATE.ALREADY_HANDLED)
+  assert.equal(classified.label, PULSE_STATE_COPY[PULSE_STATE.ALREADY_HANDLED])
+})
+
+test('4th MEDIUM: pending-approval invoice stays "Awaiting your approval" even when the settings query failed', () => {
+  const invoice = baseInvoice()
+  const rule = baseRule()
+  const pulseAuthority = evaluatePulseAuthority({
+    userId: USER_A,
+    invoices: [invoice],
+    rules: [rule],
+    autopilotSettings: autopilotSettings(),
+    handledKeys: new Set(),
+    pendingInvoiceIds: new Set([invoice.id]),
+    now: NOW,
+  })
+  const evaluation = pulseAuthority.get(invoice.id)
+  assert.equal(evaluation.authority.blockedReason, AUTHORITY_BLOCK_REASONS.PENDING_ACTION_EXISTS)
+  const classified = classifyPulseAuthority(evaluation, { settingsUnavailable: true })
+  assert.equal(classified.state, PULSE_STATE.AWAITING_APPROVAL)
+})
+
+test('4th MEDIUM: classifyPulseRowState also preserves AWAITING_APPROVAL and ALREADY_HANDLED through a settings-query failure', () => {
+  const handledInvoice = baseInvoice({ id: 'inv-handled' })
+  const pendingInvoice = baseInvoice({ id: 'inv-pending' })
+  const rule = baseRule()
+  const pulseAuthority = evaluatePulseAuthority({
+    userId: USER_A,
+    invoices: [handledInvoice, pendingInvoice],
+    rules: [rule],
+    autopilotSettings: autopilotSettings(),
+    handledKeys: new Set([`${handledInvoice.id}:${rule.id}`]),
+    pendingInvoiceIds: new Set([pendingInvoice.id]),
+    now: NOW,
+  })
+  const handledState = classifyPulseRowState(handledInvoice.id, {
+    awaitingInvoiceIds: new Set(),
+    evaluation: pulseAuthority.get(handledInvoice.id),
+    settingsUnavailable: true,
+  })
+  const pendingState = classifyPulseRowState(pendingInvoice.id, {
+    awaitingInvoiceIds: new Set(),
+    evaluation: pulseAuthority.get(pendingInvoice.id),
+    settingsUnavailable: true,
+  })
+  assert.equal(handledState, PULSE_ROW_STATE.ALREADY_HANDLED)
+  assert.equal(pendingState, PULSE_ROW_STATE.AWAITING_APPROVAL)
 })
 
 // ---------------------------------------------------------------------
