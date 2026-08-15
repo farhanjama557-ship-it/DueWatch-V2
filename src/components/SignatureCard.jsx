@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import { Bot, CheckCircle, Loader2 } from 'lucide-react'
 import Avatar from './Avatar'
-import JourneyBar from './JourneyBar'
 import { formatMoney, daysOverdue } from '../lib/format'
 import { balanceOf, useData } from '../context/DataContext'
 
@@ -20,7 +19,6 @@ const SKIP_REASONS = ['Client already paid', "I'll handle manually", 'Wrong timi
 export default function SignatureCard({ item, onApprove, onSkip, onEdit, onResolved }) {
   const { startCognitive, stopCognitive } = useData()
   const [stage, setStage] = useState('idle')
-  const [showFullDraft, setShowFullDraft] = useState(false)
   const [skipReason, setSkipReason] = useState(SKIP_REASONS[0])
   const [exiting, setExiting] = useState(false)
   const [error, setError] = useState('')
@@ -29,9 +27,6 @@ export default function SignatureCard({ item, onApprove, onSkip, onEdit, onResol
   const clientName = invoice?.clients?.name || 'No client'
   const od = invoice ? daysOverdue(invoice.due_date) : 0
   const tone = TONE_STYLE[item.recommended_tone] || TONE_STYLE.friendly
-  const lines = (item.draft_content || '').split('\n')
-  const preview = lines.slice(0, 3).join('\n')
-  const hasMore = lines.length > 3
 
   // Second review-fix pass, HIGH: passes enough for the caller
   // (resolveSignatureLocal in DataContext.jsx) to reconcile
@@ -101,23 +96,6 @@ export default function SignatureCard({ item, onApprove, onSkip, onEdit, onResol
         </span>
       </div>
       {item.ai_reason && <p className="signature-reason">{item.ai_reason}</p>}
-
-      <div className="signature-preview">
-        <pre>{showFullDraft ? item.draft_content : preview}</pre>
-        {hasMore && (
-          <button
-            type="button"
-            className="signature-preview-toggle"
-            onClick={() => setShowFullDraft((v) => !v)}
-          >
-            {showFullDraft ? 'Show less' : 'Show full draft'}
-          </button>
-        )}
-      </div>
-
-      {invoice && (
-        <JourneyBar invoice={invoice} isPendingSignature hasAutopilotRun />
-      )}
 
       {error && <div className="auth-error signature-error">{error}</div>}
 
