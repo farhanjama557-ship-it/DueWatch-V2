@@ -77,8 +77,8 @@ function DuewatchAssistantMark() {
   return (
     <svg
       className="assistant-mark"
-      width="148"
-      height="148"
+      width="128"
+      height="128"
       viewBox="0 0 120 120"
       fill="none"
       xmlns="http://www.w3.org/2000/svg"

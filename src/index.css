@@ -15,7 +15,7 @@
      calm neutral surface with warmth concentrated in accents (terracotta,
      the assistant panel), not uniformly tinted cream across the whole
      canvas. */
-  --bg: #FAFAF9;
+  --bg: #F8F5F0;
   --surface: #FFFFFF;
   --border: #E9E7E1;
   --border-soft: #F1EFEA;
@@ -43,8 +43,8 @@
      `.app{grid-template-columns:210px 1fr 300px}`. The center column is
      the reference's own unbounded `1fr` — no shell-wide max-width here on
      purpose; see .app-shell's comment. */
-  --sidebar-w: 210px;
-  --rail-w: 300px;
+  --sidebar-w: 216px;
+  --rail-w: 280px;
 
   /* Shared dark-charcoal palette — the "Duewatch itself" zones (nav sidebar
      + right rail). Applied by re-pointing the generic --surface/--border/
@@ -153,7 +153,7 @@ table {
   border-right: 1px solid var(--dw-charcoal-border);
   display: flex;
   flex-direction: column;
-  padding: 20px 14px;
+  padding: 20px 13px;
   /* Fixed, not sticky. A prior pass used position:sticky specifically
      because the shell was bounded/centered (max-width + margin:auto) and
      `fixed` would have pinned this to the raw viewport edge, escaping that
@@ -176,8 +176,8 @@ table {
   display: flex;
   align-items: center;
   gap: 9px;
-  padding: 6px 8px 4px;
-  margin-bottom: 4px;
+  padding: 4px 8px 14px;
+  margin-bottom: 2px;
 }
 
 .sidebar-brand-text {
@@ -191,7 +191,7 @@ table {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 16.5px;
+  font-size: 15px;
   font-weight: 800;
   letter-spacing: -0.01em;
   color: var(--dw-charcoal-text);
@@ -261,7 +261,7 @@ table {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 10px;
+  padding: 9px 10px;
   border-radius: 8px;
   color: var(--dw-charcoal-text-secondary);
   font-size: 12.5px;
@@ -307,7 +307,7 @@ table {
 .sidebar-card {
   background: var(--dw-charcoal-surface);
   border: 1px solid var(--dw-charcoal-border);
-  border-radius: 11px;
+  border-radius: 10px;
   padding: 11px 12px;
   margin-top: 8px;
 }
@@ -433,7 +433,7 @@ table {
 .content {
   flex: 1;
   background: var(--bg);
-  padding: 22px 26px;
+  padding: 24px 28px;
   min-width: 0;
   /* .sidebar is position:fixed (removed from .app-shell's flex flow) so it
      can be genuinely full-height regardless of scroll/content — this
@@ -455,12 +455,12 @@ table {
    brand terracotta. Real status facts live below it (.brief-status-line /
    .brief-attention-line), not crammed into this line. */
 .brief-greeting {
-  font-size: 32px;
-  font-weight: 700;
+  font-size: 30px;
+  font-weight: 800;
   letter-spacing: -0.02em;
   line-height: 1.15;
   color: var(--text-primary);
-  margin-bottom: 12px;
+  margin-bottom: 6px;
 }
 
 .brief-greeting-name {
@@ -482,11 +482,11 @@ table {
   display: flex;
   align-items: center;
   gap: 8px;
-  width: 240px;
-  height: 34px;
+  width: 280px;
+  height: 36px;
   padding: 0 10px;
   background: var(--surface);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-soft);
   border-radius: 9px;
 }
 
@@ -565,8 +565,8 @@ table {
 
 .topbar-icon-btn {
   position: relative;
-  width: 34px;
-  height: 34px;
+  width: 36px;
+  height: 36px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -601,7 +601,7 @@ table {
 
 .brief-header-sub {
   margin-top: 2px;
-  margin-bottom: 14px;
+  margin-bottom: 10px;
 }
 
 .brief-status-line {
@@ -683,7 +683,7 @@ table {
   display: flex;
   align-items: flex-start;
   gap: 0;
-  margin-top: 18px;
+  margin-top: 16px;
 }
 
 .brief-main {
@@ -716,7 +716,7 @@ table {
   flex-shrink: 0;
   background: var(--dw-charcoal);
   border-left: 1px solid var(--dw-charcoal-border);
-  padding: 20px 15px;
+  padding: 18px 14px;
   color: var(--text-primary);
   display: flex;
   flex-direction: column;
@@ -836,8 +836,8 @@ table {
 .rail-section {
   background: var(--dw-charcoal-surface-raised, var(--dw-charcoal-surface));
   border: 1px solid var(--dw-charcoal-border);
-  border-radius: 12px;
-  padding: 13px 14px 14px;
+  border-radius: 11px;
+  padding: 12px 13px 13px;
 }
 
 .rail-section-head {
@@ -1001,15 +1001,19 @@ table {
 .kpi-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 11px;
-  margin: 0 0 16px;
+  gap: 12px;
+  margin: 0 0 14px;
 }
 
 .kpi-card {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 13px;
-  padding: 14px 15px;
+  border-radius: 12px;
+  padding: 13px 14px;
+  min-height: 108px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
   transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
 }
 
@@ -1098,7 +1102,7 @@ table {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-bottom: 16px;
+  margin-bottom: 14px;
 }
 
 .brief-banner-icon {
@@ -1139,8 +1143,8 @@ table {
 .brief-card {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 13px;
-  padding: 15px 16px;
+  border-radius: 12px;
+  padding: 14px 16px;
   margin-bottom: 14px;
   box-shadow: 0 1px 3px rgba(35, 31, 27, 0.04);
 }
@@ -1183,7 +1187,13 @@ table {
    grid2 proportions. */
 .brief-row-2col {
   display: grid;
-  grid-template-columns: 1.15fr 0.85fr;
+  /* Widened from 1.15fr/0.85fr — the overdue table's real min-width
+     (its six columns summed, incl. the action column wide enough for
+     "Rule requires approval") didn't fit inside the narrower share and
+     was getting cut off by .top-invoices-table-wrap's overflow-x:auto
+     with no visible scrollbar affordance. This split gives it enough
+     room to render in full at the target desktop viewport. */
+  grid-template-columns: 1.4fr 0.6fr;
   gap: 14px;
   margin-bottom: 14px;
   /* Stretch (not start) — Due Soon's card matches the overdue table's real
@@ -1281,8 +1291,12 @@ table {
 }
 
 .invoice-secondary {
+  display: block;
   font-size: 11.5px;
   color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .invoice-amount {
@@ -1365,7 +1379,7 @@ table {
 
 .top-invoices-table {
   width: 100%;
-  min-width: 560px;
+  min-width: 550px;
   border-collapse: collapse;
   /* Explicit per-column widths below only take effect under fixed layout
      — with the default auto layout, the browser redistributes width by
@@ -1375,13 +1389,13 @@ table {
   table-layout: fixed;
 }
 
-.top-invoices-table col.col-invoice { width: 66px; }
+.top-invoices-table col.col-invoice { width: 62px; }
 .top-invoices-table col.col-client { width: 84px; }
 /* Wide enough that a real dollar amount ($4,200.00) never truncates —
    an ellipsis on money is worse than the modest extra horizontal scroll
    it costs at the very narrowest desktop width this table supports. */
 .top-invoices-table col.col-amount { width: 72px; }
-.top-invoices-table col.col-days { width: 40px; }
+.top-invoices-table col.col-days { width: 34px; }
 /* The one column that should wrap rather than force horizontal scroll for
    its own sake — fixed so it reliably wraps at ~2 lines instead of
    collapsing to a single-word-wide strip. */
@@ -1398,7 +1412,7 @@ table {
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--text-muted);
-  padding: 0 8px 8px;
+  padding: 0 8px 7px;
   white-space: nowrap;
 }
 
@@ -1459,6 +1473,7 @@ table {
   align-items: baseline;
   gap: 6px;
   white-space: normal;
+  line-height: 1.35;
   font-weight: 500;
   color: var(--text-secondary);
 }
@@ -3714,11 +3729,11 @@ table {
 .working-on-strip {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 9px;
   background: linear-gradient(120deg, var(--lavender), var(--primary-tint));
   border: 1px solid var(--lavender-deep);
-  border-radius: 13px;
-  padding: 15px 18px 16px;
+  border-radius: 12px;
+  padding: 14px 16px 15px;
   margin-bottom: 14px;
 }
 
@@ -4380,7 +4395,7 @@ table {
   border: 1px solid var(--border);
   border-left: 3px solid var(--primary);
   border-radius: 11px;
-  padding: 14px 15px;
+  padding: 12px 13px;
   box-shadow: 0 1px 2px rgba(15, 17, 23, 0.04);
   transition: border-color 200ms ease, box-shadow 200ms ease, transform 200ms ease;
 }
