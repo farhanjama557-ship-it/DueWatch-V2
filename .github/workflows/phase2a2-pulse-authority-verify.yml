@@ -1,0 +1,91 @@
+name: "Phase 2A.2 Pulse Authority CI Verification"
+
+# CI-only verification for PR #37 (claude/phase-2a2-pulse-authority,
+# "Pulse Consumes Authority" — Pulse's Dashboard UI now derives every
+# recommendation from the existing evaluateNextActionAuthority() contract
+# instead of inventing its own policy). This workflow only runs the
+# repo's own npm test suite and production build against the pushed
+# commit -- it does not start Supabase, does not touch any staging or
+# production project, does not deploy any Edge Function, and does not
+# run or generate any migration. It triggers only on pushes to this
+# checkpoint's own branch, not as a general-purpose pipeline for every
+# branch in the repo.
+on:
+  push:
+    branches:
+      - claude/phase-2a2-pulse-authority
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase2a2-pulse-authority-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: "Verify Phase 2A.2 Pulse authority consumption"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact pushed SHA
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Record workflow identity and environment
+        run: |
+          mkdir -p phase2a2-verify-artifact
+          {
+            echo "GITHUB_SHA=${GITHUB_SHA}"
+            echo "workflow_run_id=${{ github.run_id }}"
+            echo "workflow_run_attempt=${{ github.run_attempt }}"
+            echo "workflow_job=${{ github.job }}"
+            echo "workflow_ref=${{ github.ref }}"
+            echo "node_version=$(node --version)"
+            echo "npm_version=$(npm --version)"
+          } > phase2a2-verify-artifact/00_identity.txt
+          cat phase2a2-verify-artifact/00_identity.txt
+
+      - name: Run complete JavaScript suite
+        run: |
+          set +e
+          npm test > phase2a2-verify-artifact/js_tests.log 2>&1
+          js_exit=$?
+          cat phase2a2-verify-artifact/js_tests.log
+          test_count_line=$(grep -E '^# (tests|pass|fail) ' phase2a2-verify-artifact/js_tests.log || true)
+          {
+            echo "js_test_exit=$js_exit"
+            echo "$test_count_line"
+          } >> phase2a2-verify-artifact/EXIT_CODE_SUMMARY.txt
+          exit $js_exit
+
+      - name: Build production application
+        if: always()
+        run: |
+          set +e
+          npm run build > phase2a2-verify-artifact/build.log 2>&1
+          build_exit=$?
+          cat phase2a2-verify-artifact/build.log
+          echo "build_exit=$build_exit" >> phase2a2-verify-artifact/EXIT_CODE_SUMMARY.txt
+          if [ "$build_exit" -eq 0 ]; then
+            echo "build_success=true" > phase2a2-verify-artifact/BUILD_SUCCESS_MARKER.txt
+          else
+            echo "build_success=false" > phase2a2-verify-artifact/BUILD_SUCCESS_MARKER.txt
+          fi
+          exit $build_exit
+
+      - name: Upload Phase 2A.2 verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase2a2-pulse-authority-verification
+          path: phase2a2-verify-artifact/
+          retention-days: 14

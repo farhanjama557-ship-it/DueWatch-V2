@@ -33,9 +33,14 @@ export default function SignatureCard({ item, onApprove, onSkip, onEdit, onResol
   const preview = lines.slice(0, 3).join('\n')
   const hasMore = lines.length > 3
 
+  // Second review-fix pass, HIGH: passes enough for the caller
+  // (resolveSignatureLocal in DataContext.jsx) to reconcile
+  // pendingInvoiceIds/handledKeys immediately for this exact invoice+rule,
+  // instead of leaving Pulse's authority inputs stale until the next
+  // background poll.
   function exitThenResolve() {
     setExiting(true)
-    setTimeout(() => onResolved?.(item.id), 550)
+    setTimeout(() => onResolved?.(item.id, { invoiceId: item.invoice_id, ruleId: item.ai_context?.rule_id }), 550)
   }
 
   async function handleApprove() {
