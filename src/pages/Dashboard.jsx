@@ -72,8 +72,8 @@ function KpiCard({ Icon, label, value, valueColor, trend, support }) {
 // timestamp fact only — this app has no evidence source proving anything
 // about whether a client replied, so nothing here is ever derived from
 // that silence.
-function reasonFor(evaluation, autopilotRules, invoice) {
-  const classified = classifyPulseAuthority(evaluation)
+function reasonFor(evaluation, autopilotRules, invoice, settingsUnavailable) {
+  const classified = classifyPulseAuthority(evaluation, { settingsUnavailable })
   if (
     classified.state === PULSE_STATE.AUTHORIZED_AUTOMATIC ||
     classified.state === PULSE_STATE.AUTHORIZED_APPROVAL_REQUIRED
@@ -213,7 +213,7 @@ function SinceLastVisitBanner({ data }) {
 // Every remaining line is grounded in a real authority evaluation
 // (eligibleCount counts invoices isAuthorizedForAutomaticHandling() found
 // true), never a fabricated cadence claim.
-function WorkingOn({ autopilotEnabled, eligibleCount }) {
+function WorkingOn({ autopilotEnabled, eligibleCount, settingsUnavailable }) {
   const items = []
   if (autopilotEnabled && eligibleCount > 0) {
     items.push({
@@ -221,6 +221,16 @@ function WorkingOn({ autopilotEnabled, eligibleCount }) {
       text: `${eligibleCount} ${eligibleCount === 1 ? 'invoice is' : 'invoices are'} authorized for automatic handling`,
     })
   }
+
+  // Second review-fix pass, HIGH: never present the "off" default (or any
+  // nudge) when the settings query itself failed — that default is a safe
+  // fallback for AUTHORIZATION purposes, but it is not an observed founder
+  // setting worth stating as fact here.
+  const emptyLine = settingsUnavailable
+    ? PULSE_STATE_COPY[PULSE_STATE.NEEDS_REVIEW_SETTINGS_UNAVAILABLE]
+    : autopilotEnabled
+      ? 'Nothing currently authorized.'
+      : 'Autopilot is off. Nothing is scheduled.'
 
   return (
     <section className="rail-section">
@@ -232,9 +242,7 @@ function WorkingOn({ autopilotEnabled, eligibleCount }) {
         <span>Authorized for Autopilot</span>
       </div>
       {items.length === 0 ? (
-        <p className="rail-section-line">
-          {autopilotEnabled ? 'Nothing currently authorized.' : 'Autopilot is off. Nothing is scheduled.'}
-        </p>
+        <p className="rail-section-line">{emptyLine}</p>
       ) : (
         <ul className="rail-work-list">
           {items.map((it) => (
@@ -370,6 +378,7 @@ export default function Dashboard() {
     refresh,
     autopilotEnabled,
     autopilotSettings,
+    autopilotSettingsUnavailable,
     autopilotRules,
     handledKeys,
     pendingInvoiceIds,
@@ -494,7 +503,11 @@ export default function Dashboard() {
     // execution-history unavailable) are counted too — Duewatch genuinely
     // cannot vouch for those, which is itself a reason for the founder to
     // look, same as a real open decision.
-    const blockedCount = countBlockedDecisions(needsAttention, { awaitingInvoiceIds, pulseAuthority })
+    const blockedCount = countBlockedDecisions(needsAttention, {
+      awaitingInvoiceIds,
+      pulseAuthority,
+      settingsUnavailable: autopilotSettingsUnavailable,
+    })
 
     return {
       outstandingTotal,
@@ -508,7 +521,16 @@ export default function Dashboard() {
       pulseAuthority,
       awaitingInvoiceIds,
     }
-  }, [invoices, autopilotRules, autopilotSettings, handledKeys, pendingInvoiceIds, userId, awaitingSignature])
+  }, [
+    invoices,
+    autopilotRules,
+    autopilotSettings,
+    autopilotSettingsUnavailable,
+    handledKeys,
+    pendingInvoiceIds,
+    userId,
+    awaitingSignature,
+  ])
 
   if (loading) {
     return <div className="brief-loading">Loading your brief…</div>
@@ -540,8 +562,16 @@ export default function Dashboard() {
   const hasAnyInvoices = invoices.length > 0
 
   const remindersSentAllTime = events.filter((e) => e.event_type === 'reminder_sent').length
+  // Second review-fix pass, HIGH: never show the "set up Autopilot" nudge
+  // off the assumed-off default when the settings query itself failed —
+  // Autopilot could genuinely already be on; Duewatch just can't currently
+  // prove either way.
   const showNudge =
-    !autopilotEnabled && !nudgeDismissed && invoices.length >= 3 && remindersSentAllTime >= 2
+    !autopilotSettingsUnavailable &&
+    !autopilotEnabled &&
+    !nudgeDismissed &&
+    invoices.length >= 3 &&
+    remindersSentAllTime >= 2
 
   // Real month-over-month trend — only Collected has a comparable historical
   // query (events are timestamped). Outstanding/Need Attention/Reminders
@@ -700,10 +730,11 @@ export default function Dashboard() {
                           {derived.needsAttention.map((inv) => {
                             const od = daysOverdue(inv.due_date)
                             const evaluation = derived.pulseAuthority.get(inv.id)
-                            const reco = reasonFor(evaluation, autopilotRules, inv)
+                            const reco = reasonFor(evaluation, autopilotRules, inv, autopilotSettingsUnavailable)
                             const actionState = classifyPulseRowState(inv.id, {
                               awaitingInvoiceIds: derived.awaitingInvoiceIds,
                               evaluation,
+                              settingsUnavailable: autopilotSettingsUnavailable,
                             })
                             return (
                               <tr key={inv.id} onClick={() => setSelected(inv)}>
@@ -740,6 +771,15 @@ export default function Dashboard() {
                                     // granted authorization is not itself an
                                     // action taken.
                                     <span className="row-action-label">Authorized: automatic</span>
+                                  ) : actionState === PULSE_ROW_STATE.AUTHORIZED_APPROVAL_REQUIRED ? (
+                                    // MEDIUM fix: a real rule granted
+                                    // authority here, but automatic execution
+                                    // requires approval — never the same
+                                    // "Choose action" affordance as a
+                                    // genuine no-rule invoice, and never
+                                    // "Awaiting approval" unless a real
+                                    // pending draft actually exists.
+                                    <span className="row-action-label">Authorized · approval required</span>
                                   ) : actionState === PULSE_ROW_STATE.ALREADY_HANDLED ? (
                                     // HIGH fix: never present a "Choose
                                     // action" affordance as if nothing has
@@ -829,7 +869,11 @@ export default function Dashboard() {
             />
           </div>
 
-          <WorkingOn autopilotEnabled={autopilotEnabled} eligibleCount={derived.eligibleForNextCheck} />
+          <WorkingOn
+            autopilotEnabled={autopilotEnabled}
+            eligibleCount={derived.eligibleForNextCheck}
+            settingsUnavailable={autopilotSettingsUnavailable}
+          />
 
           <Upcoming dueSoon={derived.dueSoon} />
 

@@ -84,12 +84,19 @@ export function isAuthorizedForAutomaticHandling(evaluation) {
 // may safely render. Raw enum strings (e.g. 'already_handled' as literal
 // developer text) are never the thing shown to a founder — see
 // PULSE_STATE_COPY below for the actual copy.
+//
+// Second review-fix pass: three DISTINCT "couldn't verify" states, not
+// one generic one — a founder should never be told "action history"
+// couldn't be verified when the real cause was the rule query or the
+// Autopilot settings query failing instead.
 export const PULSE_STATE = Object.freeze({
   AUTHORIZED_AUTOMATIC: 'authorized_automatic',
   AUTHORIZED_APPROVAL_REQUIRED: 'authorized_approval_required',
   AWAITING_APPROVAL: 'awaiting_approval',
   ALREADY_HANDLED: 'already_handled',
-  NEEDS_REVIEW_UNAVAILABLE: 'needs_review_unavailable',
+  NEEDS_REVIEW_RULES_UNAVAILABLE: 'needs_review_rules_unavailable',
+  NEEDS_REVIEW_SETTINGS_UNAVAILABLE: 'needs_review_settings_unavailable',
+  NEEDS_REVIEW_HISTORY_UNAVAILABLE: 'needs_review_history_unavailable',
   NEEDS_REVIEW_MALFORMED: 'needs_review_malformed',
   NO_RULE: 'no_rule',
 })
@@ -100,19 +107,47 @@ export const PULSE_STATE = Object.freeze({
 export const PULSE_STATE_COPY = Object.freeze({
   [PULSE_STATE.AWAITING_APPROVAL]: 'Awaiting your approval',
   [PULSE_STATE.ALREADY_HANDLED]: 'Already handled',
-  [PULSE_STATE.NEEDS_REVIEW_UNAVAILABLE]: "Duewatch couldn't verify the current action history.",
+  [PULSE_STATE.NEEDS_REVIEW_RULES_UNAVAILABLE]: "Duewatch couldn't verify the current rule state.",
+  [PULSE_STATE.NEEDS_REVIEW_SETTINGS_UNAVAILABLE]:
+    "Duewatch couldn't verify the current Autopilot/permission state.",
+  [PULSE_STATE.NEEDS_REVIEW_HISTORY_UNAVAILABLE]: "Duewatch couldn't verify the current action history.",
   [PULSE_STATE.NEEDS_REVIEW_MALFORMED]: "Duewatch couldn't verify the current rule state.",
   [PULSE_STATE.NO_RULE]: 'No matching rule',
 })
 
 // `evaluation` is exactly what evaluatePulseAuthority's Map holds for one
 // invoice: the real evaluateNextActionAuthority() result, or `null` when
-// rules/execution-history were unavailable (see evaluatePulseAuthority's
-// own doc comment) — `null` here is itself a truthful "couldn't verify"
+// the rule query itself was unavailable (see evaluatePulseAuthority's own
+// doc comment) — `null` here is itself a truthful "couldn't verify"
 // signal, not an absence of information to paper over.
-export function classifyPulseAuthority(evaluation) {
+//
+// `settingsUnavailable` (HIGH fix, second review pass): the Autopilot
+// settings query failing is a THIRD, independent unavailable condition —
+// distinct from both the rule query and evaluateNextActionAuthority's own
+// execution-history check. It is passed in separately (not folded into
+// `evaluation`) because nextActionAuthority.js itself already handles a
+// missing settings object safely and conservatively (no automatic
+// permission, requiresApproval defaults true) — that internal behavior is
+// correct and untouched. The bug this fixes is purely a DISPLAY one: an
+// `evaluation` built from unavailable settings can still say
+// "authorized, approval required," which is true only in the narrow sense
+// that nextActionAuthority.js's safe default happens to read that way —
+// it must never be presented as an observed, real founder policy. When
+// settings are unavailable, this OVERRIDES any authorized/blocked reading
+// from `evaluation` and reports the real unknown instead.
+export function classifyPulseAuthority(evaluation, { settingsUnavailable = false } = {}) {
   if (!evaluation) {
-    return { state: PULSE_STATE.NEEDS_REVIEW_UNAVAILABLE, label: PULSE_STATE_COPY[PULSE_STATE.NEEDS_REVIEW_UNAVAILABLE] }
+    return {
+      state: PULSE_STATE.NEEDS_REVIEW_RULES_UNAVAILABLE,
+      label: PULSE_STATE_COPY[PULSE_STATE.NEEDS_REVIEW_RULES_UNAVAILABLE],
+    }
+  }
+
+  if (settingsUnavailable) {
+    return {
+      state: PULSE_STATE.NEEDS_REVIEW_SETTINGS_UNAVAILABLE,
+      label: PULSE_STATE_COPY[PULSE_STATE.NEEDS_REVIEW_SETTINGS_UNAVAILABLE],
+    }
   }
 
   const { authority, permission } = evaluation
@@ -129,8 +164,8 @@ export function classifyPulseAuthority(evaluation) {
       return { state: PULSE_STATE.ALREADY_HANDLED, label: PULSE_STATE_COPY[PULSE_STATE.ALREADY_HANDLED] }
     case AUTHORITY_BLOCK_REASONS.EXECUTION_HISTORY_UNAVAILABLE:
       return {
-        state: PULSE_STATE.NEEDS_REVIEW_UNAVAILABLE,
-        label: PULSE_STATE_COPY[PULSE_STATE.NEEDS_REVIEW_UNAVAILABLE],
+        state: PULSE_STATE.NEEDS_REVIEW_HISTORY_UNAVAILABLE,
+        label: PULSE_STATE_COPY[PULSE_STATE.NEEDS_REVIEW_HISTORY_UNAVAILABLE],
       }
     case AUTHORITY_BLOCK_REASONS.MALFORMED_RULE_STATE:
     case AUTHORITY_BLOCK_REASONS.AMBIGUOUS_RULE_PRECEDENCE:
@@ -162,31 +197,48 @@ export function classifyPulseAuthority(evaluation) {
 // decision-count math below — so "how should this row's action cell
 // render" and "does this invoice count as a founder decision" can never
 // silently disagree with each other.
+//
+// Second review-fix pass, MEDIUM: AUTHORIZED_APPROVAL_REQUIRED is its own
+// row state now — it used to fall through to MANUAL, which rendered the
+// same "Choose action" affordance as a genuine no-rule invoice even
+// though a real rule already granted authority here.
 export const PULSE_ROW_STATE = Object.freeze({
   AWAITING_APPROVAL: 'awaiting_approval',
   AUTOMATED: 'automated',
+  AUTHORIZED_APPROVAL_REQUIRED: 'authorized_approval_required',
   ALREADY_HANDLED: 'already_handled',
   NEEDS_REVIEW: 'needs_review',
   MANUAL: 'manual',
 })
 
-// `awaitingInvoiceIds` (a real, currently-pending awaiting_signature row
-// for this invoice) takes precedence over the authority evaluation —
-// exactly like the pre-existing row logic already did — since a draft
-// genuinely IS queued for the founder's approval regardless of what a
-// fresh per-rule authority evaluation says about this invoice.
-export function classifyPulseRowState(invoiceId, { awaitingInvoiceIds, evaluation }) {
+// Second review-fix pass, HIGH: derives ENTIRELY from
+// classifyPulseAuthority's own state (single source of truth), rather
+// than a separate isAuthorizedForAutomaticHandling check racing against
+// it — so a real authority AWAITING_APPROVAL result is always honored
+// even if the optimistic `awaitingInvoiceIds` list has already removed
+// the card (e.g. mid-resolution, before DataContext's next background
+// poll or local reconciliation catches up). `awaitingInvoiceIds` is kept
+// only as a fast, currently-visible-card precedence check — it can never
+// cause a real AWAITING_APPROVAL evaluation to be missed, only recognize
+// it slightly earlier.
+export function classifyPulseRowState(invoiceId, { awaitingInvoiceIds, evaluation, settingsUnavailable = false }) {
   if (awaitingInvoiceIds.has(invoiceId)) return PULSE_ROW_STATE.AWAITING_APPROVAL
-  if (isAuthorizedForAutomaticHandling(evaluation)) return PULSE_ROW_STATE.AUTOMATED
-  const classified = classifyPulseAuthority(evaluation)
-  if (classified.state === PULSE_STATE.ALREADY_HANDLED) return PULSE_ROW_STATE.ALREADY_HANDLED
-  if (
-    classified.state === PULSE_STATE.NEEDS_REVIEW_UNAVAILABLE ||
-    classified.state === PULSE_STATE.NEEDS_REVIEW_MALFORMED
-  ) {
-    return PULSE_ROW_STATE.NEEDS_REVIEW
+  const classified = classifyPulseAuthority(evaluation, { settingsUnavailable })
+  switch (classified.state) {
+    case PULSE_STATE.AWAITING_APPROVAL:
+      return PULSE_ROW_STATE.AWAITING_APPROVAL
+    case PULSE_STATE.AUTHORIZED_AUTOMATIC:
+      return PULSE_ROW_STATE.AUTOMATED
+    case PULSE_STATE.AUTHORIZED_APPROVAL_REQUIRED:
+      return PULSE_ROW_STATE.AUTHORIZED_APPROVAL_REQUIRED
+    case PULSE_STATE.ALREADY_HANDLED:
+      return PULSE_ROW_STATE.ALREADY_HANDLED
+    case PULSE_STATE.NO_RULE:
+      return PULSE_ROW_STATE.MANUAL
+    default:
+      // Every "couldn't verify" state (rules/settings/history/malformed).
+      return PULSE_ROW_STATE.NEEDS_REVIEW
   }
-  return PULSE_ROW_STATE.MANUAL
 }
 
 // MEDIUM fix (adversarial review): mutually-exclusive decision counting,
@@ -196,11 +248,17 @@ export function classifyPulseRowState(invoiceId, { awaitingInvoiceIds, evaluatio
 // classifyPulseRowState() call. An invoice that is AWAITING_APPROVAL is
 // counted once, by the caller, via its own awaitingSignature row count —
 // never a second time here as "blocked." AUTOMATED and ALREADY_HANDLED
-// invoices are genuinely not open founder decisions. MANUAL and
-// NEEDS_REVIEW both are.
-export function countBlockedDecisions(invoices, { awaitingInvoiceIds, pulseAuthority }) {
+// invoices are genuinely not open founder decisions, and neither is
+// AUTHORIZED_APPROVAL_REQUIRED on its own — that becomes a real decision
+// only once a draft actually exists (AWAITING_APPROVAL). MANUAL and
+// NEEDS_REVIEW both are open decisions right now.
+export function countBlockedDecisions(invoices, { awaitingInvoiceIds, pulseAuthority, settingsUnavailable = false }) {
   return (invoices || []).filter((inv) => {
-    const state = classifyPulseRowState(inv.id, { awaitingInvoiceIds, evaluation: pulseAuthority.get(inv.id) })
+    const state = classifyPulseRowState(inv.id, {
+      awaitingInvoiceIds,
+      evaluation: pulseAuthority.get(inv.id),
+      settingsUnavailable,
+    })
     return state === PULSE_ROW_STATE.MANUAL || state === PULSE_ROW_STATE.NEEDS_REVIEW
   }).length
 }

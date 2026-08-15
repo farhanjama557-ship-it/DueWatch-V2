@@ -413,7 +413,7 @@ test('HIGH1: classifyPulseAuthority gives DISTINCT states for no-rule vs already
     PULSE_STATE.NO_RULE,
     PULSE_STATE.ALREADY_HANDLED,
     PULSE_STATE.AWAITING_APPROVAL,
-    PULSE_STATE.NEEDS_REVIEW_UNAVAILABLE,
+    PULSE_STATE.NEEDS_REVIEW_RULES_UNAVAILABLE,
   ])
   // Every one of the four must be a DIFFERENT value -- the whole point of
   // this fix.
@@ -514,7 +514,7 @@ test('HIGH2: rules === null (query failed) -> every invoice evaluates to null (u
   // Downstream classification must say "couldn't verify," never "No
   // matching rule" (which would be a false claim of a checked, real fact).
   const classified = classifyPulseAuthority(evaluation)
-  assert.equal(classified.state, PULSE_STATE.NEEDS_REVIEW_UNAVAILABLE)
+  assert.equal(classified.state, PULSE_STATE.NEEDS_REVIEW_RULES_UNAVAILABLE)
   assert.notEqual(classified.state, PULSE_STATE.NO_RULE)
 })
 
@@ -591,6 +591,192 @@ test('MEDIUM1: a DIFFERENT overdue invoice with no pending approval and no worki
   })
   const blockedCount = countBlockedDecisions([pendingInvoice, blockedInvoice], { awaitingInvoiceIds, pulseAuthority })
   assert.equal(blockedCount, 1)
+})
+
+// ---------------------------------------------------------------------
+// Third adversarial review pass, HIGH 1: a settings-query FAILURE must
+// remain distinct from "query succeeded, genuinely no settings row" —
+// both currently collapse to autopilotSettings === null downstream, but
+// classifyPulseAuthority's settingsUnavailable parameter must still make
+// the founder-facing outcome different.
+
+test('HIGH1 (3rd pass): settingsUnavailable=true overrides an otherwise-authorized evaluation to a distinct "couldn\'t verify Autopilot state" — never presented as observed policy', () => {
+  const authorizedApprovalRequired = {
+    authority: { authorized: true, blockedReason: null, basis: { ruleId: 'rule-1' } },
+    permission: { canActAutomatically: false },
+  }
+  const withoutFailure = classifyPulseAuthority(authorizedApprovalRequired, { settingsUnavailable: false })
+  const withFailure = classifyPulseAuthority(authorizedApprovalRequired, { settingsUnavailable: true })
+
+  assert.equal(withoutFailure.state, PULSE_STATE.AUTHORIZED_APPROVAL_REQUIRED)
+  assert.equal(withFailure.state, PULSE_STATE.NEEDS_REVIEW_SETTINGS_UNAVAILABLE)
+  assert.notEqual(withFailure.state, withoutFailure.state)
+  assert.match(withFailure.label, /couldn't verify the current autopilot\/permission state/i)
+})
+
+test('HIGH1 (3rd pass): settingsUnavailable=true also overrides a fully-automatic-looking evaluation (never claims automatic permission from an unverified default)', () => {
+  const looksAutomatic = {
+    authority: { authorized: true, blockedReason: null, basis: { ruleId: 'rule-1' } },
+    permission: { canActAutomatically: true },
+  }
+  const classified = classifyPulseAuthority(looksAutomatic, { settingsUnavailable: true })
+  assert.equal(classified.state, PULSE_STATE.NEEDS_REVIEW_SETTINGS_UNAVAILABLE)
+  assert.notEqual(classified.state, PULSE_STATE.AUTHORIZED_AUTOMATIC)
+})
+
+test('HIGH1 (3rd pass): classifyPulseRowState never shows AUTOMATED or AUTHORIZED_APPROVAL_REQUIRED when settings are unavailable', () => {
+  const evaluation = {
+    authority: { authorized: true, blockedReason: null, basis: { ruleId: 'rule-1' } },
+    permission: { canActAutomatically: true },
+  }
+  const state = classifyPulseRowState('inv-1', {
+    awaitingInvoiceIds: new Set(),
+    evaluation,
+    settingsUnavailable: true,
+  })
+  assert.equal(state, PULSE_ROW_STATE.NEEDS_REVIEW)
+})
+
+// ---------------------------------------------------------------------
+// Third adversarial review pass, HIGH 2: classifyPulseRowState must honor
+// a REAL authority AWAITING_APPROVAL result even when the optimistic
+// awaitingInvoiceIds list no longer contains the invoice (the stale-window
+// this fix closes), and resolution must converge to a truthful handled
+// state for both approve and skip.
+
+test('HIGH2 (3rd pass): awaitingInvoiceIds empty + authority blocked PENDING_ACTION_EXISTS -> still AWAITING_APPROVAL, never MANUAL', () => {
+  const evaluation = {
+    authority: { authorized: false, blockedReason: AUTHORITY_BLOCK_REASONS.PENDING_ACTION_EXISTS },
+    permission: { canActAutomatically: false },
+  }
+  const state = classifyPulseRowState('inv-1', {
+    awaitingInvoiceIds: new Set(), // optimistic UI already removed the card
+    evaluation,
+  })
+  assert.equal(state, PULSE_ROW_STATE.AWAITING_APPROVAL)
+  assert.notEqual(state, PULSE_ROW_STATE.MANUAL)
+})
+
+test('HIGH2 (3rd pass): post-resolution (handledKeys now contains the invoice+rule) cannot expose "Choose action" for that same handled rule', () => {
+  const invoice = baseInvoice()
+  const rule = baseRule()
+  // Simulates DataContext.resolveSignatureLocal's local reconciliation:
+  // pendingInvoiceIds no longer has the invoice, handledKeys now does.
+  const pulseAuthority = evaluatePulseAuthority({
+    userId: USER_A,
+    invoices: [invoice],
+    rules: [rule],
+    autopilotSettings: autopilotSettings(),
+    handledKeys: new Set([`${invoice.id}:${rule.id}`]),
+    pendingInvoiceIds: new Set(), // reconciled away already
+    now: NOW,
+  })
+  const state = classifyPulseRowState(invoice.id, {
+    awaitingInvoiceIds: new Set(), // card already removed from the UI list too
+    evaluation: pulseAuthority.get(invoice.id),
+  })
+  assert.equal(state, PULSE_ROW_STATE.ALREADY_HANDLED)
+  assert.notEqual(state, PULSE_ROW_STATE.MANUAL)
+})
+
+test('HIGH2 (3rd pass): approved and skipped flows both converge to the same truthful ALREADY_HANDLED state', () => {
+  const invoice = baseInvoice()
+  const rule = baseRule()
+  // Approve and Skip both call the same exitThenResolve()/resolveSignatureLocal
+  // path in the real app (SignatureCard.jsx) -- both leave the SAME
+  // handledKeys/pendingInvoiceIds shape, so both must classify identically.
+  const reconciledPulseAuthority = evaluatePulseAuthority({
+    userId: USER_A,
+    invoices: [invoice],
+    rules: [rule],
+    autopilotSettings: autopilotSettings(),
+    handledKeys: new Set([`${invoice.id}:${rule.id}`]),
+    pendingInvoiceIds: new Set(),
+    now: NOW,
+  })
+  const approvedState = classifyPulseRowState(invoice.id, {
+    awaitingInvoiceIds: new Set(),
+    evaluation: reconciledPulseAuthority.get(invoice.id),
+  })
+  const skippedState = classifyPulseRowState(invoice.id, {
+    awaitingInvoiceIds: new Set(),
+    evaluation: reconciledPulseAuthority.get(invoice.id),
+  })
+  assert.equal(approvedState, PULSE_ROW_STATE.ALREADY_HANDLED)
+  assert.equal(skippedState, PULSE_ROW_STATE.ALREADY_HANDLED)
+})
+
+// ---------------------------------------------------------------------
+// Third adversarial review pass, MEDIUM 1: AUTHORIZED_APPROVAL_REQUIRED
+// is its own row state, distinct from MANUAL (a genuine no-rule invoice)
+// and from AWAITING_APPROVAL (a real pending draft) -- and decision
+// counting stays mutually exclusive with it.
+
+test('MEDIUM1 (3rd pass): an authorized-but-approval-required invoice gets its OWN row state, never MANUAL and never AWAITING_APPROVAL', () => {
+  const evaluation = {
+    authority: { authorized: true, blockedReason: null, basis: { ruleId: 'rule-1' } },
+    permission: { canActAutomatically: false },
+  }
+  const state = classifyPulseRowState('inv-1', { awaitingInvoiceIds: new Set(), evaluation })
+  assert.equal(state, PULSE_ROW_STATE.AUTHORIZED_APPROVAL_REQUIRED)
+  assert.notEqual(state, PULSE_ROW_STATE.MANUAL)
+  assert.notEqual(state, PULSE_ROW_STATE.AWAITING_APPROVAL)
+})
+
+test('MEDIUM1 (3rd pass): AUTHORIZED_APPROVAL_REQUIRED is never counted as a blocked decision (it becomes one only once a real draft exists)', () => {
+  const invoice = baseInvoice()
+  const rule = baseRule()
+  const pulseAuthority = evaluatePulseAuthority({
+    userId: USER_A,
+    invoices: [invoice],
+    rules: [rule],
+    autopilotSettings: autopilotSettings({ approval_required: true }),
+    handledKeys: new Set(),
+    pendingInvoiceIds: new Set(),
+    now: NOW,
+  })
+  const evaluation = pulseAuthority.get(invoice.id)
+  assert.equal(evaluation.authority.authorized, true)
+  assert.equal(evaluation.permission.canActAutomatically, false)
+  const blockedCount = countBlockedDecisions([invoice], { awaitingInvoiceIds: new Set(), pulseAuthority })
+  assert.equal(blockedCount, 0, 'authorized-approval-required alone is not yet an open founder decision')
+})
+
+// ---------------------------------------------------------------------
+// Third adversarial review pass, MEDIUM 2: rule-query failure and
+// execution-history failure must produce DISTINCT founder-facing
+// explanations -- both used to collapse into the same generic "action
+// history" copy.
+
+test('MEDIUM2 (3rd pass): rule-query failure (evaluation === null) and execution-history failure (real evaluation, blockedReason EXECUTION_HISTORY_UNAVAILABLE) produce DIFFERENT states and DIFFERENT copy', () => {
+  const rulesUnavailable = classifyPulseAuthority(null)
+  const historyUnavailable = classifyPulseAuthority({
+    authority: { authorized: false, blockedReason: AUTHORITY_BLOCK_REASONS.EXECUTION_HISTORY_UNAVAILABLE },
+    permission: { canActAutomatically: false },
+  })
+
+  assert.equal(rulesUnavailable.state, PULSE_STATE.NEEDS_REVIEW_RULES_UNAVAILABLE)
+  assert.equal(historyUnavailable.state, PULSE_STATE.NEEDS_REVIEW_HISTORY_UNAVAILABLE)
+  assert.notEqual(rulesUnavailable.state, historyUnavailable.state)
+  assert.notEqual(rulesUnavailable.label, historyUnavailable.label)
+  assert.match(rulesUnavailable.label, /rule state/i)
+  assert.match(historyUnavailable.label, /action history/i)
+})
+
+test('MEDIUM2 (3rd pass): all three unavailable causes (rules, settings, history) are pairwise distinct', () => {
+  const rulesUnavailable = classifyPulseAuthority(null)
+  const settingsUnavailable = classifyPulseAuthority(
+    { authority: { authorized: true, blockedReason: null }, permission: { canActAutomatically: false } },
+    { settingsUnavailable: true }
+  )
+  const historyUnavailable = classifyPulseAuthority({
+    authority: { authorized: false, blockedReason: AUTHORITY_BLOCK_REASONS.EXECUTION_HISTORY_UNAVAILABLE },
+    permission: { canActAutomatically: false },
+  })
+  const states = [rulesUnavailable.state, settingsUnavailable.state, historyUnavailable.state]
+  const labels = [rulesUnavailable.label, settingsUnavailable.label, historyUnavailable.label]
+  assert.equal(new Set(states).size, 3, 'all three unavailable states must be pairwise distinct')
+  assert.equal(new Set(labels).size, 3, 'all three unavailable labels must be pairwise distinct')
 })
 
 // ---------------------------------------------------------------------

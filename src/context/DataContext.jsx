@@ -2,7 +2,6 @@ import { createContext, useContext, useEffect, useState, useCallback, useRef } f
 import { supabase } from '../lib/supabase'
 import { useAuth } from './AuthContext'
 import { daysOverdue, daysUntil } from '../lib/format'
-import { fetchAutopilotSettings } from '../lib/autopilot'
 import { toPendingInvoiceIds, toHandledKeys } from '../lib/pulseAuthority'
 
 // Matches supabase/functions/_shared/executionClaim.js's ACTION_TYPE_SEND_REMINDER.
@@ -100,8 +99,17 @@ export function DataProvider({ children }) {
   // settings are actually owned by the caller, which the two booleans
   // above alone can't carry. null means either no row yet or the query
   // failed; derivePermission already treats either as "no automatic
-  // permission" (the safe default either way).
+  // permission" (the safe default either way) — that internal fallback
+  // is correct and untouched.
   const [autopilotSettings, setAutopilotSettings] = useState(null)
+  // Second review-fix pass, HIGH: true ONLY when the settings query
+  // itself failed — distinct from `autopilotSettings === null` meaning
+  // "genuinely no row." Pulse/Dashboard uses this to avoid presenting
+  // nextActionAuthority.js's safe requiresApproval-true default (or
+  // autopilotEnabled's existing "off" default) as if it were an observed
+  // founder policy — see classifyPulseAuthority's settingsUnavailable
+  // parameter.
+  const [autopilotSettingsUnavailable, setAutopilotSettingsUnavailable] = useState(false)
   const [awaitingSignature, setAwaitingSignature] = useState([])
   const [lastAutopilotRun, setLastAutopilotRun] = useState(null)
   const [autopilotRules, setAutopilotRules] = useState([])
@@ -195,11 +203,34 @@ export function DataProvider({ children }) {
       .order('created_at', { ascending: false })
       .limit(20)
 
-    // Phase 2A.2: full row (including user_id, which
-    // evaluateNextActionAuthority's permission check requires to prove
-    // tenant ownership) via the same fetcher the Deno execution boundary's
-    // fetchAuthorityInputs also relies on — no separate reduced query here.
-    const autopilotSettingsPromise = fetchAutopilotSettings(user.id)
+    // Second review-fix pass, HIGH: fetchAutopilotSettings() (autopilot.js)
+    // returns `null` for BOTH "query succeeded, no settings row yet" and
+    // "the query itself failed" — collapsing those into one value is fine
+    // for that helper's only other would-be callers (there are none today
+    // — see below), but wrong for Pulse's authority contract: a failed
+    // query must never be read as "genuinely no Autopilot settings exist"
+    // (which is what drives the safe "off" default everywhere else in the
+    // app). This is Pulse's OWN raw query, deliberately not routed through
+    // fetchAutopilotSettings(), so nothing about that shared helper (or any
+    // future caller of it) changes. `ok: false` means the query failed;
+    // `ok: true` with `row: null` means it succeeded and genuinely found no
+    // settings row — those two are never conflated again below.
+    const autopilotSettingsPromise = supabase
+      .from('autopilot_settings')
+      .select('id, user_id, enabled, approval_required')
+      .eq('user_id', user.id)
+      .maybeSingle()
+      .then((r) => {
+        if (r.error) {
+          console.warn('autopilot_settings query failed:', r.error.message)
+          return { ok: false, row: null }
+        }
+        return { ok: true, row: r.data }
+      })
+      .catch((err) => {
+        console.warn('autopilot_settings query threw:', err.message)
+        return { ok: false, row: null }
+      })
 
     // Reminders Autopilot has drafted, of every status — not just pending.
     // Phase 2A.2 (HIGH fix): the real Deno fetchHandledState() folds EVERY
@@ -366,7 +397,7 @@ export function DataProvider({ children }) {
       { data: inv, error: invErr },
       { data: cli },
       { data: ev },
-      autopilotSettingsRow,
+      autopilotSettingsResult,
       awaitingHistory,
       lastRun,
       rules,
@@ -403,9 +434,19 @@ export function DataProvider({ children }) {
     setInvoices(dedupeInvoices((inv || []).map(normalizeInvoice)))
     setClients(cli || [])
     setEvents(ev || [])
-    setAutopilotEnabled(autopilotSettingsRow?.enabled === true)
-    setAutopilotApprovalRequired(autopilotSettingsRow?.approval_required !== false)
-    setAutopilotSettings(autopilotSettingsRow)
+    // Second review-fix pass, HIGH: on a genuine query failure, keep the
+    // existing safe "off"/"approval required" defaults for autopilotEnabled/
+    // autopilotApprovalRequired (every OTHER consumer of those two fields —
+    // Sidebar, the Autopilot settings page, InvoiceDetailPanel — is
+    // unaffected and keeps behaving exactly as it already did), but ALSO
+    // record that this was a failure, not a genuine empty settings row, via
+    // autopilotSettingsUnavailable — Pulse/Dashboard alone reads that flag.
+    setAutopilotEnabled(autopilotSettingsResult.ok ? autopilotSettingsResult.row?.enabled === true : false)
+    setAutopilotApprovalRequired(
+      autopilotSettingsResult.ok ? autopilotSettingsResult.row?.approval_required !== false : true
+    )
+    setAutopilotSettings(autopilotSettingsResult.ok ? autopilotSettingsResult.row : null)
+    setAutopilotSettingsUnavailable(!autopilotSettingsResult.ok)
     // Phase 2A.2: null (either history source's query failed) is preserved
     // as null, never silently downgraded to an empty/partial Set — see the
     // field doc comments above, and toPendingInvoiceIds/toHandledKeys's own
@@ -473,8 +514,43 @@ export function DataProvider({ children }) {
 
   // Remove a resolved (approved/skipped) signature request immediately,
   // without waiting for a full refetch.
-  const resolveSignatureLocal = useCallback((id) => {
+  //
+  // Second review-fix pass, HIGH: removing the card from the visible list
+  // alone left pendingInvoiceIds/handledKeys stale until the next 30s
+  // background poll — Pulse would keep re-deriving a fresh authority
+  // evaluation that still says PENDING_ACTION_EXISTS for this exact
+  // invoice+rule (harmless — classifyPulseRowState now honors that
+  // correctly either way, never falling through to "Choose action"), but
+  // it would NOT yet reflect the real post-resolution truth
+  // (ALREADY_HANDLED once the real awaiting_signature row's status is
+  // approved/skipped). `resolvedInvoiceId`/`resolvedRuleId` (passed by
+  // SignatureCard from the row it just resolved) let this reconcile BOTH
+  // local Sets immediately: drop the invoice from pendingInvoiceIds (no
+  // pending draft remains for it) and add its invoice:rule key to
+  // handledKeys (a founder decision was just made) — exactly the same
+  // union shape toHandledKeys/toPendingInvoiceIds already build from a
+  // real query, just applied as a local delta instead of a full refetch.
+  const resolveSignatureLocal = useCallback((id, { invoiceId: resolvedInvoiceId, ruleId: resolvedRuleId } = {}) => {
     setAwaitingSignature((cur) => cur.filter((i) => i.id !== id))
+    if (resolvedInvoiceId) {
+      setPendingInvoiceIds((cur) => {
+        if (cur === null) return cur
+        if (!cur.has(resolvedInvoiceId)) return cur
+        const next = new Set(cur)
+        next.delete(resolvedInvoiceId)
+        return next
+      })
+    }
+    if (resolvedInvoiceId && resolvedRuleId) {
+      setHandledKeys((cur) => {
+        if (cur === null) return cur
+        const key = `${resolvedInvoiceId}:${resolvedRuleId}`
+        if (cur.has(key)) return cur
+        const next = new Set(cur)
+        next.add(key)
+        return next
+      })
+    }
   }, [])
 
   const overdueCount = invoices.filter(
@@ -514,6 +590,10 @@ export function DataProvider({ children }) {
     // Phase 2A.2: the real, full autopilot_settings row (or null) — the
     // authority-contract input every Pulse authority evaluation needs.
     autopilotSettings,
+    // Second review-fix pass, HIGH: true only when the settings query
+    // itself failed — distinct from autopilotSettings === null (genuinely
+    // no row). See its own state doc comment.
+    autopilotSettingsUnavailable,
     setAutopilotEnabledLocal: setAutopilotEnabled,
     awaitingSignature,
     // Phase 2A.2: real Set on success, null when the load-bearing query

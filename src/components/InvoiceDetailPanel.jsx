@@ -307,7 +307,16 @@ export default function InvoiceDetailPanel({
       return setActionError(result.error)
     }
 
-    if (signatureContext) onSignatureResolved?.(signatureContext.id)
+    // Second review-fix pass, HIGH: "Edit First" is the same approval
+    // resolution as SignatureCard's Approve/Skip — pass the same
+    // invoiceId/ruleId so Pulse's pendingInvoiceIds/handledKeys reconcile
+    // immediately here too, not just on the unedited approval path.
+    if (signatureContext) {
+      onSignatureResolved?.(signatureContext.id, {
+        invoiceId: signatureContext.invoice_id,
+        ruleId: signatureContext.ai_context?.rule_id,
+      })
+    }
 
     setBusy(false)
     setReminders((r) =>
