@@ -132,3 +132,18 @@ fact that production truth intentionally replaces unsupported target claims.
   due-soon, and approval facts, no overflow, and no Vite error overlay.
 
 final result: passed
+
+---
+
+# Invoices alignment regression — design QA
+
+- Verified at 1880 × 781 across All, Due Soon, Overdue, Sent, and Paid.
+- CLIENT aligns with client-name text; every filter retains the same fixed
+  six-column table geometry with no horizontal overflow.
+- The five filter buttons use equal-width grid tracks with centered,
+  single-line labels and unchanged active styling.
+- The black outline is transient keyboard focus: after focus moves away,
+  the active tab keeps its normal terracotta styling with no outline.
+- Browser console errors: none. JavaScript tests and production build passed.
+
+final result: passed
