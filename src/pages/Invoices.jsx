@@ -63,7 +63,7 @@ export default function Invoices() {
       </div>
 
       <div className="list-controls">
-        <div className="tabs">
+        <div className="tabs invoice-filter-tabs">
           {TABS.map((t) => (
             <button
               key={t.key}
@@ -105,7 +105,7 @@ export default function Invoices() {
             </colgroup>
             <thead>
               <tr>
-                <th>Client</th>
+                <th className="invoice-client-heading">Client</th>
                 <th>Invoice #</th>
                 <th className="ta-right">Amount</th>
                 <th>Due Date</th>

@@ -1675,6 +1675,22 @@ table {
   padding: 3px;
 }
 
+/* Keep the Invoices filter bar's established footprint while making its
+   five choices a stable, label-independent grid. */
+.invoice-filter-tabs {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  width: min(100%, 331px);
+}
+
+.invoice-filter-tabs .tab {
+  width: 100%;
+  min-width: 0;
+  padding-inline: 2px;
+  text-align: center;
+  white-space: nowrap;
+}
+
 .tab {
   border: none;
   background: transparent;
@@ -1740,6 +1756,9 @@ table {
 }
 
 .invoice-table {
+  --invoice-cell-x-padding: 20px;
+  --invoice-client-avatar-size: 28px;
+  --invoice-client-gap: 10px;
   width: 100%;
   min-width: 720px;
   /* Header and body must share one column definition, not two — with the
@@ -1765,9 +1784,20 @@ table {
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--text-muted);
-  padding: 12px 20px;
+  padding: 12px var(--invoice-cell-x-padding);
   border-bottom: 0.5px solid var(--border);
   white-space: nowrap;
+}
+
+/* CLIENT is a compound cell: avatar + gap + name. Align the heading with
+   the client-name text (not the avatar gutter) while preserving the shared
+   fixed column grid used by every filter tab. */
+.invoice-table thead th.invoice-client-heading {
+  padding-left: calc(
+    var(--invoice-cell-x-padding) +
+    var(--invoice-client-avatar-size) +
+    var(--invoice-client-gap)
+  );
 }
 
 /* .invoice-table thead th (0,1,2) otherwise beats the bare .ta-right (0,1,0)
@@ -1793,7 +1823,7 @@ table {
 .invoice-table tbody td {
   font-size: 14px;
   color: var(--text-primary);
-  padding: 12px 20px;
+  padding: 12px var(--invoice-cell-x-padding);
   border-bottom: 0.5px solid var(--border-soft, var(--border));
   white-space: nowrap;
 }
