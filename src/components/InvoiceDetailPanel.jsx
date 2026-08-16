@@ -19,6 +19,8 @@ import { logEvent } from '../lib/events'
 import { fetchAutopilotRules } from '../lib/autopilot'
 import { nextScheduledAction } from '../lib/ruleSchedule'
 import { TONES, reminderDraft, sendReminderNow } from '../lib/reminders'
+import { formatPaymentAmount, recordInvoicePayment } from '../lib/payments'
+import { SUPPORTED_CURRENCIES } from '../lib/import/money'
 
 // line_items is a pre-existing table — tolerate common column-name variants.
 const pick = (obj, ...keys) => {
@@ -82,6 +84,8 @@ export default function InvoiceDetailPanel({
   // Action UI state.
   const [mode, setMode] = useState('none') // 'none' | 'payment' | 'reminder' | 'sent'
   const [payAmount, setPayAmount] = useState('')
+  const [paymentDate, setPaymentDate] = useState('')
+  const [paymentCurrency, setPaymentCurrency] = useState('')
   const [tone, setTone] = useState('friendly')
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
@@ -99,6 +103,9 @@ export default function InvoiceDetailPanel({
       setRender(true)
       setActionError('')
       setPaymentConfirmation('')
+      setPayAmount('')
+      setPaymentDate('')
+      setPaymentCurrency(invoice?.currency || '')
       if (signatureContext) {
         setTone(signatureContext.recommended_tone || 'friendly')
         setDraft(signatureContext.draft_content || '')
@@ -193,70 +200,55 @@ export default function InvoiceDetailPanel({
     onMutated?.()
   }
 
-  async function markPaid() {
-    setBusy(true)
+  function markPaid() {
     setActionError('')
-    const { error } = await supabase
-      .from('invoices')
-      .update({ paid: true })
-      .eq('id', data.id)
-    setBusy(false)
-    if (error) return setActionError(error.message)
-    setData((d) => ({ ...d, paid: true }))
-    logEvent('invoice_marked_paid', {
-      userId: user.id,
-      invoiceId: data.id,
-      evidence: { amount: balance },
-    })
-    celebrate({
-      clientName,
-      amount: formatMoney(balance),
-      daysEarly: Math.max(daysUntil(data.due_date) ?? 0, 0),
-    })
-    onMutated?.()
+    setPayAmount(Number(balance).toFixed(2))
+    setPaymentDate('')
+    setPaymentCurrency(data.currency || '')
+    setMode('payment')
   }
 
   async function recordPayment() {
-    const amt = Number(payAmount)
-    if (!payAmount || Number.isNaN(amt) || amt <= 0) {
-      return setActionError('Enter a valid payment amount.')
-    }
     setBusy(true)
     setActionError('')
-    const newPaid = paid + amt
-    const willBePaid = newPaid >= (Number(data.amount) || 0)
-    const updatePayload = { amount_paid: newPaid }
-    if (willBePaid) updatePayload.paid = true
-
-    // Optimistic: update local state immediately, sync Supabase in background.
-    setData((d) => ({ ...d, amount_paid: newPaid, paid: willBePaid ? true : d.paid }))
-    setPayAmount('')
-    setMode('none')
-    setPaymentConfirmation(`Payment of ${formatMoney(amt)} recorded`)
-    setTimeout(() => setPaymentConfirmation(''), 2500)
-
-    const { error } = await supabase.from('invoices').update(updatePayload).eq('id', data.id)
-    setBusy(false)
-    if (error) {
-      setActionError(error.message)
-      return
-    }
-    logEvent('payment_recorded', {
-      userId: user.id,
-      invoiceId: data.id,
-      evidence: { amount: amt },
-    })
-    if (willBePaid) {
-      logEvent('invoice_marked_paid', { userId: user.id, invoiceId: data.id })
-      // Celebratory only on the payment that actually closes the invoice —
-      // a partial payment isn't the "we did it" milestone the spec means.
-      celebrate({
-        clientName,
-        amount: formatMoney(amt),
-        daysEarly: Math.max(daysUntil(data.due_date) ?? 0, 0),
+    try {
+      const result = await recordInvoicePayment({
+        database: supabase,
+        invoiceId: data.id,
+        amount: payAmount,
+        currency: paymentCurrency,
+        paymentDate,
       })
+      const allocation = result?.allocations?.[0]
+      if (!allocation) throw new Error('The payment was recorded but its invoice result was unavailable. Refresh before retrying.')
+      const wasPaid = data.paid === true
+      setData((d) => ({
+        ...d,
+        amount_paid: Number(allocation.invoice_amount_paid),
+        paid: allocation.invoice_paid === true,
+        currency: allocation.invoice_currency,
+      }))
+      setPayAmount('')
+      setPaymentDate('')
+      setPaymentCurrency(allocation.invoice_currency || '')
+      setMode('none')
+      const paymentLabel = formatPaymentAmount(allocation.amount, allocation.invoice_currency)
+      setPaymentConfirmation(`Payment of ${paymentLabel} recorded`)
+      setTimeout(() => setPaymentConfirmation(''), 2500)
+      if (!wasPaid && allocation.invoice_paid === true) {
+        // Celebratory only on the payment that actually closes the invoice.
+        celebrate({
+          clientName,
+          amount: paymentLabel,
+          daysEarly: Math.max(daysUntil(data.due_date) ?? 0, 0),
+        })
+      }
+      onMutated?.()
+    } catch (error) {
+      setActionError(error.message)
+    } finally {
+      setBusy(false)
     }
-    onMutated?.()
   }
 
   function openReminderDraft() {
@@ -498,7 +490,7 @@ export default function InvoiceDetailPanel({
             <div className="action-form">
               <label htmlFor="payAmount">Payment amount</label>
               <div className="money-field">
-                <span className="money-prefix">$</span>
+                <span className="money-prefix">{paymentCurrency || '—'}</span>
                 <input
                   id="payAmount"
                   type="number"
@@ -517,6 +509,28 @@ export default function InvoiceDetailPanel({
                   autoFocus
                 />
               </div>
+              {!data.currency && (
+                <>
+                  <label htmlFor="paymentCurrency">Currency</label>
+                  <select
+                    id="paymentCurrency"
+                    value={paymentCurrency}
+                    onChange={(e) => setPaymentCurrency(e.target.value)}
+                    required
+                  >
+                    <option value="">Choose currency</option>
+                    {SUPPORTED_CURRENCIES.map((code) => <option key={code} value={code}>{code}</option>)}
+                  </select>
+                </>
+              )}
+              <label htmlFor="paymentDate">Payment date</label>
+              <input
+                id="paymentDate"
+                type="date"
+                value={paymentDate}
+                onChange={(e) => setPaymentDate(e.target.value)}
+                required
+              />
               <div className="action-form-row">
                 <button className="btn-outline" onClick={() => setMode('none')} disabled={busy}>
                   Cancel
@@ -578,7 +592,7 @@ export default function InvoiceDetailPanel({
               <button className="btn-terracotta" onClick={openReminderDraft} disabled={busy}>
                 Send reminder
               </button>
-              <button className="btn-outline" onClick={() => { setActionError(''); setMode('payment') }} disabled={busy}>
+              <button className="btn-outline" onClick={() => { setActionError(''); setPayAmount(''); setPaymentDate(''); setPaymentCurrency(data.currency || ''); setMode('payment') }} disabled={busy}>
                 Record payment
               </button>
               <button className="btn-outline" onClick={markPaid} disabled={busy || data.paid === true}>

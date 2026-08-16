@@ -3209,6 +3209,7 @@ table {
 }
 
 .action-form input,
+.action-form select,
 .action-form textarea {
   width: 100%;
   padding: 9px 12px;
@@ -3223,6 +3224,7 @@ table {
 }
 
 .action-form input:focus,
+.action-form select:focus,
 .action-form textarea:focus {
   border-color: var(--primary);
   box-shadow: 0 0 0 3px var(--primary-tint);
@@ -3239,7 +3241,7 @@ table {
 }
 
 /* ============================================================
-   Money input — fixed $ adornment (not part of the value)
+   Money input — explicit currency adornment (not part of the value)
    ============================================================ */
 .money-field {
   position: relative;
@@ -3260,7 +3262,7 @@ table {
    input` so the left padding for the $ prefix always wins. */
 .money-field input[type='number'] {
   width: 100%;
-  padding-left: 26px;
+  padding-left: 52px;
   /* hide native number spinners for a cleaner money field */
   -moz-appearance: textfield;
   appearance: textfield;
@@ -3666,6 +3668,24 @@ table {
 }
 
 .field input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-tint);
+}
+
+.field select {
+  width: 100%;
+  height: 40px;
+  padding: 0 12px;
+  font: inherit;
+  font-size: 14px;
+  color: var(--text-primary);
+  background: var(--surface);
+  border: 0.5px solid var(--border);
+  border-radius: 9px;
+  outline: none;
+}
+
+.field select:focus {
   border-color: var(--primary);
   box-shadow: 0 0 0 3px var(--primary-tint);
 }
