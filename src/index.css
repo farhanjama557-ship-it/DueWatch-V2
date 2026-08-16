@@ -1821,6 +1821,10 @@ table {
   justify-content: flex-end;
 }
 
+.invoice-client-cell-anchor {
+  justify-content: flex-start;
+}
+
 .invoice-client-anchor {
   width: var(--invoice-client-anchor-width);
   flex: 0 0 var(--invoice-client-anchor-width);

@@ -125,9 +125,9 @@ export default function Invoices() {
                 return (
                   <tr key={inv.id} onClick={() => setSelected(inv)}>
                     <td>
-                      <div className="invoice-cell-anchor">
+                      <div className="invoice-cell-anchor invoice-client-cell-anchor">
                         <div className="cell-client invoice-client-anchor">
-                          <Avatar name={inv.clients?.name} size={22} />
+                          <Avatar name={inv.clients?.name} size={22} fontSize={9.5} />
                           <span>{inv.clients?.name || 'No client'}</span>
                         </div>
                       </div>
