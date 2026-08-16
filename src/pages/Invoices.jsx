@@ -105,14 +105,7 @@ export default function Invoices() {
             </colgroup>
             <thead>
               <tr>
-                <th>
-                  <div className="invoice-cell-anchor">
-                    <div className="cell-client invoice-client-anchor">
-                      <span className="invoice-client-heading-spacer" aria-hidden="true" />
-                      <span>Client</span>
-                    </div>
-                  </div>
-                </th>
+                <th className="invoice-header-start">Client</th>
                 <th><div className="invoice-cell-anchor">Invoice #</div></th>
                 <th>
                   <div className="invoice-cell-anchor">
@@ -121,7 +114,9 @@ export default function Invoices() {
                 </th>
                 <th><div className="invoice-cell-anchor">Due Date</div></th>
                 <th><div className="invoice-cell-anchor">Days Overdue</div></th>
-                <th><div className="invoice-cell-anchor">Status</div></th>
+                <th>
+                  <div className="invoice-cell-anchor invoice-status-anchor">Status</div>
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -158,7 +153,7 @@ export default function Invoices() {
                       </div>
                     </td>
                     <td>
-                      <div className="invoice-cell-anchor">
+                      <div className="invoice-cell-anchor invoice-status-anchor">
                         <StatusPill status={effectiveStatus(inv)} />
                       </div>
                     </td>

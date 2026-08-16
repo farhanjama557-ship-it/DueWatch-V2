@@ -88,13 +88,15 @@ export function timeAgo(value) {
   return `${months}mo ago`
 }
 
-// Two-letter initials from a name: "Acme Corp" -> "AC", "Nova" -> "NO".
+// Two-letter initials from meaningful words: symbols do not become initials,
+// so "Marlow & Partners" becomes "MP" rather than "M&".
 export function initials(name) {
   const trimmed = String(name || '').trim()
   if (!trimmed) return '—'
-  const parts = trimmed.split(/\s+/)
-  if (parts.length === 1) {
-    return parts[0].slice(0, 2).toUpperCase()
+  const words = trimmed.match(/\p{L}[\p{L}\p{N}]*/gu) || []
+  if (words.length === 0) return '—'
+  if (words.length === 1) {
+    return Array.from(words[0]).slice(0, 2).join('').toUpperCase()
   }
-  return (parts[0][0] + parts[1][0]).toUpperCase()
+  return `${Array.from(words[0])[0]}${Array.from(words[1])[0]}`.toUpperCase()
 }
