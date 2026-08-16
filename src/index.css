@@ -1675,22 +1675,6 @@ table {
   padding: 3px;
 }
 
-/* Keep the Invoices filter bar's established footprint while making its
-   five choices a stable, label-independent grid. */
-.invoice-filter-tabs {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  width: min(100%, 331px);
-}
-
-.invoice-filter-tabs .tab {
-  width: 100%;
-  min-width: 0;
-  padding-inline: 2px;
-  text-align: center;
-  white-space: nowrap;
-}
-
 .tab {
   border: none;
   background: transparent;
@@ -1756,9 +1740,10 @@ table {
 }
 
 .invoice-table {
-  --invoice-cell-x-padding: 20px;
-  --invoice-client-avatar-size: 28px;
-  --invoice-client-gap: 10px;
+  --invoice-cell-x-padding: 12px;
+  --invoice-client-avatar-size: 22px;
+  --invoice-client-anchor-width: 146px;
+  --invoice-numeric-anchor-width: 92px;
   width: 100%;
   min-width: 720px;
   /* Header and body must share one column definition, not two — with the
@@ -1770,12 +1755,11 @@ table {
   table-layout: fixed;
 }
 
-.invoice-table col.col-client { width: 34%; }
-.invoice-table col.col-invnum { width: 12%; }
-.invoice-table col.col-amount { width: 14%; }
-.invoice-table col.col-due { width: 14%; }
-.invoice-table col.col-overdue { width: 13%; }
-.invoice-table col.col-status { width: 13%; }
+/* One shared six-track geometry. Header and body both resolve through this
+   colgroup, so every filter keeps the exact same equal boundaries. */
+.invoice-table col {
+  width: calc(100% / 6);
+}
 
 .invoice-table thead th {
   text-align: left;
@@ -1787,28 +1771,6 @@ table {
   padding: 12px var(--invoice-cell-x-padding);
   border-bottom: 0.5px solid var(--border);
   white-space: nowrap;
-}
-
-/* CLIENT is a compound cell: avatar + gap + name. Align the heading with
-   the client-name text (not the avatar gutter) while preserving the shared
-   fixed column grid used by every filter tab. */
-.invoice-table thead th.invoice-client-heading {
-  padding-left: calc(
-    var(--invoice-cell-x-padding) +
-    var(--invoice-client-avatar-size) +
-    var(--invoice-client-gap)
-  );
-}
-
-/* .invoice-table thead th (0,1,2) otherwise beats the bare .ta-right (0,1,0)
-   class on the same header cells, which is why "Amount"/"Days Overdue"/
-   "Status" rendered flush left while their column's own values render
-   flush right immediately below them — same column, two different
-   alignments. This selector's own specificity (0,2,2) beats the base rule
-   so a header cell's own alignment class wins on the header exactly like
-   it already does in the body. */
-.invoice-table thead th.ta-right {
-  text-align: right;
 }
 
 .invoice-table tbody tr {
@@ -1839,11 +1801,41 @@ table {
   font-weight: 600;
 }
 
-/* Overrides the generic td's nowrap — under table-layout:fixed a long real
-   client name needs to wrap onto a second line instead of spilling into
-   the next column (the column's own width never changes either way). */
-.invoice-table tbody td:has(.cell-client) {
-  white-space: normal;
+/* Every visible column group uses the same centered anchor. Client content
+   remains left-aligned inside a stable compound wrapper, while Amount keeps
+   tabular figures right-aligned inside its own centered numeric wrapper. */
+.invoice-cell-anchor {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-width: 0;
+}
+
+.invoice-client-anchor {
+  width: var(--invoice-client-anchor-width);
+  flex: 0 0 var(--invoice-client-anchor-width);
+  justify-content: flex-start;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.invoice-client-anchor > span:last-child {
+  white-space: nowrap;
+}
+
+.invoice-numeric-anchor {
+  display: inline-block;
+  width: min(var(--invoice-numeric-anchor-width), 100%);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Mirror the row's real avatar footprint so CLIENT aligns with the name,
+   while every table cell keeps the same outer horizontal padding. */
+.invoice-client-heading-spacer {
+  width: var(--invoice-client-avatar-size);
+  flex: 0 0 var(--invoice-client-avatar-size);
 }
 
 .cell-muted {

@@ -63,7 +63,7 @@ export default function Invoices() {
       </div>
 
       <div className="list-controls">
-        <div className="tabs invoice-filter-tabs">
+        <div className="tabs">
           {TABS.map((t) => (
             <button
               key={t.key}
@@ -105,12 +105,23 @@ export default function Invoices() {
             </colgroup>
             <thead>
               <tr>
-                <th className="invoice-client-heading">Client</th>
-                <th>Invoice #</th>
-                <th className="ta-right">Amount</th>
-                <th>Due Date</th>
-                <th className="ta-right">Days Overdue</th>
-                <th className="ta-right">Status</th>
+                <th>
+                  <div className="invoice-cell-anchor">
+                    <div className="cell-client invoice-client-anchor">
+                      <span className="invoice-client-heading-spacer" aria-hidden="true" />
+                      <span>Client</span>
+                    </div>
+                  </div>
+                </th>
+                <th><div className="invoice-cell-anchor">Invoice #</div></th>
+                <th>
+                  <div className="invoice-cell-anchor">
+                    <span className="invoice-numeric-anchor">Amount</span>
+                  </div>
+                </th>
+                <th><div className="invoice-cell-anchor">Due Date</div></th>
+                <th><div className="invoice-cell-anchor">Days Overdue</div></th>
+                <th><div className="invoice-cell-anchor">Status</div></th>
               </tr>
             </thead>
             <tbody>
@@ -119,23 +130,37 @@ export default function Invoices() {
                 return (
                   <tr key={inv.id} onClick={() => setSelected(inv)}>
                     <td>
-                      <div className="cell-client">
-                        <Avatar name={inv.clients?.name} size={28} />
-                        <span>{inv.clients?.name || 'No client'}</span>
+                      <div className="invoice-cell-anchor">
+                        <div className="cell-client invoice-client-anchor">
+                          <Avatar name={inv.clients?.name} size={22} />
+                          <span>{inv.clients?.name || 'No client'}</span>
+                        </div>
                       </div>
                     </td>
-                    <td className="cell-muted">{inv.invoice_number || '—'}</td>
-                    <td className="ta-right cell-amount">{formatMoney(inv.amount)}</td>
-                    <td className="cell-muted">{formatShortDate(inv.due_date)}</td>
-                    <td className="ta-right">
-                      {!inv.paid && od > 0 ? (
-                        <span className="cell-overdue">{od}</span>
-                      ) : (
-                        <span className="cell-muted">—</span>
-                      )}
+                    <td className="cell-muted">
+                      <div className="invoice-cell-anchor">{inv.invoice_number || '—'}</div>
                     </td>
-                    <td className="ta-right">
-                      <StatusPill status={effectiveStatus(inv)} />
+                    <td className="cell-amount">
+                      <div className="invoice-cell-anchor">
+                        <span className="invoice-numeric-anchor">{formatMoney(inv.amount)}</span>
+                      </div>
+                    </td>
+                    <td className="cell-muted">
+                      <div className="invoice-cell-anchor">{formatShortDate(inv.due_date)}</div>
+                    </td>
+                    <td>
+                      <div className="invoice-cell-anchor">
+                        {!inv.paid && od > 0 ? (
+                          <span className="cell-overdue">{od}</span>
+                        ) : (
+                          <span className="cell-muted">—</span>
+                        )}
+                      </div>
+                    </td>
+                    <td>
+                      <div className="invoice-cell-anchor">
+                        <StatusPill status={effectiveStatus(inv)} />
+                      </div>
                     </td>
                   </tr>
                 )
