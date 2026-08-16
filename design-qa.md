@@ -135,6 +135,47 @@ final result: passed
 
 ---
 
+# Invoices client-lane refinement — design QA
+
+## Evidence
+
+- Source visual truth: the previously approved table render at
+  `C:\Users\Owner\Documents\Codex\2026-07-26\yes-and-that-s-probably-the\temp-invoice-polish-preview\invoices-polish-1880x781.png`
+  and its 1440 × 900 counterpart.
+- Implementation: `C:\Users\Owner\Documents\Codex\2026-07-26\yes-and-that-s-probably-the\temp-invoice-client-anchor-preview\invoices-client-anchor-1880x781.png`
+  and `invoices-client-anchor-1440x900.png` in the same directory.
+- Full-view comparisons: `comparison-full-1880x781.png` and
+  `comparison-full-1440x900.png`.
+- Focused table comparisons: `comparison-table-1880x781.png` and
+  `comparison-table-1440x900.png`.
+- Viewports: 1880 × 781 and 1440 × 900 CSS pixels at 1× density.
+- State: local QA-only invoice fixture using the production table markup and
+  CSS; no Supabase data or production authority behavior was involved.
+
+## Findings and measurements
+
+- Earlier P2: CLIENT row content remained centered as a 146px compound group
+  inside the equal first track, while the CLIENT header used the track's left
+  padding edge. The row group now uses the same left anchor as the header.
+- At both viewports, CLIENT header text and every avatar left edge are exactly
+  x = 270px. Client names begin at x = 296px and remain `nowrap`.
+- The six tracks are still 220.33–220.36px at 1880 and exactly 147px at 1440.
+- AMOUNT is unchanged: header and all value right edges remain x = 854.8125px
+  at 1880 and x = 671.5px at 1440.
+- STATUS is unchanged: header lane and every pill right edge remain x = 1568px
+  at 1880 and x = 1128px at 1440.
+- Avatar circles remain 22px. Only the invoice-table initials increase from
+  7.92px to 9.5px, retaining the meaningful-word initials behavior.
+- No horizontal overflow occurs at either viewport. Row height, table width,
+  tabs, middle-column anchors, status styling, colors, and copy are unchanged.
+- Focused before/after comparisons show no actionable P0/P1/P2 drift after
+  the refinement. Fonts/typography, spacing/layout rhythm, colors/tokens,
+  image/icon treatment, and copy/content were checked.
+
+final result: passed
+
+---
+
 # Invoices outer-anchor header treatment — design QA
 
 - Rendered at 1880 × 781 and 1440 × 900 against the approved centered-row
