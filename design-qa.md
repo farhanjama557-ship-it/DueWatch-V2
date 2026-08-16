@@ -147,3 +147,24 @@ final result: passed
 - Browser console errors: none. JavaScript tests and production build passed.
 
 final result: passed
+
+---
+
+# Invoices centered content anchors — design QA
+
+- Source: the user-approved 1880 × 781 Invoices reference supplied during the
+  review. Browser captures and the combined comparison were kept local-only
+  and removed before commit.
+- Verified at 1880 × 781 and 1440 × 900 with the same eight QA invoice facts.
+  Content-sized filter tabs remained unchanged.
+- Visible anchor-gap spread was 1.976px at 1880 and 1.985px at 1440. Headers
+  and rows use the same centered anchors; Amount retains its centered 92px
+  wrapper with right-aligned tabular figures.
+- All client names, including Ashford Legal Partners, remained one line at
+  1440. All five filters preserved the same grid, with no horizontal overflow
+  and no browser console errors.
+- Data, filtering, status pills, and interaction behavior are unchanged.
+- Findings: P0 none, P1 none, P2 none.
+- JavaScript tests: 556/556 passed. Production Vite build: passed.
+
+final result: passed
