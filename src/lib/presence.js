@@ -49,7 +49,7 @@ export function presenceCopy(state, ctx = {}) {
     case 'contextual':
       return {
         title: `${ctx.awaitingSignatureCount} need${ctx.awaitingSignatureCount === 1 ? 's' : ''} your signature`,
-        subtitle: 'Everything else is handled',
+        subtitle: 'No other alerts',
         mission: `Your turn — ${ctx.awaitingSignatureCount} ${ctx.awaitingSignatureCount === 1 ? 'reminder is' : 'reminders are'} ready.`,
       }
     case 'cognitive':
@@ -62,14 +62,21 @@ export function presenceCopy(state, ctx = {}) {
       return {
         title: 'Autopilot active',
         subtitle: `Watching ${ctx.watchingCount} ${ctx.watchingCount === 1 ? 'invoice' : 'invoices'}`,
-        mission: 'Everything else is handled.',
+        mission: 'No alerts right now.',
       }
     case 'off':
     default:
+      // 'off' and 'paused' are not the same claim — this app has no
+      // distinct "paused" state (autopilotEnabled is a plain boolean), so
+      // the copy for the one real off state must consistently say "off,"
+      // never "paused." "Turn on to start monitoring" also overclaimed:
+      // Duewatch keeps observing/syncing invoices and evidence regardless
+      // of Autopilot — Autopilot governs automatic handling specifically,
+      // which is the one thing actually gated by this state.
       return {
         title: 'Autopilot off',
-        subtitle: 'Turn on to start monitoring',
-        mission: 'Autopilot is paused.',
+        subtitle: 'Turn on to allow automatic handling',
+        mission: 'Autopilot is off.',
       }
   }
 }
@@ -88,7 +95,7 @@ export function presenceSrText(state, ctx = {}) {
     case 'celebratory':
       return `Payment received from ${ctx.clientName || 'a client'}`
     case 'resting':
-      return 'Everything is handled'
+      return 'No alerts right now'
     case 'off':
     default:
       return 'Autopilot is off'

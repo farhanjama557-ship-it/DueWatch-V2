@@ -18,12 +18,14 @@ import {
   PULSE_ROW_STATE,
 } from '../lib/pulseAuthority'
 import { activityMeta, activityDescription, activityIcon, isPaymentEvent } from '../lib/activity'
+import DuewatchAssistant from '../components/DuewatchAssistant'
 import {
   formatMoney,
   formatShortDate,
   formatEventDate,
   daysOverdue,
   daysUntil,
+  timeAgo,
 } from '../lib/format'
 import {
   OutstandingIcon,
@@ -180,11 +182,12 @@ function InvoiceRow({ invoice, secondary, onClick }) {
   )
 }
 
-// "Since your last visit" — relocated from a dark-rail section into the
-// north-star mockup's compact banner treatment at the top of the white
-// canvas. Same real Checked/Drafted facts, same real-empty-state rule:
-// omitted entirely when there's no prior visit to diff against.
-function SinceLastVisitBanner({ data }) {
+// Keep the real visit-delta facts, but fold them into the operating strip
+// below instead of spending a full-width row on sparse production data.
+// This is presentation-only: the same Checked/Drafted values from
+// DataContext are returned verbatim, and an unprovable/empty delta is still
+// omitted entirely.
+function sinceLastVisitSummary(data) {
   if (!data) return null
   const parts = []
   if (data.checked > 0) {
@@ -194,18 +197,7 @@ function SinceLastVisitBanner({ data }) {
     parts.push(`Drafted ${data.drafted} ${data.drafted === 1 ? 'reminder' : 'reminders'}`)
   }
   if (parts.length === 0) return null
-
-  return (
-    <div className="brief-banner">
-      <span className="brief-banner-icon">
-        <History size={15} />
-      </span>
-      <div>
-        <div className="brief-banner-title">Since your last visit</div>
-        <div className="brief-banner-detail">{parts.join(' · ')}</div>
-      </div>
-    </div>
-  )
+  return `Since your last visit: ${parts.join(' · ')}`
 }
 
 // Phase 2A.2: the old fixed daily-cadence line is removed — no persisted
@@ -213,7 +205,7 @@ function SinceLastVisitBanner({ data }) {
 // Every remaining line is grounded in a real authority evaluation
 // (eligibleCount counts invoices isAuthorizedForAutomaticHandling() found
 // true), never a fabricated cadence claim.
-function WorkingOn({ autopilotEnabled, eligibleCount, settingsUnavailable }) {
+function RailOperations({ autopilotEnabled, eligibleCount, settingsUnavailable, dueSoon }) {
   const items = []
   if (autopilotEnabled && eligibleCount > 0) {
     items.push({
@@ -232,8 +224,10 @@ function WorkingOn({ autopilotEnabled, eligibleCount, settingsUnavailable }) {
       ? 'Nothing currently authorized.'
       : 'Autopilot is off. Nothing is scheduled.'
 
+  const upcoming = dueSoon.slice(0, 4)
+
   return (
-    <section className="rail-section">
+    <section className="rail-section rail-operations">
       <div className="rail-section-head">
         <CalendarClock size={15} />
         {/* Adversarial-review MEDIUM fix: renamed from "Duewatch Will Do
@@ -253,23 +247,16 @@ function WorkingOn({ autopilotEnabled, eligibleCount, settingsUnavailable }) {
           ))}
         </ul>
       )}
-    </section>
-  )
-}
 
-function Upcoming({ dueSoon }) {
-  const items = dueSoon.slice(0, 4)
-  return (
-    <section className="rail-section">
-      <div className="rail-section-head">
+      <div className="rail-subsection-head">
         <CalendarCheck size={15} />
         <span>Upcoming</span>
       </div>
-      {items.length === 0 ? (
+      {upcoming.length === 0 ? (
         <p className="rail-empty">Nothing due in the next 14 days.</p>
       ) : (
         <ul className="rail-upcoming-list">
-          {items.map((inv) => {
+          {upcoming.map((inv) => {
             const until = daysUntil(inv.due_date)
             return (
               <li key={inv.id} className="rail-upcoming-item">
@@ -289,21 +276,42 @@ function Upcoming({ dueSoon }) {
   )
 }
 
-// Last 5 events, newest first, with payment events bubbled to the top of
+// Last 3 events, newest first, with payment events bubbled to the top of
 // that recent window (still newest-first within each group).
 function pickRecentActivity(events) {
   const recent = events.slice(0, 8)
   const payments = recent.filter(isPaymentEvent)
   const rest = recent.filter((e) => !isPaymentEvent(e))
-  return [...payments, ...rest].slice(0, 5)
+  return [...payments, ...rest].slice(0, 3)
 }
 
-function RailActivity({ events }) {
+// Evidence and Autopilot are different concepts — this badge must never
+// reference autopilotEnabled. The only real signal this app has for feed
+// freshness is DataContext's lastSyncedAt — the moment DataContext's own
+// fetch/sync last completed successfully (initial load or the silent 30s
+// background poll), not proof that the underlying evidence itself changed
+// at that moment. "Synced" says exactly that; "Updated" would overclaim
+// that the data changed, when a sync with zero new events is just as
+// likely. There's no realtime/websocket connection either, so this is
+// always freshness copy ("Synced 2m ago"), never a Live/Paused claim. If a
+// sync hasn't completed yet, the badge simply doesn't render.
+function RailFreshnessBadge({ lastSyncedAt }) {
+  if (!lastSyncedAt) return null
+  return (
+    <span className="rail-freshness-badge">
+      <span className="rail-freshness-dot" aria-hidden="true" />
+      Synced {timeAgo(lastSyncedAt)}
+    </span>
+  )
+}
+
+function RailActivity({ events, lastSyncedAt }) {
   if (events.length === 0) {
     return (
       <section className="rail-section">
         <div className="rail-section-head">
           <span>Evidence</span>
+          <RailFreshnessBadge lastSyncedAt={lastSyncedAt} />
         </div>
         {/* MEDIUM fix: the old copy here claimed a sweeping all-clear
             status that a 20-row recent-events window can't actually prove. */}
@@ -318,6 +326,7 @@ function RailActivity({ events }) {
     <section className="rail-section">
       <div className="rail-section-head">
         <span>Evidence</span>
+        <RailFreshnessBadge lastSyncedAt={lastSyncedAt} />
       </div>
       <ul className="rail-activity-list">
         {items.map((e) => {
@@ -367,6 +376,61 @@ function AutopilotNudge({ visible, onDismiss }) {
   )
 }
 
+// Compact "what's actually true right now" summary strip for the center
+// canvas — distinct from the dark rail's "Authorized for Autopilot" card.
+// Every item here is an already-computed real count (Dashboard's own
+// `derived` values); "authorized for automatic handling" deliberately
+// mirrors the exact Phase 2A.2 vocabulary (never "handled automatically" —
+// that implies execution that hasn't happened yet). Renders nothing at all
+// (not an empty placeholder) when there's genuinely nothing to report.
+function WorkingOnStrip({ remindersSent, handlingCount, decisionsNeeded, visitSummary }) {
+  const items = []
+  if (visitSummary) {
+    items.push({ Icon: History, text: visitSummary })
+  }
+  if (remindersSent > 0) {
+    items.push({
+      Icon: RemindersIcon,
+      text: `${remindersSent} ${remindersSent === 1 ? 'reminder' : 'reminders'} sent this week`,
+    })
+  }
+  if (handlingCount > 0) {
+    items.push({
+      Icon: SparkleIcon,
+      text: `${handlingCount} ${handlingCount === 1 ? 'invoice' : 'invoices'} authorized for automatic handling`,
+    })
+  }
+  if (decisionsNeeded > 0) {
+    items.push({
+      Icon: AttentionIcon,
+      text: `${decisionsNeeded} ${decisionsNeeded === 1 ? 'invoice needs' : 'invoices need'} your decision`,
+    })
+  }
+  if (items.length === 0) return null
+
+  return (
+    <section className="working-on-strip">
+      <div className="working-on-strip-title">
+        <span className="working-on-strip-icon">
+          <SparkleIcon width={14} height={14} />
+        </span>
+        <span>What Duewatch is working on</span>
+      </div>
+      <ul className="working-on-strip-list">
+        {items.map((it) => (
+          <li key={it.text}>
+            <it.Icon width={14} height={14} />
+            <span>{it.text}</span>
+          </li>
+        ))}
+      </ul>
+      <Link to="/activity" className="working-on-strip-cta">
+        View activity <ArrowRightIcon width={14} height={14} />
+      </Link>
+    </section>
+  )
+}
+
 export default function Dashboard() {
   const {
     userId,
@@ -388,6 +452,7 @@ export default function Dashboard() {
     collectedThisMonth,
     collectedLastMonth,
     collectedLastMonthCount,
+    lastSyncedAt,
   } = useData()
   const [selected, setSelected] = useState(null)
   const [signatureContext, setSignatureContext] = useState(null)
@@ -551,14 +616,23 @@ export default function Dashboard() {
   // awaitingCount (see blockedCount's own doc comment in `derived`).
   const decisionsNeeded = awaitingCount + derived.blockedCount
 
-  // Real, deterministic status headline — a plain read of already-computed
-  // counts, never a fabricated qualitative assessment. Mirrors the same
-  // "never faked" rule that ruled out an AI-sentiment "What Duewatch
-  // Noticed" feature elsewhere in this app.
-  const statusHeadline =
-    decisionsNeeded === 0
-      ? 'Your receivables are on track.'
-      : `${decisionsNeeded} decision${decisionsNeeded === 1 ? '' : 's'} need${decisionsNeeded === 1 ? 's' : ''} your attention.`
+  // Natural conditional copy, never a zero-value clause — each fact only
+  // appears when it's actually true, so a founder with nothing blocked
+  // isn't asked to parse "0 need you directly." Same real counts the old
+  // statusHeadline/subline used, just composed without empty clauses.
+  const attentionParts = []
+  if (derived.handlingCount > 0) {
+    attentionParts.push(
+      `${derived.handlingCount} ${derived.handlingCount === 1 ? 'is' : 'are'} authorized for automatic handling`
+    )
+  }
+  if (awaitingCount > 0) {
+    attentionParts.push(`${awaitingCount} ${awaitingCount === 1 ? 'decision awaits' : 'decisions await'} your approval`)
+  }
+  if (derived.blockedCount > 0) {
+    attentionParts.push(`${derived.blockedCount} ${derived.blockedCount === 1 ? 'needs' : 'need'} you directly`)
+  }
+  const attentionLine = attentionParts.length > 0 ? `${attentionParts.join('. ')}.` : 'No items need your attention.'
 
   const hasAnyInvoices = invoices.length > 0
 
@@ -618,8 +692,9 @@ export default function Dashboard() {
     <div className="brief">
       <div className="brief-topbar">
         <div>
-          <p className="brief-greeting">Good morning, {name}.</p>
-          <h1 className="brief-headline">{statusHeadline}</h1>
+          <h1 className="brief-greeting">
+            Good morning, <span className="brief-greeting-name">{name}</span>.
+          </h1>
         </div>
         <div className="brief-topbar-controls">
           <TopSearch invoices={invoices} onSelect={(inv) => setSelected(inv)} inputRef={searchInputRef} />
@@ -636,26 +711,23 @@ export default function Dashboard() {
       </div>
 
       <div className="brief-header-sub">
-        {/* Phase 2A.2: "Duewatch is handling N automatically" implied
-            execution that hasn't happened yet — a real granted
-            authorization is not the same claim as an action already taken
-            (see permission.canActAutomatically). */}
-        <p className="brief-subline">
-          You collected <b>{formatMoney(collectedThisMonth)}</b> this month. {formatMoney(derived.outstandingTotal)}{' '}
-          remains outstanding. {derived.handlingCount} {derived.handlingCount === 1 ? 'is' : 'are'} authorized for
-          automatic handling, {awaitingCount} {awaitingCount === 1 ? 'awaits' : 'await'} your approval, and{' '}
-          <span className="o">
-            {derived.blockedCount} {derived.blockedCount === 1 ? 'needs' : 'need'} you directly
+        <p className="brief-status-line">
+          You collected <b>{formatMoney(collectedThisMonth)}</b> this month.{' '}
+          {formatMoney(derived.outstandingTotal)} remains outstanding.
+          {/* Phase 2A.2: "Duewatch is handling N automatically" implied
+              execution that hasn't happened yet — a real granted
+              authorization is not the same claim as an action already taken
+              (see permission.canActAutomatically). Natural conditional
+              copy — never a zero-value clause; see attentionParts above. */}
+          <span className={`brief-attention-line${decisionsNeeded > 0 ? ' has-attention' : ''}`}>
+            {attentionLine}
           </span>
-          .
         </p>
       </div>
 
       <div className="brief-shell">
         {/* ---- White canvas: the business ---- */}
         <div className="brief-main">
-          <SinceLastVisitBanner data={sinceLastVisit} />
-
           <section className="kpi-grid">
             <KpiCard
               Icon={CollectedIcon}
@@ -688,6 +760,13 @@ export default function Dashboard() {
               support="this week"
             />
           </section>
+
+          <WorkingOnStrip
+            remindersSent={derived.remindersSent}
+            handlingCount={derived.handlingCount}
+            decisionsNeeded={decisionsNeeded}
+            visitSummary={sinceLastVisitSummary(sinceLastVisit)}
+          />
 
           {!hasAnyInvoices ? (
             <section className="brief-card">
@@ -750,7 +829,15 @@ export default function Dashboard() {
                                 <td>{inv.invoice_number || '—'}</td>
                                 <td className="top-invoices-table-client">{inv.clients?.name || 'No client'}</td>
                                 <td className="top-invoices-table-amount">{formatMoney(balanceOf(inv))}</td>
-                                <td>{od}</td>
+                                <td>
+                                  {/* Purely a visual read of the raw day count — never an
+                                      authority signal. Severity buckets mirror the existing
+                                      effectiveStatus() thresholds (overdue/critical/final
+                                      notice) already used elsewhere in this app. */}
+                                  <span className={`days-pill days-pill-${od > 30 ? 'high' : od >= 15 ? 'mid' : 'low'}`}>
+                                    {od}
+                                  </span>
+                                </td>
                                 <td>
                                   <span
                                     className={
@@ -788,7 +875,23 @@ export default function Dashboard() {
                                     // genuine no-rule invoice, and never
                                     // "Awaiting approval" unless a real
                                     // pending draft actually exists.
-                                    <span className="row-action-label">Authorized · approval required</span>
+                                    //
+                                    // Display-only wording fix: the founder
+                                    // reasonably read "Authorized · approval
+                                    // required" next to other rows'
+                                    // "Awaiting approval" as a THIRD kind of
+                                    // pending decision, when this state means
+                                    // only that the granted rule's policy
+                                    // requires approval before it could ever
+                                    // act — no draft exists yet, nothing is
+                                    // currently waiting on the founder for
+                                    // this exact invoice. "Rule requires
+                                    // approval" reads as a standing policy
+                                    // fact, not a queued decision. This is
+                                    // presentation text only — the
+                                    // PULSE_ROW_STATE classification itself
+                                    // (from pulseAuthority.js) is unchanged.
+                                    <span className="row-action-label">Rule requires approval</span>
                                   ) : actionState === PULSE_ROW_STATE.ALREADY_HANDLED ? (
                                     // HIGH fix: never present a "Choose
                                     // action" affordance as if nothing has
@@ -825,68 +928,90 @@ export default function Dashboard() {
                       </table>
                     </div>
                   )}
+                  <Link to="/invoices" className="brief-card-link">
+                    View all invoices <ArrowRightIcon width={14} height={14} />
+                  </Link>
                 </section>
 
                 {/* Due Soon — real scheduled/due invoices occupying the space
                     the north-star grid gives to forecast/pattern content that
-                    isn't real yet */}
-                <section className="brief-card">
+                    isn't real yet. The body wrapper + .brief-row-2col's
+                    stretch alignment let this card match the overdue
+                    table's height without looking like dead trailing
+                    whitespace — a short real list stays vertically
+                    centered and intentional instead of trailing off. */}
+                <section className="brief-card due-soon-card">
                   <div className="section-head">
                     <h2 className="section-title">Due Soon</h2>
                   </div>
-                  {derived.dueSoon.length === 0 ? (
-                    <p className="brief-empty">Nothing due in the next 14 days.</p>
-                  ) : (
-                    <ul className="invoice-list">
-                      {derived.dueSoon.map((inv) => {
-                        // MEDIUM fix: the old suffix here was an
-                        // unconditional, unproven cadence claim on every
-                        // row. Only note automatic handling when this
-                        // exact invoice is genuinely authorized for it —
-                        // otherwise state the due date
-                        // fact alone.
-                        const authorizedNote = isAuthorizedForAutomaticHandling(derived.pulseAuthority.get(inv.id))
-                          ? ' · authorized for automatic handling'
-                          : ''
-                        return (
-                          <InvoiceRow
-                            key={inv.id}
-                            invoice={inv}
-                            secondary={`Due ${formatShortDate(inv.due_date)} · ${inv.invoice_number || 'No number'}${authorizedNote}`}
-                            onClick={() => setSelected(inv)}
-                          />
-                        )
-                      })}
-                    </ul>
-                  )}
+                  <div className="due-soon-body">
+                    {derived.dueSoon.length === 0 ? (
+                      <p className="brief-empty">Nothing due in the next 14 days.</p>
+                    ) : (
+                      <ul className="invoice-list">
+                          {derived.dueSoon.map((inv) => {
+                            // MEDIUM fix: the old suffix here was an
+                            // unconditional, unproven cadence claim on every
+                            // row. Only note automatic handling when this
+                            // exact invoice is genuinely authorized for it —
+                            // otherwise state the due date
+                            // fact alone.
+                            const authorizedNote = isAuthorizedForAutomaticHandling(derived.pulseAuthority.get(inv.id))
+                              ? ' · authorized for automatic handling'
+                              : ''
+                            return (
+                              <InvoiceRow
+                                key={inv.id}
+                                invoice={inv}
+                                secondary={`Due ${formatShortDate(inv.due_date)} · ${inv.invoice_number || 'No number'}${authorizedNote}`}
+                                onClick={() => setSelected(inv)}
+                              />
+                            )
+                          })}
+                        </ul>
+                    )}
+                  </div>
+                  <Link to="/invoices" className="brief-card-link">
+                    View invoices <ArrowRightIcon width={14} height={14} />
+                  </Link>
                 </section>
               </div>
 
               <AutopilotNudge visible={showNudge} onDismiss={dismissNudge} />
             </>
           )}
+
+          <DuewatchAssistant
+            snapshot={{
+              openInvoices: derived.outstandingCount,
+              outstandingBalance: formatMoney(derived.outstandingTotal),
+              overdueInvoices: attentionCount,
+              remindersSent: derived.remindersSent,
+            }}
+          />
         </div>
 
         {/* ---- Dark rail: Duewatch itself ---- */}
         <aside className="pulse-rail">
-          <div ref={signatureSectionRef}>
-            <SignatureSection
-              items={awaitingSignature}
-              onResolved={resolveSignatureLocal}
-              onEdit={openEditFirst}
-              title="Needs your approval"
-            />
-          </div>
+          {awaitingSignature.length > 0 && (
+            <div ref={signatureSectionRef} className="rail-section rail-approval-section">
+              <SignatureSection
+                items={awaitingSignature}
+                onResolved={resolveSignatureLocal}
+                onEdit={openEditFirst}
+                title="Needs your approval"
+              />
+            </div>
+          )}
 
-          <WorkingOn
+          <RailOperations
             autopilotEnabled={autopilotEnabled}
             eligibleCount={derived.eligibleForNextCheck}
             settingsUnavailable={autopilotSettingsUnavailable}
+            dueSoon={derived.dueSoon}
           />
 
-          <Upcoming dueSoon={derived.dueSoon} />
-
-          <RailActivity events={events} />
+          <RailActivity events={events} lastSyncedAt={lastSyncedAt} />
         </aside>
       </div>
 

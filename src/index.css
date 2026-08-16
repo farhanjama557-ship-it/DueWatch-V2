@@ -10,10 +10,15 @@
   --primary-hover: #C2603F;
   --primary-tint: #FBEEE8;
 
-  --bg: #FBFAF7;
+  /* Shifted from the earlier cream-warm reading (#FBFAF7) toward a very
+     light, slightly cooler neutral — the center workspace should read as a
+     calm neutral surface with warmth concentrated in accents (terracotta,
+     the assistant panel), not uniformly tinted cream across the whole
+     canvas. */
+  --bg: #F8F5F0;
   --surface: #FFFFFF;
-  --border: #EDE7DC;
-  --border-soft: #F4EFE7;
+  --border: #E9E7E1;
+  --border-soft: #F1EFEA;
 
   --text-primary: #231F1B;
   --text-secondary: #4A4540;
@@ -28,25 +33,36 @@
   --red-tint: #FBEAE8;
   --green: #22A565;
   --green-tint: #E7F4EC;
+  /* Soft lavender support surface — Pulse's "what's actually true" strip
+     and the assistant panel only; not a general-purpose token used
+     elsewhere in the app. */
+  --lavender: #EFE9F7;
+  --lavender-deep: #D9CDEE;
 
   /* Fixed px, matching the approved reference's own rule verbatim:
      `.app{grid-template-columns:210px 1fr 300px}`. The center column is
      the reference's own unbounded `1fr` — no shell-wide max-width here on
      purpose; see .app-shell's comment. */
-  --sidebar-w: 210px;
-  --rail-w: 300px;
+  --sidebar-w: 226px;
+  --rail-w: 274px;
 
   /* Shared dark-charcoal palette — the "Duewatch itself" zones (nav sidebar
      + right rail). Applied by re-pointing the generic --surface/--border/
      --text-* tokens at these within each dark zone's own selector, so
      every reused component (brief-card, signature-*, invoice-row,
-     handled-list, etc.) re-themes automatically without forking its CSS. */
-  --dw-charcoal: #1E1A17;
-  --dw-charcoal-surface: #272220;
-  --dw-charcoal-border: #332E2A;
-  --dw-charcoal-text: #EDE7DC;
-  --dw-charcoal-text-secondary: #A79E92;
-  --dw-charcoal-text-muted: #8F8479;
+     handled-list, etc.) re-themes automatically without forking its CSS.
+     Shifted from the earlier brown-charcoal reading (#1E1A17) to a
+     near-black, neutral-cool base with subtle blue-gray borders — less
+     "warm wood," more "premium dark intelligence surface." Terracotta
+     stays reserved for accents (active nav, primary buttons, live dots),
+     not the base surfaces themselves. */
+  --dw-charcoal: #17181C;
+  --dw-charcoal-surface: #1F2024;
+  --dw-charcoal-surface-raised: #262830;
+  --dw-charcoal-border: #2B2D34;
+  --dw-charcoal-text: #F2F2F4;
+  --dw-charcoal-text-secondary: #9CA1AC;
+  --dw-charcoal-text-muted: #6E7480;
 }
 
 /* ============================================================
@@ -137,7 +153,7 @@ table {
   border-right: 1px solid var(--dw-charcoal-border);
   display: flex;
   flex-direction: column;
-  padding: 20px 14px;
+  padding: 20px 13px;
   /* Fixed, not sticky. A prior pass used position:sticky specifically
      because the shell was bounded/centered (max-width + margin:auto) and
      `fixed` would have pinned this to the raw viewport edge, escaping that
@@ -160,8 +176,8 @@ table {
   display: flex;
   align-items: center;
   gap: 9px;
-  padding: 6px 8px 4px;
-  margin-bottom: 4px;
+  padding: 4px 8px 14px;
+  margin-bottom: 2px;
 }
 
 .sidebar-brand-text {
@@ -176,22 +192,10 @@ table {
   align-items: center;
   gap: 6px;
   font-size: 15px;
-  font-weight: 700;
+  font-weight: 800;
+  letter-spacing: -0.01em;
   color: var(--dw-charcoal-text);
   line-height: 1.2;
-}
-
-.sidebar-brand-beta {
-  flex-shrink: 0;
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--dw-charcoal-text-secondary);
-  background: var(--dw-charcoal-surface);
-  border: 1px solid var(--dw-charcoal-border);
-  border-radius: 999px;
-  padding: 2px 7px;
 }
 
 .sidebar-brand-subtitle {
@@ -249,7 +253,7 @@ table {
 .sidebar-nav {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 2px;
   flex: 1;
 }
 
@@ -257,7 +261,7 @@ table {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 10px;
+  padding: 9px 10px;
   border-radius: 8px;
   color: var(--dw-charcoal-text-secondary);
   font-size: 12.5px;
@@ -305,7 +309,7 @@ table {
   border: 1px solid var(--dw-charcoal-border);
   border-radius: 10px;
   padding: 11px 12px;
-  margin-top: 10px;
+  margin-top: 8px;
 }
 
 .sidebar-card-title {
@@ -377,8 +381,8 @@ table {
   display: flex;
   align-items: center;
   gap: 9px;
-  padding: 10px 8px 2px;
-  margin-top: 8px;
+  padding: 10px 8px 0;
+  margin-top: 6px;
   border-top: 1px solid var(--dw-charcoal-border);
 }
 
@@ -429,7 +433,7 @@ table {
 .content {
   flex: 1;
   background: var(--bg);
-  padding: 22px 26px;
+  padding: 18px 25px 24px 31px;
   min-width: 0;
   /* .sidebar is position:fixed (removed from .app-shell's flex flow) so it
      can be genuinely full-height regardless of scroll/content — this
@@ -447,13 +451,21 @@ table {
   gap: 24px;
 }
 
-/* Small and unemphasized on purpose — the greeting is a quiet lead-in; the
-   real status headline + narrative below are the actual focal point. */
+/* The primary focal point — large greeting with the founder's name in the
+   brand terracotta. Real status facts live below it (.brief-status-line /
+   .brief-attention-line), not crammed into this line. */
 .brief-greeting {
-  font-size: 12px;
-  font-weight: 400;
-  color: var(--text-muted);
-  margin-bottom: 3px;
+  margin-top: 7px;
+  font-size: 30px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  color: var(--text-primary);
+  margin-bottom: 6px;
+}
+
+.brief-greeting-name {
+  color: var(--primary);
 }
 
 .brief-topbar-controls {
@@ -471,11 +483,11 @@ table {
   display: flex;
   align-items: center;
   gap: 8px;
-  width: 240px;
-  height: 34px;
+  width: 300px;
+  height: 36px;
   padding: 0 10px;
   background: var(--surface);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-soft);
   border-radius: 9px;
 }
 
@@ -554,8 +566,8 @@ table {
 
 .topbar-icon-btn {
   position: relative;
-  width: 34px;
-  height: 34px;
+  width: 36px;
+  height: 36px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -590,18 +602,32 @@ table {
 
 .brief-header-sub {
   margin-top: 2px;
-  margin-bottom: 18px;
+  margin-bottom: 0;
 }
 
-/* Real, deterministic status line (0 decisions vs N decisions) — not an AI
-   "insight," just a plain read of already-computed real counts. This is
-   the header's visual anchor. */
-.brief-headline {
-  font-size: 23px;
-  font-weight: 800;
-  letter-spacing: -0.02em;
-  color: var(--text-primary);
-  margin-bottom: 5px;
+.brief-status-line {
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.brief-status-line b {
+  color: var(--green);
+  font-weight: 700;
+}
+
+.brief-attention-line {
+  display: inline;
+  margin-left: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.brief-attention-line.has-attention {
+  color: var(--text-secondary);
+  font-weight: 600;
 }
 
 /* The real narrative sentence with inline highlighted real values. */
@@ -659,7 +685,7 @@ table {
   display: flex;
   align-items: flex-start;
   gap: 0;
-  margin-top: 24px;
+  margin-top: 12px;
 }
 
 .brief-main {
@@ -680,7 +706,9 @@ table {
      signature-*, invoice-row, handled-list, etc.) already reads these same
      custom properties, so this alone re-themes the reused components
      without forking their CSS. Same shared palette as .sidebar. */
-  --surface: var(--dw-charcoal-surface);
+  --surface: #1D1F24;
+  --dw-charcoal-surface-raised: #1D1F24;
+  --dw-charcoal-border: #282A30;
   --border: var(--dw-charcoal-border);
   --bg: var(--dw-charcoal);
   --text-primary: var(--dw-charcoal-text);
@@ -692,11 +720,11 @@ table {
   flex-shrink: 0;
   background: var(--dw-charcoal);
   border-left: 1px solid var(--dw-charcoal-border);
-  padding: 24px 18px;
+  padding: 15px 13px 12px;
   color: var(--text-primary);
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 8px;
   /* Fixed, not sticky, and flush to the true viewport edge (right:0) —
      same reasoning as .sidebar. Previously sticky-within-a-flex-row sized
      this box to its own content, so on any page where that content was
@@ -803,20 +831,55 @@ table {
    entirely from .pulse-rail's flex gap; a divider would need to know
    whether Needs Your Approval rendered anything this load, which isn't
    worth the fragility for a cosmetic line. */
+/* Each rail section is now its own distinct card surface — a subtly
+   raised, bordered panel against the rail's near-black base — rather than
+   a document-style stack of plain text separated only by flex gap. This
+   is the core of the rail's "premium dark intelligence surface" fidelity
+   pass: consistent padding/radii across every card, clearer section
+   boundaries, calmer density. */
 .rail-section {
-  padding-top: 0;
+  background: var(--dw-charcoal-surface-raised, var(--dw-charcoal-surface));
+  border: 1px solid var(--dw-charcoal-border);
+  border-radius: 9px;
+  padding: 12px 13px 13px;
 }
 
 .rail-section-head {
   display: flex;
   align-items: center;
   gap: 7px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
-  color: var(--text-muted);
-  margin-bottom: 11px;
+  color: var(--dw-charcoal-text-secondary);
+  margin-bottom: 10px;
+}
+
+.rail-subsection-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 14px 0 5px;
+  padding-top: 12px;
+  border-top: 1px solid var(--dw-charcoal-border);
+  color: var(--dw-charcoal-text-secondary);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.rail-operations {
+  min-height: 190px;
+}
+
+.rail-approval-section .section-head {
+  margin-bottom: 10px;
+}
+
+.pulse-rail > .rail-section:last-child {
+  min-height: 216px;
 }
 
 .rail-section-line {
@@ -860,7 +923,7 @@ table {
 }
 
 .rail-upcoming-item {
-  padding: 10px 0;
+  padding: 8px 0;
   border-top: 0.5px solid var(--border);
 }
 
@@ -886,7 +949,7 @@ table {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 0;
+  padding: 8px 0;
   border-top: 0.5px solid var(--border);
 }
 
@@ -968,47 +1031,76 @@ table {
 .kpi-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 11px;
-  margin: 0 0 16px;
+  gap: 12px;
+  height: 136px;
+  margin: 0 0 12px;
 }
 
 .kpi-card {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 12px;
-  padding: 13px 14px;
+  padding: 15px 16px;
+  height: 136px;
+  min-height: 136px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+}
+
+.kpi-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--border-soft);
+  box-shadow: 0 8px 18px rgba(35, 31, 27, 0.06);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kpi-card {
+    transition: none;
+  }
+  .kpi-card:hover {
+    transform: none;
+  }
 }
 
 .kpi-top {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   color: var(--text-muted);
 }
 
 .kpi-icon {
-  width: 13px;
-  height: 13px;
+  width: 15px;
+  height: 15px;
+  padding: 3px;
+  border-radius: 6px;
+  background: var(--bg);
   color: var(--text-muted);
+  box-sizing: content-box;
 }
 
 .kpi-label {
   font-size: 10.5px;
-  font-weight: 500;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
   color: var(--text-muted);
 }
 
 .kpi-value {
-  margin-top: 7px;
-  font-size: 20px;
+  margin-top: 12px;
+  font-size: 24px;
   font-weight: 800;
   color: var(--text-primary);
   line-height: 1.1;
   letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
 }
 
 .kpi-support {
-  margin-top: 3px;
+  margin-top: 6px;
   font-size: 10.5px;
   color: var(--text-muted);
 }
@@ -1037,18 +1129,18 @@ table {
 .brief-banner {
   background: linear-gradient(90deg, var(--primary-tint), var(--surface));
   border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 13px 16px;
+  border-radius: 10px;
+  padding: 7px 11px;
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 16px;
+  gap: 9px;
+  margin-bottom: 12px;
 }
 
 .brief-banner-icon {
-  width: 30px;
-  height: 30px;
-  border-radius: 8px;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
   background: var(--surface);
   border: 1px solid var(--border);
   display: flex;
@@ -1056,6 +1148,13 @@ table {
   justify-content: center;
   color: var(--primary);
   flex-shrink: 0;
+}
+
+.brief-banner > div {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
 }
 
 .brief-banner-title {
@@ -1067,7 +1166,7 @@ table {
 .brief-banner-detail {
   font-size: 11.5px;
   color: var(--text-secondary);
-  margin-top: 2px;
+  margin-top: 0;
 }
 
 .brief-banner-cta {
@@ -1084,8 +1183,9 @@ table {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 12px;
-  padding: 15px 16px;
+  padding: 14px 16px;
   margin-bottom: 14px;
+  box-shadow: 0 1px 3px rgba(35, 31, 27, 0.04);
 }
 
 .section-head {
@@ -1126,10 +1226,18 @@ table {
    grid2 proportions. */
 .brief-row-2col {
   display: grid;
-  grid-template-columns: 1.15fr 0.85fr;
+  /* The visual target is intentionally close to balanced. Width pressure
+     belongs inside the table's fixed column budget, not in a starved Due
+     Soon card, so the factual list and the upcoming-work view retain equal
+     architectural weight. */
+  grid-template-columns: 1.12fr 0.88fr;
   gap: 14px;
+  min-height: 307px;
   margin-bottom: 14px;
-  align-items: start;
+  /* Stretch (not start) — Due Soon's card matches the overdue table's real
+     height instead of shrinking to its own shorter content and leaving an
+     orphaned, disconnected-looking card beside a taller sibling. */
+  align-items: stretch;
 }
 
 .brief-row-2col > .brief-card {
@@ -1141,6 +1249,42 @@ table {
      out past .brief-row-2col's own width instead of honoring the 1.15fr/
      0.85fr split. */
   min-width: 0;
+  min-height: 307px;
+  position: relative;
+  padding-bottom: 42px;
+}
+
+/* Due Soon: section head stays pinned top; the real content below it
+   centers within whatever extra height stretch alignment gives the card,
+   so a short (1-2 row) real list reads as an intentional, composed card
+   rather than dead trailing whitespace. */
+.due-soon-card {
+  display: flex;
+  flex-direction: column;
+}
+
+.due-soon-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+}
+
+.brief-card-link {
+  position: absolute;
+  left: 16px;
+  bottom: 13px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--primary-hover);
+  font-size: 11px;
+  font-weight: 650;
+  text-decoration: none;
+}
+
+.brief-card-link:hover {
+  color: var(--primary);
 }
 
 /* --- Invoice rows --- */
@@ -1154,10 +1298,22 @@ table {
   display: flex;
   align-items: center;
   gap: 11px;
-  padding: 11px 0;
+  padding: 14px 0;
   border-top: 0.5px solid var(--border);
   cursor: pointer;
   transition: background 0.1s ease;
+}
+
+/* Deterministically true fact, not a fabricated "empty" filler — see
+   Dashboard.jsx's Due Soon footer. Gives a short list (1-2 rows) an
+   intentional, composed stopping point instead of trailing off. */
+.due-soon-footer {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 0.5px solid var(--border-soft);
+  font-size: 11px;
+  color: var(--text-muted);
+  text-align: center;
 }
 
 .invoice-row:first-child {
@@ -1193,8 +1349,12 @@ table {
 }
 
 .invoice-secondary {
+  display: block;
   font-size: 11.5px;
   color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .invoice-amount {
@@ -1277,7 +1437,7 @@ table {
 
 .top-invoices-table {
   width: 100%;
-  min-width: 480px;
+  min-width: 441px;
   border-collapse: collapse;
   /* Explicit per-column widths below only take effect under fixed layout
      — with the default auto layout, the browser redistributes width by
@@ -1287,18 +1447,21 @@ table {
   table-layout: fixed;
 }
 
-.top-invoices-table col.col-invoice { width: 56px; }
-.top-invoices-table col.col-client { width: 100px; }
+.top-invoices-table col.col-invoice { width: 54px; }
+.top-invoices-table col.col-client { width: 60px; }
 /* Wide enough that a real dollar amount ($4,200.00) never truncates —
    an ellipsis on money is worse than the modest extra horizontal scroll
    it costs at the very narrowest desktop width this table supports. */
-.top-invoices-table col.col-amount { width: 78px; }
-.top-invoices-table col.col-days { width: 36px; }
+.top-invoices-table col.col-amount { width: 60px; }
+.top-invoices-table col.col-days { width: 26px; }
 /* The one column that should wrap rather than force horizontal scroll for
    its own sake — fixed so it reliably wraps at ~2 lines instead of
    collapsing to a single-word-wide strip. */
-.top-invoices-table col.col-reason { width: 155px; }
-.top-invoices-table col.col-action { width: 112px; }
+.top-invoices-table col.col-reason { width: 127px; }
+/* Wide enough that the longest real action label ("Authorized · approval
+   required") never clips against the table edge at the target desktop
+   viewport. */
+.top-invoices-table col.col-action { width: 114px; }
 
 .top-invoices-table thead th {
   text-align: left;
@@ -1307,7 +1470,7 @@ table {
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--text-muted);
-  padding: 0 8px 8px;
+  padding: 0 6px 7px;
   white-space: nowrap;
 }
 
@@ -1317,13 +1480,14 @@ table {
 }
 
 .top-invoices-table tbody td {
-  padding: 10px 8px;
-  font-size: 11.5px;
+  padding: 8px 5px;
+  font-size: 11px;
   color: var(--text-secondary);
-  border-top: 0.5px solid var(--border);
+  border-top: 0.5px solid var(--border-soft);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  vertical-align: middle;
 }
 
 .top-invoices-table tbody tr {
@@ -1336,6 +1500,7 @@ table {
 }
 
 .top-invoices-table-client {
+  font-size: 11px;
   font-weight: 600;
   color: var(--text-primary);
 }
@@ -1358,18 +1523,83 @@ table {
   font-variant-numeric: tabular-nums;
 }
 
+/* Body text stays the calm, neutral secondary color regardless of tone —
+   color is reserved for the small state dot before it, not the whole
+   sentence. A table of every row in saturated orange/blue reads as noisy
+   rather than "calm but dense," which is the target's actual character. */
 .top-invoices-table-reason {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
   white-space: normal;
-  font-weight: 600;
+  line-height: 1.3;
+  font-weight: 500;
+  color: var(--text-secondary);
 }
 
-.top-invoices-table-reason.tone-red { color: #C22B2B; }
-.top-invoices-table-reason.tone-orange { color: #C2540A; }
-.top-invoices-table-reason.tone-amber { color: #B45309; }
-.top-invoices-table-reason.tone-blue { color: #3B82F6; }
+.top-invoices-table-reason::before {
+  content: '';
+  align-self: center;
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+
+.top-invoices-table-reason.tone-red::before { background: #C22B2B; }
+.top-invoices-table-reason.tone-orange::before { background: #C2540A; }
+.top-invoices-table-reason.tone-amber::before { background: #B45309; }
+.top-invoices-table-reason.tone-blue::before { background: #3B82F6; }
 
 .top-invoices-table tbody td:last-child {
   white-space: nowrap;
+  /* Overrides the generic td's overflow:hidden/ellipsis — that rule was
+     hard-clipping the action button/label (e.g. "Authorized · approval
+     required") against the cell edge instead of letting it render at its
+     natural width. */
+  overflow: visible;
+  text-overflow: clip;
+  text-align: right;
+}
+
+/* The compact Pulse table owns a tighter button treatment than the
+   reusable row action elsewhere. This preserves the complete label inside
+   the near-even middle grid without changing its meaning or behavior. */
+.top-invoices-table .row-action,
+.top-invoices-table .row-action-passive {
+  padding-inline: 6px;
+  font-size: 11px;
+}
+
+/* Purely a visual read of the raw day count (see Dashboard.jsx) — never
+   an authority signal. Severity buckets mirror the existing
+   effectiveStatus() thresholds already used elsewhere in this app. */
+.days-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 6px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.days-pill-low {
+  color: var(--text-secondary);
+  background: var(--border-soft);
+}
+
+.days-pill-mid {
+  color: #B45309;
+  background: var(--amber-tint);
+}
+
+.days-pill-high {
+  color: #C22B2B;
+  background: var(--red-tint);
 }
 
 /* ============================================================
@@ -3555,6 +3785,391 @@ table {
 }
 
 /* ============================================================
+   "What Duewatch is working on" strip — an operating summary, not a
+   notification banner. Only ever real, already-computed counts (see
+   WorkingOnStrip in Dashboard.jsx); renders nothing at all when there's
+   genuinely nothing to report, rather than an empty placeholder.
+   ============================================================ */
+/* An operating-status strip, not a notification banner — title stacked
+   above the real facts (rather than crammed onto one thin line) reads as
+   "Duewatch is actively operating," with real deterministic counts as the
+   proof underneath. */
+.working-on-strip {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  align-items: center;
+  gap: 9px;
+  background: linear-gradient(120deg, var(--lavender), var(--primary-tint));
+  border: 1px solid var(--lavender-deep);
+  border-radius: 12px;
+  height: 81px;
+  padding: 13px 16px;
+  margin-bottom: 12px;
+}
+
+.working-on-strip-title {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: var(--text-primary);
+}
+
+.working-on-strip-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  background: var(--surface);
+  border: 1px solid var(--lavender-deep);
+  color: var(--primary);
+  flex-shrink: 0;
+}
+
+.working-on-strip-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 0;
+}
+
+.working-on-strip-cta {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border: 1px solid rgba(218, 119, 86, 0.28);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.48);
+  color: var(--primary-hover);
+  font-size: 11.5px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.working-on-strip-cta:hover {
+  background: var(--surface);
+}
+
+.working-on-strip-list li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  padding: 0 16px;
+  border-left: 1px solid var(--lavender-deep);
+}
+
+.working-on-strip-list li:first-child {
+  border-left: none;
+  padding-left: 0;
+}
+
+.working-on-strip-list li svg {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+@media (max-width: 880px) {
+  .working-on-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .working-on-strip-cta {
+    grid-column: 1;
+    grid-row: auto;
+    justify-self: start;
+  }
+
+  .working-on-strip-list li {
+    border-left: none;
+    padding: 0;
+  }
+}
+
+/* ============================================================
+   Duewatch assistant panel — a signature product moment. Reuses Presence
+   System state/copy exactly (usePresenceContext, see DuewatchAssistant.jsx);
+   this block is visual treatment only, no state logic.
+   ============================================================ */
+.assistant-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 150px 220px;
+  align-items: center;
+  gap: 0;
+  margin-top: 0;
+  height: 154px;
+  padding: 0;
+  border-radius: 11px;
+  border: 1px solid var(--lavender-deep);
+  background: linear-gradient(135deg, #FFF3EA 0%, var(--lavender) 100%);
+  overflow: hidden;
+  position: relative;
+}
+
+/* Subtle dimensional glow behind the mark — composition, not decoration
+   for its own sake; gives the right side visual weight instead of the
+   mark floating in flat pastel space. */
+.assistant-panel::after {
+  content: '';
+  position: absolute;
+  right: 55px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 220px;
+  height: 220px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(218, 119, 86, 0.16) 0%, rgba(218, 119, 86, 0) 70%);
+  pointer-events: none;
+}
+
+.assistant-panel-text {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+  min-width: 0;
+  padding-right: 23px;
+}
+
+.assistant-panel-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Assistant panel's presence dot — only rendered for resting/active/
+   contextual states (see DuewatchAssistant.jsx's showDot), each of which
+   is a genuinely current, non-stale state. Unrelated to Evidence's
+   freshness badge (.rail-freshness-dot), which has its own, deliberately
+   non-animated treatment — see the comment there for why. */
+.live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--green);
+  animation: live-dot-pulse 2s ease-in-out infinite;
+}
+
+@keyframes live-dot-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.assistant-panel-title {
+  font-size: 17px;
+  font-weight: 800;
+  color: var(--text-primary);
+  letter-spacing: -0.015em;
+}
+
+.assistant-panel-subtitle {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--primary-hover);
+}
+
+.assistant-panel-mission {
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+  max-width: 27ch;
+}
+
+.assistant-panel-cta {
+  margin-top: 2px;
+  height: 32px;
+  padding: 0 11px;
+  font-size: 10.5px;
+}
+
+.assistant-mark {
+  position: relative;
+  z-index: 1;
+  flex-shrink: 0;
+  width: 168px;
+  height: 150px;
+  align-self: flex-end;
+  object-fit: contain;
+  object-position: center bottom;
+  transform: translateX(-17px);
+}
+
+.assistant-snapshot {
+  align-self: stretch;
+  min-width: 0;
+  padding: 17px 20px;
+  position: relative;
+  z-index: 1;
+}
+
+.assistant-snapshot h2 {
+  margin: 0 0 18px;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.assistant-snapshot-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.assistant-snapshot-metrics > div {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  column-gap: 9px;
+  min-width: 0;
+  margin-right: 12px;
+  padding-right: 12px;
+  border-right: 1px solid var(--border-soft);
+}
+
+.assistant-snapshot-metrics > div:last-child {
+  margin-right: 0;
+  padding-right: 0;
+  border-right: 0;
+}
+
+.assistant-snapshot-metrics svg {
+  grid-row: 1 / 3;
+  width: 38px;
+  height: 38px;
+  padding: 9px;
+  border-radius: 50%;
+  box-sizing: border-box;
+  background: #ECFAF1;
+  color: var(--green);
+}
+
+.assistant-snapshot-metrics > div:nth-child(2) svg {
+  background: #EDF8FE;
+  color: #2CA7DA;
+}
+
+.assistant-snapshot-metrics > div:nth-child(3) svg {
+  background: var(--primary-tint);
+  color: var(--primary-hover);
+}
+
+.assistant-snapshot-metrics > div:nth-child(4) svg {
+  background: #FFF8E9;
+  color: var(--amber);
+}
+
+.assistant-snapshot-metrics strong {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 15px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assistant-snapshot-metrics span {
+  grid-column: 2;
+  font-size: 9px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.assistant-snapshot-metrics small {
+  color: var(--text-muted);
+  font-size: 8.5px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live-dot {
+    animation: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .assistant-panel {
+    height: auto;
+    grid-template-columns: 1fr;
+    align-items: flex-start;
+    text-align: left;
+  }
+  .assistant-snapshot-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 18px 0;
+  }
+  .assistant-panel-text {
+    padding: 0 20px 20px;
+  }
+  .assistant-mark {
+    align-self: center;
+    justify-self: center;
+    transform: none;
+  }
+}
+
+/* ---- Pulse interactive polish: focus-visible + transitions ---------- */
+.kpi-card:focus-visible,
+.brief-card:focus-visible,
+.row-action:focus-visible,
+.row-action-passive:focus-visible,
+.topbar-icon-btn:focus-visible,
+.nav-item:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
+.top-invoices-table tbody tr:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: -2px;
+}
+
+.invoice-row:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: -1px;
+  border-radius: 8px;
+}
+
+/* Evidence rail freshness badge — see RailFreshnessBadge in Dashboard.jsx.
+   Deliberately not the animated .live-dot the assistant panel uses: there's
+   no realtime connection backing this feed, only a periodic sync, so the
+   dot here is static and the label is freshness copy ("Updated 2m ago"),
+   never "Live"/"Paused". Evidence freshness and Autopilot state are
+   different concepts and must not share a gate. */
+.rail-freshness-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--dw-charcoal-text-muted);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.rail-freshness-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--green);
+  opacity: 0.75;
+  flex-shrink: 0;
+}
+
+/* ============================================================
    Invoice Detail panel — payment confirmation & reminder tone/success
    ============================================================ */
 @keyframes fade-in-out {
@@ -3983,7 +4598,7 @@ table {
   border: 1px solid var(--border);
   border-left: 3px solid var(--primary);
   border-radius: 11px;
-  padding: 14px 15px;
+  padding: 12px 13px;
   box-shadow: 0 1px 2px rgba(15, 17, 23, 0.04);
   transition: border-color 200ms ease, box-shadow 200ms ease, transform 200ms ease;
 }
@@ -4056,36 +4671,6 @@ table {
   margin-top: 4px;
   font-size: 11.5px;
   color: var(--text-secondary);
-}
-
-.signature-preview {
-  margin-top: 11px;
-  background: var(--bg);
-  border: 0.5px solid var(--border);
-  border-radius: 8px;
-  padding: 11px 12px;
-}
-
-.signature-preview pre {
-  margin: 0;
-  font-family: inherit;
-  font-size: 11.5px;
-  color: var(--text-primary);
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.signature-preview-toggle {
-  margin-top: 7px;
-  border: none;
-  background: transparent;
-  color: var(--primary);
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.signature-preview-toggle:hover {
-  color: var(--primary-hover);
 }
 
 .signature-error {

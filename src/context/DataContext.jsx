@@ -143,6 +143,12 @@ export function DataProvider({ children }) {
   // Real all-time count of every logged event — not the 20-row recent
   // window above — for the sidebar Evidence card's "N actions recorded".
   const [totalEventsCount, setTotalEventsCount] = useState(0)
+  // Wall-clock time of the last successful `load()` completion (initial or
+  // silent background poll) — the one genuine signal this app has for
+  // "how fresh is what's on screen." Not a realtime/websocket connection;
+  // the Evidence rail badge must present this as freshness copy ("Updated
+  // 2m ago"), never a live/paused claim tied to Autopilot state.
+  const [lastSyncedAt, setLastSyncedAt] = useState(null)
 
   // Presence System (Merged Spec v1.1) signals that aren't fetched from the
   // DB — they're set directly by the real action that's happening in this
@@ -490,6 +496,7 @@ export function DataProvider({ children }) {
           if (error) console.warn('profiles.last_seen_at update failed:', error.message)
         })
     }
+    setLastSyncedAt(Date.now())
     setLoading(false)
   }, [user])
 
@@ -609,6 +616,7 @@ export function DataProvider({ children }) {
     collectedLastMonth,
     collectedLastMonthCount,
     totalEventsCount,
+    lastSyncedAt,
     criticalOverdueCount,
     autopilotErrorCount,
     cognitiveActivity,

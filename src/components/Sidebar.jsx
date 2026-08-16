@@ -75,12 +75,7 @@ export default function Sidebar() {
       <div className="sidebar-brand">
         <LogoMark />
         <div className="sidebar-brand-text">
-          <span className="sidebar-brand-name">
-            Duewatch
-            {/* Product-stage label only — never implies the visible financial
-                data is fictional. Real invoices, real events, real numbers. */}
-            <span className="sidebar-brand-beta">Beta</span>
-          </span>
+          <span className="sidebar-brand-name">Duewatch</span>
           <span className="sidebar-brand-subtitle">Accounts Receivable Employee</span>
         </div>
         <span className={`sidebar-status-dot status-${state}`} aria-hidden="true" />
