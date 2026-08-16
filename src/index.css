@@ -1741,7 +1741,6 @@ table {
 
 .invoice-table {
   --invoice-cell-x-padding: 12px;
-  --invoice-client-avatar-size: 22px;
   --invoice-client-anchor-width: 146px;
   --invoice-numeric-anchor-width: 92px;
   width: 100%;
@@ -1763,14 +1762,18 @@ table {
 
 .invoice-table thead th {
   text-align: left;
-  font-size: 11px;
+  font-size: 11.5px;
   font-weight: 600;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.03em;
   text-transform: uppercase;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   padding: 12px var(--invoice-cell-x-padding);
   border-bottom: 0.5px solid var(--border);
   white-space: nowrap;
+}
+
+.invoice-table thead th.invoice-header-start {
+  text-align: left;
 }
 
 .invoice-table tbody tr {
@@ -1812,6 +1815,12 @@ table {
   min-width: 0;
 }
 
+/* Header and pills share the same right edge, so the variable-width badges
+   read as one stable STATUS lane instead of drifting around the track. */
+.invoice-status-anchor {
+  justify-content: flex-end;
+}
+
 .invoice-client-anchor {
   width: var(--invoice-client-anchor-width);
   flex: 0 0 var(--invoice-client-anchor-width);
@@ -1829,13 +1838,6 @@ table {
   width: min(var(--invoice-numeric-anchor-width), 100%);
   text-align: right;
   font-variant-numeric: tabular-nums;
-}
-
-/* Mirror the row's real avatar footprint so CLIENT aligns with the name,
-   while every table cell keeps the same outer horizontal padding. */
-.invoice-client-heading-spacer {
-  width: var(--invoice-client-avatar-size);
-  flex: 0 0 var(--invoice-client-avatar-size);
 }
 
 .cell-muted {

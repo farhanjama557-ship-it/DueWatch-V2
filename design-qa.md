@@ -135,6 +135,67 @@ final result: passed
 
 ---
 
+# Invoices outer-anchor header treatment — design QA
+
+- Rendered at 1880 × 781 and 1440 × 900 against the approved centered-row
+  composition. The six table tracks remain equal and the body markup,
+  anchors, tabs, table width, and typography are unchanged.
+- CLIENT is left anchored to the first track; STATUS is right anchored to the
+  sixth track; INVOICE #, AMOUNT, DUE DATE, and DAYS OVERDUE remain centered.
+- Header treatment is 11.5px / 600 weight / uppercase / 0.03em tracking using
+  the darker neutral secondary text token.
+- At 1880 the tracks measure 220.33–220.36px; at 1440 all six measure 147px.
+  Client names remain one line and neither viewport has horizontal overflow.
+- Findings: P0 none, P1 none, P2 none.
+
+final result: passed
+
+---
+
+# Invoices Amount, Status, and initials refinement — design QA
+
+## Evidence
+
+- Source visual truth: the previously approved header/table renders at
+  `C:\Users\Owner\Documents\Codex\2026-07-26\yes-and-that-s-probably-the\temp-invoice-header-preview\invoices-header-1880x781.png`
+  and `invoices-header-1440x900.png` in the same directory.
+- Implementation: `C:\Users\Owner\Documents\Codex\2026-07-26\yes-and-that-s-probably-the\temp-invoice-polish-preview\invoices-polish-1880x781.png`
+  and `invoices-polish-1440x900.png` in the same directory.
+- Full-view comparisons: `before-after-1880.png` and `before-after-1440.png`.
+- Focused table comparison: `before-after-table-focus-1880.png`.
+- States: All at both viewports; Due Soon, Overdue, Sent, and Paid were also
+  exercised at 1440 × 900.
+- Source and implementation were compared at matching 1880 × 781 and
+  1440 × 900 CSS-pixel viewports at 1× density.
+
+## Findings and comparison history
+
+- Earlier P2: AMOUNT was centered while its 92px tabular-number wrapper was
+  right aligned, so the header and values did not share a visible anchor.
+  Fixed by putting the header in that same numeric wrapper. All eight amount
+  text right edges now equal 854.81px at 1880 and 671.5px at 1440.
+- Earlier P2: variable-width status pills were centered, making their edges
+  drift beneath the right-anchored STATUS header. Fixed with one shared
+  `invoice-status-anchor` rule for header and rows. Every header/pill right
+  edge is 1568px at 1880 and 1128px at 1440.
+- Earlier P2: symbol tokenization produced `M&` for Marlow & Partners. The
+  shared initials helper now selects letters from the first two meaningful
+  words; the rendered avatar is `MP` while existing multi-word initials such
+  as `AL`, `NL`, and `MD` remain stable.
+- Post-fix evidence: all six tracks remain 220.33–220.36px at 1880 and exactly
+  147px at 1440. Every filter preserves those tracks and the two shared lane
+  anchors, client names remain one line, and there is no horizontal overflow.
+- Fonts/typography, color tokens, status colors, image/icon assets, tabs,
+  table width, body copy, and the other four row anchors are unchanged.
+- Browser console: no errors; only the repository's existing React Router v7
+  future-flag warnings.
+- Findings after iteration: P0 none, P1 none, P2 none.
+- JavaScript tests: 558/558 passed. Production Vite build: passed.
+
+final result: passed
+
+---
+
 # Invoices alignment regression — design QA
 
 - Verified at 1880 × 781 across All, Due Soon, Overdue, Sent, and Paid.
