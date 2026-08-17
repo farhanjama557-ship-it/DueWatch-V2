@@ -714,14 +714,19 @@ export default function Dashboard() {
         <p className="brief-status-line">
           You collected <b>{formatMoney(collectedThisMonth)}</b> this month.{' '}
           {formatMoney(derived.outstandingTotal)} remains outstanding.
-          {/* Phase 2A.2: "Duewatch is handling N automatically" implied
-              execution that hasn't happened yet — a real granted
-              authorization is not the same claim as an action already taken
-              (see permission.canActAutomatically). Natural conditional
-              copy — never a zero-value clause; see attentionParts above. */}
-          <span className={`brief-attention-line${decisionsNeeded > 0 ? ' has-attention' : ''}`}>
-            {attentionLine}
-          </span>
+        </p>
+        {/* Phase 2A.2: "Duewatch is handling N automatically" implied
+            execution that hasn't happened yet — a real granted
+            authorization is not the same claim as an action already taken
+            (see permission.canActAutomatically). Natural conditional
+            copy — never a zero-value clause; see attentionParts above.
+            Own line (not an inline span inside the fact sentence above) —
+            this is a distinct kind of statement: the line above is a plain
+            financial fact, this one is "what does Duewatch need from you,"
+            and giving it its own row lets that difference read visually
+            instead of running both together as one sentence. */}
+        <p className={`brief-attention-line${decisionsNeeded > 0 ? ' has-attention' : ''}`}>
+          {attentionLine}
         </p>
       </div>
 

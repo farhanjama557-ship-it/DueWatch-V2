@@ -601,7 +601,7 @@ table {
 }
 
 .brief-header-sub {
-  margin-top: 2px;
+  margin-top: 4px;
   margin-bottom: 0;
 }
 
@@ -617,17 +617,36 @@ table {
   font-weight: 700;
 }
 
+/* A distinct statement from .brief-status-line above it, not a trailing
+   clause of the same sentence — this is "what Duewatch needs from you,"
+   the financial fact above is not. Its own line, with a small marker that
+   only appears once there's genuinely something to act on. */
 .brief-attention-line {
-  display: inline;
-  margin-left: 8px;
-  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 5px;
+  font-size: 12.5px;
   font-weight: 500;
   color: var(--text-muted);
+}
+
+.brief-attention-line::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--border);
+  flex-shrink: 0;
 }
 
 .brief-attention-line.has-attention {
   color: var(--text-secondary);
   font-weight: 600;
+}
+
+.brief-attention-line.has-attention::before {
+  background: var(--primary);
 }
 
 /* The real narrative sentence with inline highlighted real values. */
@@ -1032,7 +1051,6 @@ table {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 12px;
-  height: 136px;
   margin: 0 0 12px;
 }
 
@@ -1041,26 +1059,24 @@ table {
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 15px 16px;
-  height: 136px;
-  min-height: 136px;
+  /* min-height, not a hard height — a card's real content (an optional
+     trend line, a longer support caption) should never be able to clip
+     against a fixed box. */
+  min-height: 128px;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
 }
 
 .kpi-card:hover {
-  transform: translateY(-2px);
   border-color: var(--border-soft);
-  box-shadow: 0 8px 18px rgba(35, 31, 27, 0.06);
+  box-shadow: 0 6px 16px rgba(35, 31, 27, 0.05);
 }
 
 @media (prefers-reduced-motion: reduce) {
   .kpi-card {
     transition: none;
-  }
-  .kpi-card:hover {
-    transform: none;
   }
 }
 
@@ -1226,11 +1242,15 @@ table {
    grid2 proportions. */
 .brief-row-2col {
   display: grid;
-  /* The visual target is intentionally close to balanced. Width pressure
-     belongs inside the table's fixed column budget, not in a starved Due
-     Soon card, so the factual list and the upcoming-work view retain equal
-     architectural weight. */
-  grid-template-columns: 1.12fr 0.88fr;
+  /* Widened from 1.12fr/0.88fr — the overdue table's real min-width grew
+     when its columns were widened for legibility (invoice/client/amount/
+     reason/action all got more room), and the narrower split no longer
+     gave it enough width to render without the table's own overflow-x
+     scroll kicking in unnecessarily on a normal desktop viewport. Due
+     Soon's real content (avatar + client + amount) still fits at this
+     share; its .invoice-secondary line already truncates gracefully
+     rather than breaking layout if a viewport gets tight. */
+  grid-template-columns: 1.4fr 0.6fr;
   gap: 14px;
   min-height: 307px;
   margin-bottom: 14px;
@@ -1267,7 +1287,16 @@ table {
   flex: 1;
   display: flex;
   flex-direction: column;
+  /* A real (non-empty) list stays pinned to the top, reading as a normal
+     list. The empty state below overrides this to center — a single
+     muted sentence pinned to the top of a tall card reads as an
+     afterthought; centered within the real available height, it reads as
+     an intentional, composed "nothing here" state instead. */
   justify-content: flex-start;
+}
+
+.due-soon-body:has(> .brief-empty) {
+  justify-content: center;
 }
 
 .brief-card-link {
@@ -1409,11 +1438,22 @@ table {
 
 /* Autopilot already has this invoice covered — a plain, non-interactive
    label rather than a button that would just duplicate what's already
-   scheduled. */
+   scheduled. Styled as a quiet chip (not a button, not plain text) — this
+   is a standing AUTHORITY/status fact ("already handled," "rule requires
+   approval"), never a decision waiting on the founder, so it deliberately
+   stays visually calmer than .row-action's terracotta-bordered CTA. Every
+   variant uses the same neutral treatment — no invented color meaning
+   between "already handled" and "needs review" beyond what the real
+   classification already distinguishes in wording. */
 .row-action-label {
-  display: inline-block;
-  font-size: 12px;
-  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 7px;
+  background: var(--bg);
+  font-size: 11px;
+  font-weight: 600;
   color: var(--text-muted);
   white-space: nowrap;
 }
@@ -1437,7 +1477,7 @@ table {
 
 .top-invoices-table {
   width: 100%;
-  min-width: 441px;
+  min-width: 548px;
   border-collapse: collapse;
   /* Explicit per-column widths below only take effect under fixed layout
      — with the default auto layout, the browser redistributes width by
@@ -1447,30 +1487,30 @@ table {
   table-layout: fixed;
 }
 
-.top-invoices-table col.col-invoice { width: 54px; }
-.top-invoices-table col.col-client { width: 60px; }
+.top-invoices-table col.col-invoice { width: 62px; }
+.top-invoices-table col.col-client { width: 96px; }
 /* Wide enough that a real dollar amount ($4,200.00) never truncates —
    an ellipsis on money is worse than the modest extra horizontal scroll
    it costs at the very narrowest desktop width this table supports. */
-.top-invoices-table col.col-amount { width: 60px; }
-.top-invoices-table col.col-days { width: 26px; }
+.top-invoices-table col.col-amount { width: 76px; }
+.top-invoices-table col.col-days { width: 36px; }
 /* The one column that should wrap rather than force horizontal scroll for
    its own sake — fixed so it reliably wraps at ~2 lines instead of
    collapsing to a single-word-wide strip. */
-.top-invoices-table col.col-reason { width: 127px; }
+.top-invoices-table col.col-reason { width: 150px; }
 /* Wide enough that the longest real action label ("Authorized · approval
    required") never clips against the table edge at the target desktop
    viewport. */
-.top-invoices-table col.col-action { width: 114px; }
+.top-invoices-table col.col-action { width: 128px; }
 
 .top-invoices-table thead th {
   text-align: left;
   font-size: 10px;
-  font-weight: 500;
-  letter-spacing: 0.04em;
+  font-weight: 600;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--text-muted);
-  padding: 0 6px 7px;
+  padding: 0 8px 8px;
   white-space: nowrap;
 }
 
@@ -1480,8 +1520,8 @@ table {
 }
 
 .top-invoices-table tbody td {
-  padding: 8px 5px;
-  font-size: 11px;
+  padding: 10px 8px;
+  font-size: 11.5px;
   color: var(--text-secondary);
   border-top: 0.5px solid var(--border-soft);
   white-space: nowrap;
@@ -1500,8 +1540,8 @@ table {
 }
 
 .top-invoices-table-client {
-  font-size: 11px;
-  font-weight: 600;
+  font-size: 11.5px;
+  font-weight: 650;
   color: var(--text-primary);
 }
 
@@ -1579,10 +1619,11 @@ table {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 22px;
-  height: 20px;
-  padding: 0 6px;
-  border-radius: 6px;
+  min-width: 26px;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: 999px;
+  font-size: 11.5px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
@@ -3831,7 +3872,7 @@ table {
   background: linear-gradient(120deg, var(--lavender), var(--primary-tint));
   border: 1px solid var(--lavender-deep);
   border-radius: 12px;
-  height: 81px;
+  min-height: 81px;
   padding: 13px 16px;
   margin-bottom: 12px;
 }
@@ -3933,13 +3974,24 @@ table {
    System state/copy exactly (usePresenceContext, see DuewatchAssistant.jsx);
    this block is visual treatment only, no state logic.
    ============================================================ */
+/* DOM order is snapshot → mark → text (DuewatchAssistant.jsx, protected —
+   not reordered here). The snapshot metrics repeat facts the KPI row
+   above already shows; the status text/CTA is the one thing on this
+   panel that's genuinely new information ("what is Duewatch doing right
+   now"), so it gets the primary share of the width instead of being
+   squeezed into a fixed 220px column. */
 .assistant-panel {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 150px 220px;
+  /* The snapshot column's own internal grid (4 metric tiles, each a fixed
+     42px icon + a minmax(0,1fr) number) needs a real minimum width or its
+     numbers collapse to 0 and render invisible — 410px is that minimum,
+     verified by rendering, not guessed. Above that floor, the status
+     text still gets the larger share of any extra room (1.6fr vs 1fr). */
+  grid-template-columns: minmax(440px, 1fr) 150px minmax(260px, 1.6fr);
   align-items: center;
   gap: 0;
   margin-top: 0;
-  height: 154px;
+  min-height: 162px;
   padding: 0;
   border-radius: 11px;
   border: 1px solid var(--lavender-deep);
@@ -3970,9 +4022,9 @@ table {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 5px;
+  gap: 6px;
   min-width: 0;
-  padding-right: 23px;
+  padding: 0 28px;
 }
 
 .assistant-panel-status {
@@ -4000,30 +4052,30 @@ table {
 }
 
 .assistant-panel-title {
-  font-size: 17px;
+  font-size: 19px;
   font-weight: 800;
   color: var(--text-primary);
   letter-spacing: -0.015em;
 }
 
 .assistant-panel-subtitle {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--primary-hover);
 }
 
 .assistant-panel-mission {
-  font-size: 11.5px;
+  font-size: 12.5px;
   line-height: 1.55;
   color: var(--text-secondary);
-  max-width: 27ch;
+  max-width: 40ch;
 }
 
 .assistant-panel-cta {
-  margin-top: 2px;
-  height: 32px;
-  padding: 0 11px;
-  font-size: 10.5px;
+  margin-top: 4px;
+  height: 33px;
+  padding: 0 13px;
+  font-size: 11.5px;
 }
 
 .assistant-mark {
@@ -4041,7 +4093,7 @@ table {
 .assistant-snapshot {
   align-self: stretch;
   min-width: 0;
-  padding: 17px 20px;
+  padding: 17px 16px;
   position: relative;
   z-index: 1;
 }
@@ -4059,12 +4111,12 @@ table {
 
 .assistant-snapshot-metrics > div {
   display: grid;
-  grid-template-columns: 42px minmax(0, 1fr);
+  grid-template-columns: 32px minmax(0, 1fr);
   grid-template-rows: auto auto;
-  column-gap: 9px;
+  column-gap: 7px;
   min-width: 0;
-  margin-right: 12px;
-  padding-right: 12px;
+  margin-right: 8px;
+  padding-right: 8px;
   border-right: 1px solid var(--border-soft);
 }
 
@@ -4076,9 +4128,9 @@ table {
 
 .assistant-snapshot-metrics svg {
   grid-row: 1 / 3;
-  width: 38px;
-  height: 38px;
-  padding: 9px;
+  width: 30px;
+  height: 30px;
+  padding: 7px;
   border-radius: 50%;
   box-sizing: border-box;
   background: #ECFAF1;
@@ -4103,10 +4155,19 @@ table {
 .assistant-snapshot-metrics strong {
   min-width: 0;
   overflow: hidden;
-  font-size: 15px;
+  font-size: 13.5px;
+  font-variant-numeric: tabular-nums;
   line-height: 1.2;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* The Outstanding tile's value is a formatted dollar amount — structurally
+   the longest string of the four (a summed total, not a small count) — so
+   it alone gets a smaller size rather than widening every tile to fit its
+   worst case. */
+.assistant-snapshot-metrics > div:nth-child(2) strong {
+  font-size: 10.5px;
 }
 
 .assistant-snapshot-metrics span {
@@ -4192,8 +4253,11 @@ table {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--green);
-  opacity: 0.75;
+  /* A completed sync is a neutral freshness fact, not a health/success
+     signal — green is reserved for genuinely successful outcomes (a real
+     payment). Using it here would silently overclaim that "synced" means
+     "everything is fine," which the sync itself does not prove. */
+  background: var(--dw-charcoal-text-muted);
   flex-shrink: 0;
 }
 
