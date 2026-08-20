@@ -108,6 +108,27 @@ log "Creating independent database '$CURRENT_SCHEMA_DB' for this compatibility p
 psql "$ADMIN_DB_URL" -X -v ON_ERROR_STOP=1 -c "drop database if exists ${CURRENT_SCHEMA_DB};" > "$ARTIFACT_DIR/current_schema_dbsetup.log" 2>&1
 psql "$ADMIN_DB_URL" -X -v ON_ERROR_STOP=1 -c "create database ${CURRENT_SCHEMA_DB};" >> "$ARTIFACT_DIR/current_schema_dbsetup.log" 2>&1
 
+# Bootstrap Supabase auth prerequisites into the independent database.
+# `supabase start` provisions the auth schema (auth.users, auth.uid(),
+# etc.) only into the default postgres database. A freshly CREATE'd
+# database on the same cluster has cluster-level roles (anon,
+# authenticated, service_role) but no auth schema. We dump the real
+# auth schema from the main postgres database and restore it here --
+# this is the actual Supabase-provisioned schema, not a stub.
+# --no-owner: objects are owned by the connecting superuser.
+# --no-acl:   schema.sql and the migrations apply their own grants.
+log "Bootstrapping Supabase auth schema into '$CURRENT_SCHEMA_DB'..."
+psql "$CURRENT_SCHEMA_DB_URL" -X -v ON_ERROR_STOP=1 \
+  -c "create extension if not exists pgcrypto;" \
+  >> "$ARTIFACT_DIR/current_schema_dbsetup.log" 2>&1
+if ! pg_dump --schema=auth --no-owner --no-acl "$ADMIN_DB_URL" \
+    | psql "$CURRENT_SCHEMA_DB_URL" -X -v ON_ERROR_STOP=1 \
+    >> "$ARTIFACT_DIR/current_schema_dbsetup.log" 2>&1; then
+  cat "$ARTIFACT_DIR/current_schema_dbsetup.log"
+  fail "Failed to bootstrap auth schema into '$CURRENT_SCHEMA_DB'"
+fi
+log "Auth schema bootstrapped."
+
 log "Step 1: Applying schema.sql..."
 if ! psql "$CURRENT_SCHEMA_DB_URL" -X -v ON_ERROR_STOP=1 -f supabase/schema.sql > "$ARTIFACT_DIR/current_schema_01_schema.log" 2>&1; then
   cat "$ARTIFACT_DIR/current_schema_01_schema.log"
