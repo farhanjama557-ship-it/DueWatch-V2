@@ -78,6 +78,9 @@ jobs:
             echo "psql_version: $(psql --version)"
           } >> payments-foundation-verify-artifact/00_versions.txt
 
+      - name: Stop any lingering Supabase containers (port 54322 guard)
+        run: supabase stop --no-backup || true
+
       - name: Start ephemeral local Supabase stack
         run: supabase start
 
