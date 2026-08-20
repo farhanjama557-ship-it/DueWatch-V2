@@ -97,10 +97,45 @@ jobs:
           echo "postgres_server_version: $(psql "$DB_URL" -X -t -A -c 'select version();')" \
             >> payments-foundation-verify-artifact/00_versions.txt
 
-      - name: Apply schema + migrations, run integration test, rollback check
+      - name: "TARGETED PAYMENTS VERIFICATION (narrow bootstrap, legacy reconciliation + idempotency)"
         run: |
           chmod +x scripts/ci/verify-payments-foundation.sh
           ARTIFACT_DIR=./payments-foundation-verify-artifact scripts/ci/verify-payments-foundation.sh
+        env:
+          ARTIFACT_DIR: ./payments-foundation-verify-artifact
+
+      # Adversarial review MEDIUM 1: the targeted verifier above proves the
+      # migration's own behavior, not compatibility with the real migration
+      # history running on current main -- it applies only 4 of the real
+      # historical migrations. This step is the separate, broader proof.
+      # It is not equivalent to the step above and must never be read as
+      # redundant with it.
+      - name: "CURRENT MAIN SCHEMA COMPATIBILITY (every real migration except one documented, independently-verified non-replay-safe exception)"
+        run: |
+          chmod +x scripts/ci/verify-payments-foundation-current-schema.sh
+          ARTIFACT_DIR=./payments-foundation-verify-artifact scripts/ci/verify-payments-foundation-current-schema.sh
+        env:
+          ARTIFACT_DIR: ./payments-foundation-verify-artifact
+
+      # Adversarial review MEDIUM 2: two real psql sessions racing
+      # record_payment / reverse_payment. A sequential DO block cannot exercise
+      # genuine concurrency and is not sufficient. This script uses & + wait to
+      # launch two independent connections simultaneously, mirroring the
+      # established repo convention in autopilot_execution_claims_concurrency_proof.sh.
+      - name: "CONCURRENCY PROOF (Cases A/B/C -- two real sessions, record_payment / reverse_payment)"
+        run: |
+          chmod +x supabase/tests/payments_foundation_concurrency_proof.sh
+          # DB_URL is already exported into the environment by the
+          # "Resolve local database URL" step. Parse its components so the
+          # proof script's bare `psql -d "$DB"` calls can find the server.
+          export PGHOST=$(echo "$DB_URL" | sed -E 's|postgresql://[^@]+@([^:/]+):.*|\1|')
+          export PGPORT=$(echo "$DB_URL" | sed -E 's|postgresql://[^@]+@[^:]+:([0-9]+)/.*|\1|')
+          export PGUSER=$(echo "$DB_URL" | sed -E 's|postgresql://([^:]+):.*|\1|')
+          export PGPASSWORD=$(echo "$DB_URL" | sed -E 's|postgresql://[^:]+:([^@]+)@.*|\1|')
+          DB_NAME=$(echo "$DB_URL" | sed -E 's|.*/([^/?]+).*|\1|')
+          set -o pipefail
+          supabase/tests/payments_foundation_concurrency_proof.sh "$DB_NAME" 2>&1 \
+            | tee payments-foundation-verify-artifact/concurrency_proof.log
         env:
           ARTIFACT_DIR: ./payments-foundation-verify-artifact
 

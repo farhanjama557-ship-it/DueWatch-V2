@@ -2,12 +2,24 @@
 #
 # scripts/ci/verify-payments-foundation.sh
 #
-# Disposable Supabase verification harness for Phase 2 Slice 1: Payments Foundation.
+# TARGETED PAYMENTS VERIFICATION for Phase 2 Slice 1: Payments Foundation.
+#
+# This proves the Payments migration's own behavior (legacy reconciliation,
+# security invariants, idempotency) against a fast, deterministic, narrow
+# bootstrap. It does NOT prove compatibility with the full migration
+# history actually running on current `main` -- adversarial review MEDIUM 1
+# found this workflow previously implied that equivalence. It is not one.
+# See scripts/ci/verify-payments-foundation-current-schema.sh for the
+# separate CURRENT MAIN SCHEMA COMPATIBILITY proof, which applies every
+# real historical migration (minus one documented, independently-verified
+# non-replay-safe exception -- see that script's header) and is what
+# actually stands in for "compatible with current main."
 #
 # CONTRACT:
 # - Runs against a fresh `supabase start` local stack.
 # - Uses NO hosted Supabase credentials, no remote project ref, no production data.
-# - Applies schema.sql + targeted checkpoint migrations only (NOT full historical replay).
+# - Applies schema.sql + targeted checkpoint migrations only (NOT full historical replay --
+#   see the CURRENT MAIN SCHEMA COMPATIBILITY script above for that proof).
 # - Seeds legacy fixtures that represent pre-existing payment state.
 # - Applies 20260816120000_payments_foundation.sql.
 # - Runs integration tests proving security invariants and legacy reconciliation.
@@ -32,7 +44,7 @@ fail() {
   exit 1
 }
 
-log "Starting Payments Foundation verification harness..."
+log "=== TARGETED PAYMENTS VERIFICATION: starting ==="
 
 # Resolve DB_URL from supabase status if not already set
 if [ -z "${DB_URL:-}" ]; then
@@ -131,5 +143,5 @@ if ! psql "$DB_URL" -X -v ON_ERROR_STOP=1 -f supabase/migrations/20260816120000_
 fi
 log "Idempotency check passed."
 
-log "Payments Foundation verification harness completed successfully."
+log "=== TARGETED PAYMENTS VERIFICATION: PASSED ==="
 exit 0

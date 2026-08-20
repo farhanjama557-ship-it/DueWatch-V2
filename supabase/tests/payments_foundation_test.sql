@@ -137,6 +137,7 @@ insert into public.invoices(id, user_id, client_id, inv_num, amount, currency) v
   ('c2200000-0000-4000-8000-000000000004', 'c2000000-0000-4000-8000-000000000003', 'c2100000-0000-4000-8000-000000000003', 'MULTI-B', 100, 'USD'),
   ('c2200000-0000-4000-8000-000000000005', 'c2000000-0000-4000-8000-000000000003', 'c2100000-0000-4000-8000-000000000003', 'EUR', 100, 'EUR'),
   ('c2200000-0000-4000-8000-000000000007', 'c2000000-0000-4000-8000-000000000003', 'c2100000-0000-4000-8000-000000000003', 'EXPLICIT-CURRENCY', 100, null),
+  ('c2200000-0000-4000-8000-000000000009', 'c2000000-0000-4000-8000-000000000003', 'c2100000-0000-4000-8000-000000000003', 'MULTI-REVERSAL', 100, 'USD'),
   ('d2200000-0000-4000-8000-000000000006', 'd2000000-0000-4000-8000-000000000004', 'd2100000-0000-4000-8000-000000000004', 'OTHER-TENANT', 100, 'USD');
 insert into public.invoices(
   id, user_id, client_id, inv_num, amount, amount_paid, paid, currency
@@ -306,6 +307,85 @@ begin
 end
 $reverse$;
 \echo 'TEST GROUP PASS: payments_reversal'
+
+\echo 'TEST GROUP START: payments_multi_reversal'
+do $multi_rev$
+declare
+  v_result_a jsonb;
+  v_result_b jsonb;
+  v_payment_a uuid;
+  v_payment_b uuid;
+begin
+  -- Record payment A=40, payment B=60 against a fresh 100-USD invoice.
+  v_result_a := public.record_payment(
+    current_date, 40, 'USD',
+    '[{"invoice_id":"c2200000-0000-4000-8000-000000000009","amount":"40.00"}]'
+  );
+  v_payment_a := (v_result_a->>'payment_id')::uuid;
+
+  v_result_b := public.record_payment(
+    current_date, 60, 'USD',
+    '[{"invoice_id":"c2200000-0000-4000-8000-000000000009","amount":"60.00"}]'
+  );
+  v_payment_b := (v_result_b->>'payment_id')::uuid;
+
+  -- After A+B the invoice must show fully paid.
+  if (select (amount_paid, paid) from public.invoices where id = 'c2200000-0000-4000-8000-000000000009')
+     is distinct from row(100::numeric, true) then
+    raise exception 'Expected amount_paid=100 paid=true after A+B; got amount_paid=%, paid=%',
+      (select amount_paid from public.invoices where id = 'c2200000-0000-4000-8000-000000000009'),
+      (select paid from public.invoices where id = 'c2200000-0000-4000-8000-000000000009');
+  end if;
+
+  -- Reverse payment A only.
+  perform public.reverse_payment(v_payment_a, 'test: reverse payment A only');
+
+  -- amount_paid must drop to 60 (B remains), paid must become false.
+  if (select amount_paid from public.invoices where id = 'c2200000-0000-4000-8000-000000000009') <> 60 then
+    raise exception 'Expected amount_paid=60 after reversing A; got %',
+      (select amount_paid from public.invoices where id = 'c2200000-0000-4000-8000-000000000009');
+  end if;
+  if (select paid from public.invoices where id = 'c2200000-0000-4000-8000-000000000009') then
+    raise exception 'Expected paid=false after reversing A only';
+  end if;
+
+  -- Payment A must be marked reversed; payment B must still be active.
+  if not exists (select 1 from public.payments where id = v_payment_a and reversed_at is not null) then
+    raise exception 'Payment A should be reversed';
+  end if;
+  if exists (select 1 from public.payments where id = v_payment_b and reversed_at is not null) then
+    raise exception 'Payment B should still be active after reversing only A';
+  end if;
+
+  -- Ledger derivability: amount_paid equals sum of active (non-reversed) allocations.
+  if (select amount_paid from public.invoices where id = 'c2200000-0000-4000-8000-000000000009') <>
+     (select coalesce(sum(a.amount), 0)
+      from public.payment_allocations a
+      join public.payments p on p.id = a.payment_id
+      where a.invoice_id = 'c2200000-0000-4000-8000-000000000009' and p.reversed_at is null) then
+    raise exception 'After reversing A: invoice.amount_paid is not derivable from active allocations';
+  end if;
+
+  -- Payment B's allocation must be intact at exactly 60.
+  if (select coalesce(sum(a.amount), 0)
+      from public.payment_allocations a
+      join public.payments p on p.id = a.payment_id
+      where a.invoice_id = 'c2200000-0000-4000-8000-000000000009'
+        and p.id = v_payment_b and p.reversed_at is null) <> 60 then
+    raise exception 'Payment B allocation should still be 60 after reversing only A';
+  end if;
+
+  -- Optionally reverse B too: invoice must reach amount_paid=0, paid=false.
+  perform public.reverse_payment(v_payment_b, 'test: reverse payment B');
+  if (select (amount_paid, paid) from public.invoices where id = 'c2200000-0000-4000-8000-000000000009')
+     is distinct from row(0::numeric, false) then
+    raise exception 'Expected amount_paid=0 paid=false after reversing both A and B; got amount_paid=%, paid=%',
+      (select amount_paid from public.invoices where id = 'c2200000-0000-4000-8000-000000000009'),
+      (select paid from public.invoices where id = 'c2200000-0000-4000-8000-000000000009');
+  end if;
+end
+$multi_rev$;
+\echo 'TEST GROUP PASS: payments_multi_reversal'
 
 \echo 'TEST GROUP START: payments_rls'
 do $rls$
