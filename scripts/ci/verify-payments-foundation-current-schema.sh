@@ -134,7 +134,7 @@ fi
 log "  Using container '$SUPABASE_DB_CONTAINER' for version-matched pg_dump..."
 
 if ! docker exec "$SUPABASE_DB_CONTAINER" \
-    pg_dump -U postgres --schema=auth --no-owner --no-acl postgres \
+    pg_dump -U postgres --schema=auth --no-owner --no-acl --section=pre-data postgres \
     | psql "$CURRENT_SCHEMA_DB_URL" -X -v ON_ERROR_STOP=1 \
     >> "$ARTIFACT_DIR/current_schema_dbsetup.log" 2>&1; then
   cat "$ARTIFACT_DIR/current_schema_dbsetup.log"
