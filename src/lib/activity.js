@@ -19,6 +19,7 @@ export const ACTIVITY_META = {
   },
   reminder_skipped: { title: 'Skipped a reminder', actor: 'You', group: 'reminders' },
   payment_recorded: { title: 'Recorded a payment', actor: 'You', group: 'payments' },
+  payment_reversed: { title: 'Reversed a payment', actor: 'You', group: 'payments' },
   invoice_marked_paid: { title: 'Marked invoice paid', actor: 'You', group: 'payments' },
   invoice_created: { title: 'Created an invoice', actor: 'You', group: 'invoices' },
 }

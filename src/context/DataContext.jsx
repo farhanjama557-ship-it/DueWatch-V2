@@ -3,12 +3,18 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from './AuthContext'
 import { daysOverdue, daysUntil } from '../lib/format'
 import { toPendingInvoiceIds, toHandledKeys } from '../lib/pulseAuthority'
+import { summarizeCollectedPaymentRows } from '../lib/payments'
 
 // Matches supabase/functions/_shared/executionClaim.js's ACTION_TYPE_SEND_REMINDER.
 // Inlined rather than importing that Deno-side module here (out of scope
 // for this slice — no execution-claim changes) since it is the one finite,
 // already-shipped action_type value every execution claim in this app uses.
 const ACTION_TYPE_SEND_REMINDER = 'send_reminder'
+
+function localIsoDate(date) {
+  const offset = date.getTimezoneOffset()
+  return new Date(date.getTime() - offset * 60000).toISOString().slice(0, 10)
+}
 
 const DataContext = createContext(null)
 
@@ -129,13 +135,11 @@ export function DataProvider({ children }) {
   // mid-session (see the visitStamped guard in `load` below).
   const [sinceLastVisit, setSinceLastVisit] = useState(null)
   const visitStamped = useRef(false)
-  // Sum of evidence.amount across payment events this calendar month — real
-  // dollars actually recorded, traced to the events that logged them. Only
-  // counts payments recorded since evidence.amount started being captured;
-  // older events have no amount and are silently excluded, not estimated.
+  // Active founder-entered ledger payments dated in each calendar month.
+  // Reversed and preservation-only legacy rows are excluded deliberately.
   const [collectedThisMonth, setCollectedThisMonth] = useState(0)
   const [collectedLastMonth, setCollectedLastMonth] = useState(0)
-  // How many distinct payment events made up collectedLastMonth — the
+  // How many distinct active founder payment rows made up collectedLastMonth — the
   // Collected KPI's month-over-month trend needs this, not just the sum,
   // to tell a real comparison baseline from a single sparse data point
   // (see Dashboard.jsx's collectedTrend).
@@ -342,42 +346,77 @@ export function DataProvider({ children }) {
             .catch(() => null)
         : Promise.resolve(null)
 
-    // Real "Collected this month" — summed from evidence.amount on payment
-    // events logged this calendar month. Queried directly (not derived from
-    // the 20-row recent-events window above) so a busy month can't silently
-    // undercount.
+    // Real "Collected this month" — the financial ledger is authoritative.
+    // Founder-entered rows and supported known-date legacy rows use their
+    // real-world payment_date. Migrated rows backed by a historical payment
+    // event use recorded_at (copied from that event's created_at) so the
+    // pre-ledger KPI does not silently lose value. Unsupported residual
+    // carry-forward with neither a payment date nor source event stays out.
     const now = new Date()
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
-    const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString()
-    const collectedPromise = supabase
-      .from('events')
-      .select('evidence')
+    const startOfMonth = localIsoDate(new Date(now.getFullYear(), now.getMonth(), 1))
+    const startOfNextMonth = localIsoDate(new Date(now.getFullYear(), now.getMonth() + 1, 1))
+    const startOfLastMonth = localIsoDate(new Date(now.getFullYear(), now.getMonth() - 1, 1))
+    const startOfMonthInstant = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
+    const startOfNextMonthInstant = new Date(now.getFullYear(), now.getMonth() + 1, 1).toISOString()
+    const startOfLastMonthInstant = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString()
+    const datedCollectedThisMonthPromise = supabase
+      .from('payments')
+      .select('total_amount')
       .eq('user_id', user.id)
-      .in('event_type', ['payment_recorded', 'invoice_marked_paid'])
-      .gte('created_at', startOfMonth)
-      .then((r) => (r.data || []).reduce((sum, row) => sum + (Number(row.evidence?.amount) || 0), 0))
-      .catch(() => 0)
+      .in('origin', ['founder_manual', 'legacy_carry_forward'])
+      .not('payment_date', 'is', null)
+      .is('reversed_at', null)
+      .gte('payment_date', startOfMonth)
+      .lt('payment_date', startOfNextMonth)
+      .then((r) => r.data || [])
+      .catch(() => [])
+    const migratedEvidenceThisMonthPromise = supabase
+      .from('payments')
+      .select('total_amount')
+      .eq('user_id', user.id)
+      .eq('origin', 'legacy_carry_forward')
+      .not('source_event_id', 'is', null)
+      .is('reversed_at', null)
+      .gte('recorded_at', startOfMonthInstant)
+      .lt('recorded_at', startOfNextMonthInstant)
+      .then((r) => r.data || [])
+      .catch(() => [])
+    const collectedPromise = Promise.all([
+      datedCollectedThisMonthPromise,
+      migratedEvidenceThisMonthPromise,
+    ]).then((rows) => summarizeCollectedPaymentRows(...rows).sum)
 
     // Real month-over-month comparison for the Collected KPI card — same
     // query, prior calendar month's window. (Outstanding/Need Attention
     // have no equivalent: they're derived from current invoice state, not
     // logged events, so there's no historical snapshot to diff against
     // without new schema — omitted rather than faked.)
-    const collectedLastMonthPromise = supabase
-      .from('events')
-      .select('evidence')
+    const datedCollectedLastMonthPromise = supabase
+      .from('payments')
+      .select('total_amount')
       .eq('user_id', user.id)
-      .in('event_type', ['payment_recorded', 'invoice_marked_paid'])
-      .gte('created_at', startOfLastMonth)
-      .lt('created_at', startOfMonth)
-      .then((r) => {
-        const rows = r.data || []
-        return {
-          sum: rows.reduce((sum, row) => sum + (Number(row.evidence?.amount) || 0), 0),
-          count: rows.length,
-        }
-      })
-      .catch(() => ({ sum: 0, count: 0 }))
+      .in('origin', ['founder_manual', 'legacy_carry_forward'])
+      .not('payment_date', 'is', null)
+      .is('reversed_at', null)
+      .gte('payment_date', startOfLastMonth)
+      .lt('payment_date', startOfMonth)
+      .then((r) => r.data || [])
+      .catch(() => [])
+    const migratedEvidenceLastMonthPromise = supabase
+      .from('payments')
+      .select('total_amount')
+      .eq('user_id', user.id)
+      .eq('origin', 'legacy_carry_forward')
+      .not('source_event_id', 'is', null)
+      .is('reversed_at', null)
+      .gte('recorded_at', startOfLastMonthInstant)
+      .lt('recorded_at', startOfMonthInstant)
+      .then((r) => r.data || [])
+      .catch(() => [])
+    const collectedLastMonthPromise = Promise.all([
+      datedCollectedLastMonthPromise,
+      migratedEvidenceLastMonthPromise,
+    ]).then((rows) => summarizeCollectedPaymentRows(...rows))
 
     // Real all-time event count for the sidebar Evidence card.
     const totalEventsPromise = supabase

@@ -1,0 +1,165 @@
+name: "Phase 2 Slice 1 Payments Foundation Verification"
+
+# Disposable-only verification for Phase 2 Slice 1 (Payments Foundation).
+# Runs entirely against a disposable `supabase start` stack on this
+# GitHub-hosted runner. No Supabase account token, no remote project ref,
+# no hosted/production credentials, and no production data are used
+# anywhere in this workflow. The stack is destroyed when the job ends.
+#
+# This workflow intentionally triggers only on pushes to the dedicated
+# verification branch — it is infrastructure to verify the payments
+# foundation slice, not a general-purpose CI pipeline.
+on:
+  push:
+    branches:
+      - qwen/verify-payments-foundation
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: payments-foundation-verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: "Verify Phase 2 Slice 1 Payments Foundation against local Supabase"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout verification branch
+        uses: actions/checkout@v4
+
+      - name: Record environment versions
+        run: |
+          mkdir -p payments-foundation-verify-artifact
+          {
+            echo "workflow_run_id: ${{ github.run_id }}"
+            echo "workflow_run_attempt: ${{ github.run_attempt }}"
+            echo "workflow_ref: ${{ github.ref }}"
+            echo "workflow_sha: ${{ github.sha }}"
+            echo "runner_os: $(uname -a)"
+            echo "docker_version: $(docker --version)"
+          } > payments-foundation-verify-artifact/00_versions.txt
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Run existing JavaScript tests
+        run: |
+          set +e
+          npm test > payments-foundation-verify-artifact/01_js_tests.log 2>&1
+          js_exit=$?
+          cat payments-foundation-verify-artifact/01_js_tests.log
+          js_test_count=$(grep -E '^# tests [0-9]+' payments-foundation-verify-artifact/01_js_tests.log | tail -1 | grep -oE '[0-9]+' || echo "unknown")
+          js_pass_count=$(grep -E '^# pass [0-9]+' payments-foundation-verify-artifact/01_js_tests.log | tail -1 | grep -oE '[0-9]+' || echo "unknown")
+          {
+            echo "js_test_exit=$js_exit"
+            echo "js_test_count=$js_test_count"
+            echo "js_pass_count=$js_pass_count"
+          } >> payments-foundation-verify-artifact/EXIT_CODE_SUMMARY.txt
+          exit $js_exit
+
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: 2.111.0
+
+      - name: Record Supabase CLI / Postgres client versions
+        run: |
+          {
+            echo "supabase_cli_version: $(supabase --version)"
+            echo "psql_version: $(psql --version)"
+          } >> payments-foundation-verify-artifact/00_versions.txt
+
+      - name: Stop any lingering Supabase containers (port 54322 guard)
+        run: supabase stop --no-backup || true
+
+      - name: Start ephemeral local Supabase stack
+        run: supabase start
+
+      - name: Resolve local database URL
+        run: |
+          supabase status -o env > /tmp/payments_foundation_supabase_status.env
+          DB_URL=$(grep '^DB_URL=' /tmp/payments_foundation_supabase_status.env | cut -d '=' -f2- | tr -d '"')
+          if [ -z "$DB_URL" ]; then
+            echo "Failed to resolve local DB_URL from supabase status" >&2
+            exit 1
+          fi
+          echo "DB_URL=$DB_URL" >> "$GITHUB_ENV"
+          rm -f /tmp/payments_foundation_supabase_status.env
+
+      - name: Record local Postgres server version
+        run: |
+          echo "postgres_server_version: $(psql "$DB_URL" -X -t -A -c 'select version();')" \
+            >> payments-foundation-verify-artifact/00_versions.txt
+
+      - name: "TARGETED PAYMENTS VERIFICATION (narrow bootstrap, legacy reconciliation + idempotency)"
+        run: |
+          chmod +x scripts/ci/verify-payments-foundation.sh
+          ARTIFACT_DIR=./payments-foundation-verify-artifact scripts/ci/verify-payments-foundation.sh
+        env:
+          ARTIFACT_DIR: ./payments-foundation-verify-artifact
+
+      # Adversarial review MEDIUM 1: the targeted verifier above proves the
+      # migration's own behavior, not compatibility with the real migration
+      # history running on current main -- it applies only 4 of the real
+      # historical migrations. This step is the separate, broader proof.
+      # It is not equivalent to the step above and must never be read as
+      # redundant with it.
+      - name: "CURRENT MAIN SCHEMA COMPATIBILITY (every real migration except one documented, independently-verified non-replay-safe exception)"
+        run: |
+          chmod +x scripts/ci/verify-payments-foundation-current-schema.sh
+          ARTIFACT_DIR=./payments-foundation-verify-artifact scripts/ci/verify-payments-foundation-current-schema.sh
+        env:
+          ARTIFACT_DIR: ./payments-foundation-verify-artifact
+
+      # Adversarial review MEDIUM 2: two real psql sessions racing
+      # record_payment / reverse_payment. A sequential DO block cannot exercise
+      # genuine concurrency and is not sufficient. This script uses & + wait to
+      # launch two independent connections simultaneously, mirroring the
+      # established repo convention in autopilot_execution_claims_concurrency_proof.sh.
+      - name: "CONCURRENCY PROOF (Cases A/B/C -- two real sessions, record_payment / reverse_payment)"
+        run: |
+          chmod +x supabase/tests/payments_foundation_concurrency_proof.sh
+          # DB_URL is already exported into the environment by the
+          # "Resolve local database URL" step. Parse its components so the
+          # proof script's bare `psql -d "$DB"` calls can find the server.
+          export PGHOST=$(echo "$DB_URL" | sed -E 's|postgresql://[^@]+@([^:/]+):.*|\1|')
+          export PGPORT=$(echo "$DB_URL" | sed -E 's|postgresql://[^@]+@[^:]+:([0-9]+)/.*|\1|')
+          export PGUSER=$(echo "$DB_URL" | sed -E 's|postgresql://([^:]+):.*|\1|')
+          export PGPASSWORD=$(echo "$DB_URL" | sed -E 's|postgresql://[^:]+:([^@]+)@.*|\1|')
+          DB_NAME=$(echo "$DB_URL" | sed -E 's|.*/([^/?]+).*|\1|')
+          set -o pipefail
+          supabase/tests/payments_foundation_concurrency_proof.sh "$DB_NAME" 2>&1 \
+            | tee payments-foundation-verify-artifact/concurrency_proof.log
+        env:
+          ARTIFACT_DIR: ./payments-foundation-verify-artifact
+
+      - name: Vite production build (regression check)
+        if: always()
+        run: |
+          set +e
+          npm run build > payments-foundation-verify-artifact/02_build.log 2>&1
+          build_exit=$?
+          cat payments-foundation-verify-artifact/02_build.log
+          echo "build_exit=$build_exit" >> payments-foundation-verify-artifact/EXIT_CODE_SUMMARY.txt
+          exit $build_exit
+
+      - name: Tear down local Supabase stack
+        if: always()
+        run: supabase stop --no-backup || true
+
+      - name: Upload sanitized verification artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: payments-foundation-verification
+          path: payments-foundation-verify-artifact/
+          retention-days: 14

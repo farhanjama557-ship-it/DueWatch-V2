@@ -49,6 +49,7 @@ export function lifecycleKeyFor(eventType) {
     case 'reminder_skipped':
       return 'skipped'
     case 'payment_recorded':
+    case 'payment_reversed':
     case 'invoice_marked_paid':
       return 'paid'
     case 'invoice_created':

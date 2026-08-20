@@ -5,6 +5,7 @@ import { useData } from '../context/DataContext'
 import { logEvent } from '../lib/events'
 import { resolveClientForInvoice } from '../lib/clients'
 import { CloseIcon } from './icons'
+import { SUPPORTED_CURRENCIES } from '../lib/import/money'
 
 // today / date + N days as YYYY-MM-DD (local).
 function toISO(date) {
@@ -28,6 +29,7 @@ export default function AddInvoiceModal({ open, onClose }) {
   const [invDate, setInvDate] = useState(toISO(new Date()))
   const [dueDate, setDueDate] = useState(addDays(toISO(new Date()), 30))
   const [amount, setAmount] = useState('')
+  const [currency, setCurrency] = useState('')
   const [notes, setNotes] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -40,6 +42,7 @@ export default function AddInvoiceModal({ open, onClose }) {
       setInvDate(toISO(new Date()))
       setDueDate(addDays(toISO(new Date()), 30))
       setAmount('')
+      setCurrency('')
       setNotes('')
       setError('')
       setSaving(false)
@@ -70,6 +73,8 @@ export default function AddInvoiceModal({ open, onClose }) {
     const amt = Number(amount)
     if (!amount || Number.isNaN(amt) || amt < 0)
       return setError('Enter a valid amount.')
+    if (!SUPPORTED_CURRENCIES.includes(currency))
+      return setError('Choose the invoice currency.')
 
     setSaving(true)
 
@@ -97,6 +102,7 @@ export default function AddInvoiceModal({ open, onClose }) {
         inv_date: invDate || null,
         due_date: dueDate || null,
         amount: amt,
+        currency,
         amount_paid: 0,
         paid: false,
         notes: notes.trim() || null,
@@ -192,9 +198,22 @@ export default function AddInvoiceModal({ open, onClose }) {
           </div>
 
           <div className="field">
+            <label htmlFor="currency">Currency</label>
+            <select
+              id="currency"
+              value={currency}
+              onChange={(e) => setCurrency(e.target.value)}
+              required
+            >
+              <option value="">Choose currency</option>
+              {SUPPORTED_CURRENCIES.map((code) => <option key={code} value={code}>{code}</option>)}
+            </select>
+          </div>
+
+          <div className="field">
             <label htmlFor="amount">Amount</label>
             <div className="money-field">
-              <span className="money-prefix">$</span>
+              <span className="money-prefix">{currency || '—'}</span>
               <input
                 id="amount"
                 type="number"
