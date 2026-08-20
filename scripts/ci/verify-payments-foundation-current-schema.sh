@@ -121,7 +121,20 @@ log "Bootstrapping Supabase auth schema into '$CURRENT_SCHEMA_DB'..."
 psql "$CURRENT_SCHEMA_DB_URL" -X -v ON_ERROR_STOP=1 \
   -c "create extension if not exists pgcrypto;" \
   >> "$ARTIFACT_DIR/current_schema_dbsetup.log" 2>&1
-if ! pg_dump --schema=auth --no-owner --no-acl "$ADMIN_DB_URL" \
+
+# pg_dump must come from inside the Supabase DB container -- the runner's
+# system pg_dump is typically one major version behind the Supabase Postgres
+# image (e.g. pg_dump 16 vs server 17), and pg_dump refuses cross-major dumps.
+# docker exec gives us the exact matching version that shipped with the image.
+SUPABASE_DB_CONTAINER=$(docker ps --format '{{.Names}}' | grep '^supabase_db_' | head -1)
+if [ -z "$SUPABASE_DB_CONTAINER" ]; then
+  cat "$ARTIFACT_DIR/current_schema_dbsetup.log"
+  fail "Cannot find a running supabase_db_* container -- is the Supabase stack up?"
+fi
+log "  Using container '$SUPABASE_DB_CONTAINER' for version-matched pg_dump..."
+
+if ! docker exec "$SUPABASE_DB_CONTAINER" \
+    pg_dump -U postgres --schema=auth --no-owner --no-acl postgres \
     | psql "$CURRENT_SCHEMA_DB_URL" -X -v ON_ERROR_STOP=1 \
     >> "$ARTIFACT_DIR/current_schema_dbsetup.log" 2>&1; then
   cat "$ARTIFACT_DIR/current_schema_dbsetup.log"
