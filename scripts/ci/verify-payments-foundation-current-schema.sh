@@ -140,7 +140,21 @@ if ! docker exec "$SUPABASE_DB_CONTAINER" \
   cat "$ARTIFACT_DIR/current_schema_dbsetup.log"
   fail "Failed to bootstrap auth schema into '$CURRENT_SCHEMA_DB'"
 fi
-log "Auth schema bootstrapped."
+log "Auth schema bootstrapped (pre-data section: tables, functions, types -- no triggers)."
+
+# --section=pre-data omits post-data (indexes, constraints, triggers).
+# schema.sql and every migration reference auth.users(id) via FK, which
+# requires a unique constraint on that column. Add the PK explicitly rather
+# than pulling in post-data (which includes the on_auth_user_created trigger
+# that calls public.handle_new_user(), a function not yet defined here).
+log "  Adding primary key to auth.users.id (stripped by --section=pre-data)..."
+if ! psql "$CURRENT_SCHEMA_DB_URL" -X -v ON_ERROR_STOP=1 \
+    -c "ALTER TABLE auth.users ADD CONSTRAINT users_pkey PRIMARY KEY (id);" \
+    >> "$ARTIFACT_DIR/current_schema_dbsetup.log" 2>&1; then
+  cat "$ARTIFACT_DIR/current_schema_dbsetup.log"
+  fail "Failed to add primary key to auth.users in '$CURRENT_SCHEMA_DB'"
+fi
+log "  Primary key added."
 
 log "Step 1: Applying schema.sql..."
 if ! psql "$CURRENT_SCHEMA_DB_URL" -X -v ON_ERROR_STOP=1 -f supabase/schema.sql > "$ARTIFACT_DIR/current_schema_01_schema.log" 2>&1; then
