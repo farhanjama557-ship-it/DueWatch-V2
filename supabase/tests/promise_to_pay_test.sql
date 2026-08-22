@@ -5,23 +5,24 @@
 
 begin;
 
--- Test-only grant + policy let this transaction exercise the existing
--- invoice RLS and the promise immutability TRIGGER directly (rather than
--- merely hitting a privilege-denied error, or RLS silently matching zero
--- rows) even in a repository-schema harness whose default Supabase table
--- grants/policies are absent -- mirrors payments_foundation_test.sql's own
--- `grant update(amount_paid) on public.invoices to authenticated;` (there,
--- invoices' pre-existing "for all" policy already covers UPDATE; promises
--- has only a SELECT policy in production, so a permissive UPDATE policy is
--- also needed here for the raw UPDATE below to actually reach the row and
--- therefore the trigger, instead of RLS quietly updating zero rows). Both
--- the grant and the policy are local to this transaction and rolled back at
--- the end; this is not a production grant/policy change. The production
--- migration's own `revoke all ... grant select` on public.promises (no
--- production UPDATE policy or grant at all) is asserted separately in the
--- promise_rls group below (INSERT privilege), which this test-only setup
--- does not affect.
-grant select on public.invoices to authenticated;
+-- Test-only grants + policy let this transaction exercise the existing
+-- invoice RLS/FK-restrict behavior and the promise immutability TRIGGER
+-- directly (rather than merely hitting a privilege-denied error, or RLS
+-- silently matching zero rows) even in a repository-schema harness whose
+-- default Supabase table grants/policies are absent -- mirrors
+-- payments_foundation_test.sql's own `grant update(amount_paid) on
+-- public.invoices to authenticated;`. invoices' pre-existing "for all"
+-- policy already covers UPDATE/DELETE once the table-level grant exists;
+-- promises has only a SELECT policy in production, so a permissive UPDATE
+-- policy is also needed here for the raw UPDATE in promise_immutability to
+-- actually reach the row and therefore the trigger, instead of RLS quietly
+-- updating zero rows. All of these are local to this transaction and rolled
+-- back at the end; this is not a production grant/policy change. The
+-- production migration's own `revoke all ... grant select` on
+-- public.promises (no production UPDATE policy or grant at all) is asserted
+-- separately in the promise_rls group below (INSERT privilege), which this
+-- test-only setup does not affect.
+grant select, delete on public.invoices to authenticated;
 grant update on public.promises to authenticated;
 create policy promises_test_update on public.promises for update using (true) with check (true);
 
