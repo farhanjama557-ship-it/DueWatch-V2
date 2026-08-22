@@ -1,0 +1,100 @@
+name: "Canonical Baseline Verification"
+
+# The canonical proof suite for the squashed migration baseline.
+#
+# Runs entirely against a disposable `supabase start` stack on a GitHub-
+# hosted runner. No Supabase account token, no remote project ref, no
+# hosted credentials, and no production data are used anywhere. The stack
+# is destroyed when the job ends.
+#
+# Proofs (see supabase/convergence/checks/run_canonical_proofs.sh):
+#   1  fresh db reset succeeds with the single-file active chain
+#   2  a second independent fresh build reproduces the same canonical state
+#   3  legacy-like fixture + convergence script == fresh canonical state
+#      (normalized structural equivalence across 11 object classes)
+#   4  canonical baseline == archived historical chain end-state
+#   5  unknown legacy state fails closed AND rolls back completely
+#   6  a second convergence invocation fails closed without mutation
+#      (one-time-tool contract)
+#   7  existing SQL test suites pass (claims/awaiting against the canonical
+#      baseline; payments via its CI bootstrap against the archived
+#      migration; both concurrency proofs)
+#   8  the active migration directory contains exactly the baseline file
+#   9  a failure in the final canonical assertion stage (last step before
+#      commit) rolls the entire convergence back
+#
+# Plus the no-ledger rehearsal (run_ledger_rehearsal.sh), which proves the
+# production ledger-bootstrap commands against a database with NO
+# supabase_migrations metadata, using the SAME pinned CLI version the
+# production window must use.
+
+on:
+  push:
+    branches:
+      - main
+      - converge/legacy-live-baseline
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: canonical-baseline-verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: "Verify canonical baseline against local Supabase"
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: "Checkout"
+        uses: actions/checkout@v4
+
+      - name: "Install psql client (libpq)"
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client
+
+      # PINNED: the production convergence window must use this exact CLI
+      # version — the ledger rehearsal result is only authoritative for the
+      # version it was observed with (2.109.1).
+      - name: "Install pinned Supabase CLI"
+        uses: supabase/setup-cli@v1
+        with:
+          version: 2.109.1
+
+      - name: "Record pinned CLI version"
+        run: supabase --version
+
+      - name: "Start disposable Supabase stack"
+        run: supabase start
+
+      - name: "Run canonical proof suite"
+        run: |
+          chmod +x supabase/convergence/checks/run_canonical_proofs.sh
+          ARTIFACT_DIR=./canonical-proofs-artifact \
+            bash supabase/convergence/checks/run_canonical_proofs.sh
+
+      - name: "Run no-ledger migration rehearsal"
+        run: |
+          chmod +x supabase/convergence/checks/run_ledger_rehearsal.sh
+          ARTIFACT_DIR=./canonical-proofs-artifact \
+            bash supabase/convergence/checks/run_ledger_rehearsal.sh
+
+      - name: "Upload verification artifacts"
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: canonical-baseline-verification
+          path: |
+            canonical-proofs-artifact/
+          retention-days: 14
+
+      - name: "Stop disposable stack"
+        if: always()
+        run: supabase stop --no-backup || true

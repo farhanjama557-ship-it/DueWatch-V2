@@ -84,3 +84,27 @@ Once deployed:
 2. Invoke `autopilot-scheduler` once by hand (`supabase functions invoke
    autopilot-scheduler` or a `curl` POST to its URL) before waiting for the
    cron — check the `autopilot_runs` table gets a new row with real counts.
+
+---
+
+## 2026-08-22 Rebaseline (PR A — converge/legacy-live-baseline)
+
+The migration architecture was rebaselined: the active chain is now the
+single squashed canonical baseline
+(`supabase/migrations/20260822000000_canonical_baseline.sql`); all
+historical migrations and the legacy `schema.sql` are archived, unchanged,
+under `supabase/migrations_legacy/`. Standard tooling (`supabase db reset`,
+`supabase db push`) is canonical again and has been re-enabled in
+`supabase/config.toml`.
+
+Legacy production converges via the one-time, state-aware, fail-closed
+script `supabase/convergence/20260822_legacy_live_to_canonical.sql` —
+NEVER via the baseline file itself, and NEVER via migrations_legacy/.
+See `docs/PRODUCTION_CONVERGENCE_RUNBOOK.md` for the full, rehearsed
+window procedure (ledger repair uses the timestamp-only form:
+`supabase migration repair 20260822000000 --status applied`).
+
+CI proof: `.github/workflows/canonical-baseline-verify.yml` proves fresh
+construction, legacy convergence equivalence, archived-chain equivalence,
+fail-closed/rollback behavior, and the no-ledger rehearsal on every push
+to main.
