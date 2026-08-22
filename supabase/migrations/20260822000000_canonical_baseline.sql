@@ -24,10 +24,20 @@
 --
 -- Proofs (scripts/ci + supabase/convergence/checks):
 --   * fresh `supabase db reset` constructs this schema and nothing else;
---   * the baseline is structurally equivalent to the archived chain
---     end-state (normalized structural equivalence, ignoring catalog ids
---     and ordering);
+--   * the baseline is structurally equivalent to the CANONICAL INTENDED
+--     HISTORICAL END-STATE (see below) under normalized structural
+--     equivalence, ignoring catalog ids and ordering;
 --   * legacy-like fixture + the convergence script reach the same state.
+--
+-- CANONICAL INTENDED HISTORICAL END-STATE means: the archived chain's
+-- intended final schema — schema.sql plus every migration EXCEPT the
+-- documented non-replay-safe 20260811000000, whose intended effect (the
+-- composite tenant-safe FK on client_source_identities) is already
+-- created from the start by the corrected 20260726000000, and whose
+-- function-refresh is superseded by the later definition installed by
+-- 20260803021842. It does NOT claim the broken chronological chain ever
+-- ran to completion (it cannot — 20260811000000 raises when replayed
+-- after the import tables exist).
 -- ============================================================================
 
 begin;
@@ -312,11 +322,14 @@ alter table public.profiles add column if not exists last_seen_at timestamptz;
 -- verified canonical form instead of silently trusting a same-name table
 -- (create-if-not-exists must never launder an unknown shape).
 --
--- Grants: the hosted ACL was not part of the verified facts, so the
--- least-privilege set the application actually needs is granted here
--- explicitly (authenticated: select/insert/update for the settings and
--- rules UI paths in src/lib/autopilot.js; service_role: all), rather
--- than inheriting whatever a dashboard session happened to leave behind.
+-- ACL: the hosted ACL was never captured, and hosted dashboard-created
+-- tables typically carry broad default privileges. GRANT alone cannot
+-- narrow those, so the canonical ACL is established explicitly:
+-- REVOKE everything from the client roles first, then grant only what
+-- the application requires. anon receives NO direct table privileges
+-- (RLS + no grants); authenticated receives select/insert/update (the
+-- settings/rules UI paths in src/lib/autopilot.js); service_role
+-- receives those plus delete.
 -- ------------------------------------------------------------
 
 create table if not exists public.autopilot_settings (
@@ -355,15 +368,17 @@ drop policy if exists "autopilot_rules_own" on public.autopilot_rules;
 create policy "autopilot_rules_own" on public.autopilot_rules
   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
+-- Canonical ACL: revoke-then-grant so pre-existing broader privileges
+-- (e.g. dashboard defaults) cannot survive into the canonical state.
+revoke all on public.autopilot_settings from anon, authenticated, service_role;
+revoke all on public.autopilot_rules from anon, authenticated, service_role;
 grant select, insert, update on public.autopilot_settings to authenticated;
 grant select, insert, update on public.autopilot_rules to authenticated;
 grant select, insert, update, delete on public.autopilot_settings to service_role;
 grant select, insert, update, delete on public.autopilot_rules to service_role;
 
--- Fail-closed shape assertion: column name/type/nullability/default must
--- match the verified live DDL exactly, and no extra or missing columns
--- may exist. information_schema renderings are the canonical comparison
--- form (data_type + column_default text).
+-- Fail-closed full-shape assertion: everything the section header claims
+-- must be true in the catalog before the caller may proceed.
 do $assert_autopilot_canonical$
 declare
   v_expected_settings text := $ddl$id|uuid|NO|gen_random_uuid()
@@ -383,7 +398,17 @@ sort_order|integer|NO|0
 created_at|timestamp with time zone|NO|now()$ddl$;
   v_settings text;
   v_rules text;
+  v_settings_pk text;
+  v_rules_pk text;
+  v_settings_fk text;
+  v_rules_fk text;
+  v_settings_uq text;
+  v_anon_privs text;
+  v_auth_privs text;
+  v_service_privs text;
+  v_bad_policy text;
 begin
+  -- Columns: name/type/nullability/default, exact set and order.
   select coalesce(string_agg(
     column_name || '|' || data_type || '|' || is_nullable || '|' || coalesce(column_default, ''),
     chr(10) order by ordinal_position
@@ -408,25 +433,108 @@ begin
             || 'rules actual:' || chr(10) || v_rules;
   end if;
 
+  -- Primary keys.
+  select coalesce((select pg_get_constraintdef(oid) from pg_constraint
+    where conrelid = 'public.autopilot_settings'::regclass and contype = 'p'), '<missing>')
+    into v_settings_pk;
+  select coalesce((select pg_get_constraintdef(oid) from pg_constraint
+    where conrelid = 'public.autopilot_rules'::regclass and contype = 'p'), '<missing>')
+    into v_rules_pk;
+  if v_settings_pk <> 'PRIMARY KEY (id)' or v_rules_pk <> 'PRIMARY KEY (id)' then
+    raise exception 'autopilot primary keys are not (id): settings=%, rules=%', v_settings_pk, v_rules_pk;
+  end if;
+
+  -- user_id FK -> auth.users(id) ON DELETE CASCADE (by definition, not name).
+  select coalesce((select pg_get_constraintdef(oid) from pg_constraint
+    where conrelid = 'public.autopilot_settings'::regclass and contype = 'f'
+      and pg_get_constraintdef(oid) = 'FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE'), '<missing>')
+    into v_settings_fk;
+  select coalesce((select pg_get_constraintdef(oid) from pg_constraint
+    where conrelid = 'public.autopilot_rules'::regclass and contype = 'f'
+      and pg_get_constraintdef(oid) = 'FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE'), '<missing>')
+    into v_rules_fk;
+  if v_settings_fk = '<missing>' or v_rules_fk = '<missing>' then
+    raise exception 'autopilot user_id -> auth.users(id) ON DELETE CASCADE FK missing or not exact: settings=%, rules=%', v_settings_fk, v_rules_fk;
+  end if;
+
+  -- settings UNIQUE(user_id) under its canonical name.
   if not exists (
     select 1 from pg_constraint k
     where k.conrelid = 'public.autopilot_settings'::regclass
       and k.contype = 'u'
       and k.conname = 'autopilot_settings_user_id_key'
+      and pg_get_constraintdef(k.oid) = 'UNIQUE (user_id)'
   ) then
-    raise exception 'autopilot_settings is missing unique(user_id) under its canonical name';
+    raise exception 'autopilot_settings is missing UNIQUE (user_id) under its canonical name/definition';
   end if;
 
-  if not exists (
-    select 1 from pg_policies p
-    where p.schemaname = 'public' and p.tablename = 'autopilot_settings'
-      and p.policyname = 'autopilot_settings_own'
-  ) or not exists (
-    select 1 from pg_policies p
-    where p.schemaname = 'public' and p.tablename = 'autopilot_rules'
-      and p.policyname = 'autopilot_rules_own'
-  ) then
-    raise exception 'autopilot canonical policies (autopilot_settings_own / autopilot_rules_own) are missing';
+  -- RLS enabled on both tables.
+  if not (select relrowsecurity from pg_class where oid = 'public.autopilot_settings'::regclass)
+     or not (select relrowsecurity from pg_class where oid = 'public.autopilot_rules'::regclass) then
+    raise exception 'autopilot tables must have row level security enabled';
+  end if;
+
+  -- Exact policy definitions (command, roles, expressions).
+  select coalesce(string_agg(
+    policyname || ':' || cmd || ':roles=[' || array_to_string(roles, ',') || ']:qual=' || coalesce(qual, '-') || ':withcheck=' || coalesce(with_check, '-'),
+    ' | ' order by policyname
+  ), '<none>') into v_bad_policy
+  from pg_policies
+  where schemaname = 'public'
+    and tablename in ('autopilot_settings', 'autopilot_rules')
+    and (policyname, cmd, array_to_string(roles, ','), coalesce(qual, '-'), coalesce(with_check, '-')) not in (
+      ('autopilot_settings_own', 'ALL', 'public', '(auth.uid() = user_id)', '(auth.uid() = user_id)'),
+      ('autopilot_rules_own', 'ALL', 'public', '(auth.uid() = user_id)', '(auth.uid() = user_id)')
+    );
+  if v_bad_policy <> '<none>' or (
+    select count(*) from pg_policies
+    where schemaname = 'public' and tablename in ('autopilot_settings', 'autopilot_rules')
+  ) <> 2 then
+    raise exception 'autopilot policies deviate from the canonical definitions: %', v_bad_policy;
+  end if;
+
+  -- Exact intended ACLs (catalog-faithful via aclexplode).
+  create temp table _autopilot_acl_checks on commit drop as
+    select c.relname, r.rolname, a.privilege_type
+    from pg_class c,
+         aclexplode(coalesce(c.relacl, '{}'::aclitem[])) as a(grantor, grantee, privilege_type, is_grantable)
+    join pg_roles r on r.oid = a.grantee
+    where c.oid in ('public.autopilot_settings'::regclass, 'public.autopilot_rules'::regclass)
+      and r.rolname in ('anon', 'authenticated', 'service_role');
+
+  select
+    coalesce(string_agg(privilege_type, ',' order by privilege_type), '<none>')
+  into v_anon_privs
+  from _autopilot_acl_checks where rolname = 'anon';
+
+  select
+    coalesce(string_agg(privilege_type, ',' order by privilege_type), '<none>')
+  into v_auth_privs
+  from (
+    select privilege_type from _autopilot_acl_checks where rolname = 'authenticated' and relname = 'autopilot_settings'
+    intersect
+    select privilege_type from _autopilot_acl_checks where rolname = 'authenticated' and relname = 'autopilot_rules'
+  ) p;
+
+  select
+    coalesce(string_agg(privilege_type, ',' order by privilege_type), '<none>')
+  into v_service_privs
+  from (
+    select privilege_type from _autopilot_acl_checks where rolname = 'service_role' and relname = 'autopilot_settings'
+    intersect
+    select privilege_type from _autopilot_acl_checks where rolname = 'service_role' and relname = 'autopilot_rules'
+  ) p;
+
+  drop table _autopilot_acl_checks;
+
+  if v_anon_privs <> '<none>' then
+    raise exception 'anon must hold NO direct privileges on autopilot tables; found: %', v_anon_privs;
+  end if;
+  if v_auth_privs <> 'INSERT,SELECT,UPDATE' then
+    raise exception 'authenticated autopilot privileges must be exactly SELECT,INSERT,UPDATE; found: %', v_auth_privs;
+  end if;
+  if v_service_privs <> 'DELETE,INSERT,SELECT,UPDATE' then
+    raise exception 'service_role autopilot privileges must be exactly SELECT,INSERT,UPDATE,DELETE; found: %', v_service_privs;
   end if;
 end
 $assert_autopilot_canonical$;
@@ -4580,5 +4688,105 @@ end
 $postflight$;
 
 
+
+-- ============================================================================
+-- [SOURCE: sections/20260822000002_final_canonical_assertions.sql]
+-- ============================================================================
+-- [SECTION: final-canonical-assertions begin]
+-- ------------------------------------------------------------
+-- Final canonical postconditions. Inlined by the assembler IMMEDIATELY
+-- BEFORE the baseline's final `commit;`, so every assertion whose
+-- failure means "convergence/construction did not succeed" executes
+-- INSIDE the mutation transaction: a failure here rolls the entire
+-- baseline back, for both fresh construction and legacy convergence.
+--
+-- Deliberately does NOT call duewatch_ops.unknown_client_foreign_keys():
+-- that function's allowlist is part of the archived chain's historical
+-- end-state and predates the import tables (the same fact that made
+-- 20260811000000 non-replay-safe). Calling it here would misreport the
+-- import tables' own FKs as unknown. The assertions below check expected
+-- facts directly instead.
+-- ------------------------------------------------------------
+
+do $final_canonical_assertions$
+declare
+  v_fk_def text;
+begin
+  -- Invoice/client composite tenant FK, exact definition, validated.
+  select pg_get_constraintdef(oid) into v_fk_def
+  from pg_constraint
+  where conrelid = 'public.invoices'::regclass
+    and conname = 'invoices_user_id_client_id_fkey'
+    and contype = 'f';
+  if v_fk_def is null
+    or v_fk_def not like 'FOREIGN KEY (user_id, client_id) REFERENCES clients(user_id, id)%'
+    or v_fk_def not like '%ON DELETE SET NULL (client_id)%' then
+    raise exception 'FINAL ASSERTION FAILED: invoice/client composite tenant FK is not canonical';
+  end if;
+
+  -- Pending-only awaiting_signature uniqueness; legacy constraint gone.
+  if exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.awaiting_signature'::regclass
+      and conname = 'awaiting_signature_user_id_invoice_id_status_key'
+  ) then
+    raise exception 'FINAL ASSERTION FAILED: legacy awaiting_signature three-column unique still present';
+  end if;
+  if not exists (
+    select 1 from pg_indexes
+    where schemaname = 'public' and tablename = 'awaiting_signature'
+      and indexname = 'awaiting_signature_one_pending_per_invoice'
+  ) then
+    raise exception 'FINAL ASSERTION FAILED: pending-only awaiting_signature unique index missing';
+  end if;
+
+  -- Canonical era tables exist.
+  if exists (
+    select 1 from (values
+      ('autopilot_execution_claims'), ('payments'), ('payment_allocations'),
+      ('import_runs'), ('import_batches'), ('import_rows'), ('import_events'),
+      ('client_source_identities'), ('client_dedup_runs'),
+      ('client_merge_candidates'), ('client_merge_audit'), ('autopilot_settings'),
+      ('autopilot_rules')
+    ) as expected(tablename)
+    where to_regclass(format('public.%I', tablename)) is null
+  ) then
+    raise exception 'FINAL ASSERTION FAILED: one or more canonical public tables are missing';
+  end if;
+
+  -- Canonical RPCs exist.
+  if not exists (
+    select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname in
+      ('acquire_autopilot_execution_claim', 'resolve_autopilot_execution_claim',
+       'record_payment', 'reverse_payment')
+    having count(*) = 4
+  ) then
+    raise exception 'FINAL ASSERTION FAILED: canonical RPC set incomplete';
+  end if;
+
+  -- Canonical policies exist.
+  if exists (
+    select 1 from (values
+      ('payments', 'payments_select_own'),
+      ('payment_allocations', 'payment_allocations_select_own'),
+      ('autopilot_execution_claims', 'autopilot_execution_claims_select_own'),
+      ('autopilot_settings', 'autopilot_settings_own'),
+      ('autopilot_rules', 'autopilot_rules_own')
+    ) as expected(tablename, policyname)
+    where not exists (
+      select 1 from pg_policies p2
+      where p2.schemaname = 'public'
+        and p2.tablename = expected.tablename
+        and p2.policyname = expected.policyname
+    )
+  ) then
+    raise exception 'FINAL ASSERTION FAILED: one or more canonical policies are missing';
+  end if;
+
+  raise notice 'final canonical assertions: all passed (inside the mutation transaction, before commit)';
+end
+$final_canonical_assertions$;
+-- [SECTION: final-canonical-assertions end]
 
 commit;

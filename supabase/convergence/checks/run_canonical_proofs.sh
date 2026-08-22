@@ -13,10 +13,14 @@
 #   4  canonical baseline == archived historical chain end-state
 #      (the baseline is a faithful squash, verified object-by-object)
 #   5  unknown legacy state fails closed AND rolls back completely
-#   6  convergence re-run on an already-canonical database is a safe no-op
+#   6  a second convergence invocation FAILS CLOSED without mutation
+#      (one-time-tool contract; no weak "already canonical" shortcut)
+#   9  a failure in the FINAL canonical assertion stage (last step before
+#      commit) rolls the entire convergence back — legacy state intact
 #   7  existing SQL test suites pass against the canonical baseline
 #   8  the active migration directory contains exactly the baseline file
 #      (no legacy migration is executable by standard tooling)
+# (Proof 9, executed between 6 and 7, proves final-assertion rollback.)
 #
 # Usage (from repo root, with the local stack running):
 #   ARTIFACT_DIR=./canonical-proofs-artifact \
@@ -171,7 +175,13 @@ fi
 # ---------------------------------------------------------------------------
 # PROOF 4 — baseline == archived chain end-state (+ autopilot section).
 # ---------------------------------------------------------------------------
-log "PROOF 4: archived historical chain reference build"
+log "PROOF 4: canonical intended historical end-state reference build"
+# NOTE: the reference is the CANONICAL INTENDED HISTORICAL END-STATE — the
+# archived chain with the documented non-replay-safe 20260811000000
+# excluded, whose intended effects are already provided by the corrected
+# 20260726000000 (composite tenant FK on client_source_identities created
+# from the start) and by 20260803021842's later function refresh. This is
+# NOT a claim that the broken chronological chain ever ran to completion.
 REF_URL=$(make_db canonical_oldchain)
 psql "$REF_URL" -X -v ON_ERROR_STOP=1 -f supabase/migrations_legacy/schema.sql \
   > "$ARTIFACT_DIR/oldchain_apply.log" 2>&1 \
@@ -200,7 +210,7 @@ do
 done
 snapshot_db "$REF_URL" "$ARTIFACT_DIR/snapshot_oldchain.txt"
 if diff -u "$FRESH_SNAP" "$ARTIFACT_DIR/snapshot_oldchain.txt" > "$ARTIFACT_DIR/diff_fresh_oldchain.txt"; then
-  log "PROOF 4 PASSED: baseline is structurally equivalent to the archived chain end-state."
+  log "PROOF 4 PASSED: baseline is structurally equivalent to the canonical intended historical end-state."
 else
   cat "$ARTIFACT_DIR/diff_fresh_oldchain.txt"
   fail "baseline differs from archived chain end-state"
@@ -239,20 +249,68 @@ FK_STATE=$(psql "$UNKNOWN_URL" -X -q -t -A -c "
 log "PROOF 5 PASSED: fail-closed + full rollback verified."
 
 # ---------------------------------------------------------------------------
-# PROOF 6 — convergence re-run on canonical database is a safe no-op.
+# PROOF 6 — second invocation after successful convergence FAILS CLOSED
+# without changing anything (the one-time-tool contract: no weak
+# "already canonical" shortcut exists).
 # ---------------------------------------------------------------------------
-log "PROOF 6: idempotent re-run on already-canonical database"
-psql "$LEGACY_URL" -X -v ON_ERROR_STOP=1 -f "$CONVERGENCE" \
-  > "$ARTIFACT_DIR/convergence_rerun.log" 2>&1 \
-  || { cat "$ARTIFACT_DIR/convergence_rerun.log"; fail "convergence re-run failed on canonical DB"; }
+log "PROOF 6: second convergence invocation must fail closed, no mutation"
+if psql "$LEGACY_URL" -X -v ON_ERROR_STOP=1 -f "$CONVERGENCE" \
+     > "$ARTIFACT_DIR/convergence_rerun.log" 2>&1; then
+  cat "$ARTIFACT_DIR/convergence_rerun.log"
+  fail "second convergence invocation unexpectedly SUCCEEDED — fail-closed contract broken"
+fi
+grep -q "already-mutated state" "$ARTIFACT_DIR/convergence_rerun.log" \
+  || { cat "$ARTIFACT_DIR/convergence_rerun.log"; fail "second invocation failed for an unexpected reason (expected the already-mutated refusal)"; }
 snapshot_db "$LEGACY_URL" "$ARTIFACT_DIR/snapshot_converged_rerun.txt"
 if diff -u "$ARTIFACT_DIR/snapshot_converged.txt" "$ARTIFACT_DIR/snapshot_converged_rerun.txt" \
    > "$ARTIFACT_DIR/diff_rerun.txt"; then
-  log "PROOF 6 PASSED: re-run left the canonical state unchanged."
+  log "PROOF 6 PASSED: second invocation refused (fail-closed) and left the canonical state unchanged."
 else
   cat "$ARTIFACT_DIR/diff_rerun.txt"
-  fail "convergence re-run changed the canonical state"
+  fail "second invocation changed the canonical state despite refusing"
 fi
+
+# ---------------------------------------------------------------------------
+# PROOF 9 — FINAL-ASSERTION ROLLBACK: a failure in the final canonical
+# assertion stage (the LAST thing before commit) must roll the entire
+# convergence back, leaving the legacy database untouched. Proven by
+# running a sabotaged copy of the baseline (one expected index name in
+# the final-assertions section mangled) against the legacy fixture.
+# ---------------------------------------------------------------------------
+log "PROOF 9: final-assertion failure rolls the whole convergence back"
+FINAL_URL=$(make_db canonical_finalassert)
+psql "$FINAL_URL" -X -v ON_ERROR_STOP=1 -f "$FIXTURE" \
+  > "$ARTIFACT_DIR/finalassert_fixture.log" 2>&1 \
+  || { cat "$ARTIFACT_DIR/finalassert_fixture.log"; fail "fixture failed on final-assert DB"; }
+sed '/SECTION: final-canonical-assertions begin/,/SECTION: final-canonical-assertions end/ s/awaiting_signature_one_pending_per_invoice/final_assert_sabotaged_name/g' \
+  "$BASELINE" > "$ARTIFACT_DIR/baseline_sabotaged.sql"
+if psql "$FINAL_URL" -X -v ON_ERROR_STOP=1 -f "$ARTIFACT_DIR/baseline_sabotaged.sql" \
+     > "$ARTIFACT_DIR/finalassert_run.log" 2>&1; then
+  cat "$ARTIFACT_DIR/finalassert_run.log"
+  fail "sabotaged baseline unexpectedly SUCCEEDED — final assertions are not gating"
+fi
+grep -q "FINAL ASSERTION FAILED" "$ARTIFACT_DIR/finalassert_run.log" \
+  || { cat "$ARTIFACT_DIR/finalassert_run.log"; fail "sabotaged run failed for an unexpected reason"; }
+# The failure must have occurred at the END (after all mutations ran) and
+# still left nothing behind.
+LEFTOVER=$(psql "$FINAL_URL" -X -q -t -A -c "
+  select count(*) from (
+    select 1 from pg_namespace where nspname = 'duewatch_ops'
+    union all select 1 from pg_tables where schemaname='public' and tablename in
+      ('autopilot_execution_claims','payments','payment_allocations','import_batches','import_rows')
+  ) x;")
+[ "$LEFTOVER" = "0" ] || fail "final-assertion failure left objects behind (rollback incomplete): $LEFTOVER"
+FK_STATE2=$(psql "$FINAL_URL" -X -q -t -A -c "
+  select count(*) from pg_constraint
+  where conrelid = 'public.invoices'::regclass and contype='f'
+    and pg_get_constraintdef(oid) like 'FOREIGN KEY (client_id) REFERENCES clients(id)%ON DELETE CASCADE%';")
+[ "$FK_STATE2" = "1" ] || fail "final-assertion failure altered the legacy FK (rollback incomplete)"
+PEND=$(psql "$FINAL_URL" -X -q -t -A -c "
+  select count(*) from pg_indexes
+  where schemaname='public' and tablename='awaiting_signature'
+    and indexname='awaiting_signature_one_pending_per_invoice';")
+[ "$PEND" = "0" ] || fail "final-assertion failure left the pending-only index behind (rollback incomplete)"
+log "PROOF 9 PASSED: end-stage assertion failure rolled everything back (era objects absent, legacy FK intact, no pending index)."
 
 # ---------------------------------------------------------------------------
 # PROOF 7 — existing SQL test suites against the canonical baseline.

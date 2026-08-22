@@ -64,8 +64,9 @@ psql "$PROD_DB_URL" -X -v ON_ERROR_STOP=1 \
   -f supabase/convergence/20260822_legacy_live_to_canonical.sql
 ```
 
-* Expected on the verified legacy state: the preflight NOTICE ("verified legacy baseline confirmed"), the baseline's one transaction, then "convergence postconditions: all canonical checks passed", exit 0.
-* Any failure: the script stops before or inside its single transaction; nothing partial remains. Go to §4.
+* Expected on the verified legacy state: the preflight NOTICE ("verified legacy baseline confirmed"), the baseline's one transaction ending with "final canonical assertions: all passed (inside the mutation transaction, before commit)", then the informational PHASE 2 checks, exit 0.
+* Any failure: either before any mutation (preflight) or inside the baseline's single transaction — including the FINAL canonical assertions, which run immediately before commit. Nothing partial remains. Go to §4.
+* A SECOND invocation after a successful convergence is EXPECTED to fail closed ("already-mutated state") without changing anything — this is a one-time tool by contract, not a bug.
 
 ### 3.3 Canonical postcondition spot-checks **[PROD]**
 
@@ -74,18 +75,28 @@ psql "$PROD_DB_URL" -X -v ON_ERROR_STOP=1 \
 select pg_get_constraintdef(oid) from pg_constraint
 where conrelid = 'public.invoices'::regclass
   and conname = 'invoices_user_id_client_id_fkey';
--- legacy three-column unique GONE, pending-only index PRESENT
-select indexname from pg_indexes where tablename = 'public.awaiting_signature';
+-- legacy three-column unique GONE...
 select conname from pg_constraint
 where conrelid = 'public.awaiting_signature'::regclass
   and conname = 'awaiting_signature_user_id_invoice_id_status_key';  -- expect 0 rows
+-- ...and pending-only index PRESENT
+select indexname from pg_indexes
+where schemaname = 'public' and tablename = 'awaiting_signature';
 -- era objects exist
-select to_regclass('public.autopilot_execution_claims'),
-       to_regclass('public.payments'),
-       to_regclass('public.payments_select_own'::text) is null as policy_check_dummy;
+select to_regclass('public.autopilot_execution_claims') as claims,
+       to_regclass('public.payments') as payments,
+       to_regclass('public.payment_allocations') as allocations;
+-- canonical policies exist (policies are NOT relations — use pg_policies)
+select tablename, policyname from pg_policies
+where schemaname = 'public'
+  and (tablename, policyname) in (
+    ('payments', 'payments_select_own'),
+    ('autopilot_settings', 'autopilot_settings_own'),
+    ('autopilot_rules', 'autopilot_rules_own')
+  );
 ```
 
-(The convergence script's own PHASE 2 already asserts all of this; these are redundant human-visible confirmations.)
+(The rollback-protected success gates are the FINAL canonical assertions inlined inside the baseline's transaction, immediately before its commit — a failure there rolls the entire convergence back. The convergence script's PHASE 2 and the queries above are informational post-commit confirmations only.)
 
 ### 3.4 Structural equivalence against the rehearsal artifact **[PROD + local]**
 

@@ -83,10 +83,20 @@ CHAIN=(
 --
 -- Proofs (scripts/ci + supabase/convergence/checks):
 --   * fresh `supabase db reset` constructs this schema and nothing else;
---   * the baseline is structurally equivalent to the archived chain
---     end-state (normalized structural equivalence, ignoring catalog ids
---     and ordering);
+--   * the baseline is structurally equivalent to the CANONICAL INTENDED
+--     HISTORICAL END-STATE (see below) under normalized structural
+--     equivalence, ignoring catalog ids and ordering;
 --   * legacy-like fixture + the convergence script reach the same state.
+--
+-- CANONICAL INTENDED HISTORICAL END-STATE means: the archived chain's
+-- intended final schema — schema.sql plus every migration EXCEPT the
+-- documented non-replay-safe 20260811000000, whose intended effect (the
+-- composite tenant-safe FK on client_source_identities) is already
+-- created from the start by the corrected 20260726000000, and whose
+-- function-refresh is superseded by the later definition installed by
+-- 20260803021842. It does NOT claim the broken chronological chain ever
+-- ran to completion (it cannot — 20260811000000 raises when replayed
+-- after the import tables exist).
 -- ============================================================================
 
 begin;
@@ -115,6 +125,11 @@ HDR
     fi
   done
 
+  echo ""
+  echo "-- ============================================================================"
+  echo "-- [SOURCE: sections/20260822000002_final_canonical_assertions.sql]"
+  echo "-- ============================================================================"
+  cat supabase/convergence/sections/20260822000002_final_canonical_assertions.sql
   echo ""
   echo "commit;"
 } > "$OUT"

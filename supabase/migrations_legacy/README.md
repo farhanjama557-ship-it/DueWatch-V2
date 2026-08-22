@@ -12,8 +12,15 @@ supabase/migrations/20260822000000_canonical_baseline.sql
 
 It was assembled verbatim from this archive (plus the canonical Autopilot
 section, `supabase/convergence/sections/20260822000001_autopilot_canonical.sql`)
-and is proven structurally equivalent to this archive's end-state by
-`supabase/convergence/checks/run_canonical_proofs.sh` (PROOF 4) on every CI run.
+and is proven structurally equivalent to the **canonical intended
+historical end-state** — schema.sql plus every migration below EXCEPT the
+documented non-replay-safe `20260811000000`, whose intended effects are
+already provided by the corrected `20260726000000` (which creates
+`client_source_identities` with the composite tenant FK from the start)
+and by `20260803021842`'s later refresh of the FK-allowlist function.
+This is not a claim that the broken chronological chain itself ever ran
+to completion. Proof: `supabase/convergence/checks/run_canonical_proofs.sh`
+(PROOF 4) on every CI run.
 
 ## Why the chain was squashed instead of replayed
 

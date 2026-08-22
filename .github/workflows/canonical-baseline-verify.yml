@@ -14,11 +14,14 @@ name: "Canonical Baseline Verification"
 #      (normalized structural equivalence across 11 object classes)
 #   4  canonical baseline == archived historical chain end-state
 #   5  unknown legacy state fails closed AND rolls back completely
-#   6  convergence re-run on an already-canonical database is a clean no-op
+#   6  a second convergence invocation fails closed without mutation
+#      (one-time-tool contract)
 #   7  existing SQL test suites pass (claims/awaiting against the canonical
 #      baseline; payments via its CI bootstrap against the archived
 #      migration; both concurrency proofs)
 #   8  the active migration directory contains exactly the baseline file
+#   9  a failure in the final canonical assertion stage (last step before
+#      commit) rolls the entire convergence back
 #
 # Plus the no-ledger rehearsal (run_ledger_rehearsal.sh), which proves the
 # production ledger-bootstrap commands against a database with NO

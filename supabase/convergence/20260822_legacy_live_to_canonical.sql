@@ -18,8 +18,8 @@
 --
 -- Classification (fail closed):
 --   * verified legacy state            → converge
---   * already canonical                → safe no-op re-run
---   * anything else                    → RAISE before changing anything
+--   * anything else — including an already-converged database —
+--                                      → RAISE before changing anything
 --
 -- How it converges: the canonical baseline itself is included verbatim
 -- (\ir). Its statements are deterministic on the legacy state: additive
@@ -41,99 +41,47 @@
 -- ---------------------------------------------------------------------------
 -- PHASE 0 — preflight classification. No mutation happens in this phase.
 --
--- The baseline below is a FRESH-DATABASE CONSTRUCTOR by design; it is not
--- re-entry safe (its internal postconditions assert the exact world each
--- section built, which a completed database no longer matches). Therefore
--- an already-canonical database short-circuits to a clean no-op HERE —
--- by refusing to re-apply — rather than by re-running the baseline.
--- The classification is computed in plain SQL (psql \gset) so the script
--- can exit before touching anything.
+-- ONE-TIME TOOL CONTRACT (adversarial-review hardened):
 --
---   verified legacy baseline -> converge (PHASE 1)
---   already canonical        -> clean no-op exit 0 (this phase)
---   anything else            -> RAISE before any change (this phase)
+--   VERIFIED LEGACY STATE            -> converge (PHASE 1)
+--   ANY POST-BASELINE / ALREADY-
+--   MUTATED STATE (including an
+--   already-converged database)      -> REFUSE, require investigation
+--
+-- There is deliberately NO "already canonical -> no-op" shortcut: proving
+-- full canonical structural equivalence here would mean duplicating the
+-- entire canonical fingerprint, and a name-based sample check would
+-- silently bless drifted FKs, indexes, columns, function bodies, grants,
+-- triggers, or policies. A second invocation after a successful
+-- convergence fails closed below WITHOUT changing anything — acceptable
+-- and safer than a weak idempotency classification.
+--
+-- All final canonical success assertions live INSIDE the baseline's
+-- mutation transaction (sections/20260822000002_final_canonical_
+-- assertions.sql, inlined immediately before its commit), so a failed
+-- assertion rolls the entire convergence back. PHASE 2 of this script is
+-- informational post-commit verification only.
 -- ---------------------------------------------------------------------------
 
-select (
-  -- era objects present at all?
-  exists (select 1 from pg_namespace where nspname = 'duewatch_ops')
-  or exists (
+-- Post-baseline-era objects present at all -> refuse before any mutation.
+do $preflight_refuse_mutated$
+begin
+  if exists (select 1 from pg_namespace where nspname = 'duewatch_ops') or exists (
     select 1 from pg_tables
     where schemaname = 'public' and tablename in (
       'client_source_identities', 'client_dedup_runs', 'client_merge_candidates',
       'client_merge_audit', 'import_runs', 'import_batches', 'import_rows',
       'import_events', 'autopilot_execution_claims', 'payments', 'payment_allocations'
     )
-  )
-) as era_objects_exist,
-(
-  -- fully canonical already?
-  exists (
-    select 1 from pg_constraint
-    where conrelid = 'public.invoices'::regclass
-      and conname = 'invoices_user_id_client_id_fkey'
-      and contype = 'f' and convalidated
-  )
-  and exists (
-    select 1 from pg_indexes
-    where schemaname = 'public' and tablename = 'awaiting_signature'
-      and indexname = 'awaiting_signature_one_pending_per_invoice'
-  )
-  and not exists (
-    select 1 from pg_constraint
-    where conrelid = 'public.awaiting_signature'::regclass
-      and conname = 'awaiting_signature_user_id_invoice_id_status_key'
-  )
-  and exists (
-    select 1 from pg_tables
-    where schemaname = 'public' and tablename in (
-      'autopilot_execution_claims', 'payments', 'payment_allocations',
-      'import_runs', 'client_source_identities'
-    )
-    having count(*) = 5
-  )
-  and exists (
-    select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-    where n.nspname = 'public' and p.proname = 'acquire_autopilot_execution_claim'
-  )
-  and exists (
-    select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-    where n.nspname = 'public' and p.proname = 'record_payment'
-  )
-  and exists (
-    select 1 from pg_policies
-    where schemaname = 'public' and tablename = 'payments'
-      and policyname = 'payments_select_own'
-  )
-  and exists (
-    select 1 from pg_policies
-    where schemaname = 'public' and tablename = 'autopilot_settings'
-      and policyname = 'autopilot_settings_own'
-  )
-) as already_canonical
-\gset
-
-\if :already_canonical
-\echo 'convergence preflight: database is already canonical; nothing to do (clean no-op).'
-\quit
-\endif
-
-\if :era_objects_exist
-\echo 'convergence preflight: refusing an unknown state (post-baseline-era objects exist but the database is not fully canonical).'
-\echo 'This script only accepts the verified legacy baseline or an already-canonical database.'
-\echo 'Restore from the pre-convergence backup or investigate manually.'
-do $fail_closed_unknown_state$
-begin
-  raise exception 'unknown state: post-baseline-era objects exist but the database is not fully canonical; refusing to converge';
+  ) then
+    raise exception 'unknown/already-mutated state: post-baseline-era objects exist. This one-time convergence tool accepts ONLY the verified legacy baseline; a re-run after successful convergence is expected to fail closed here without changing anything. Investigate manually (or restore from the pre-convergence backup).';
+  end if;
 end
-$fail_closed_unknown_state$;
-\quit
-\endif
+$preflight_refuse_mutated$;
 
+-- The verified legacy baseline must have its ten known public tables.
 do $preflight_legacy_shape$
 begin
-  -- The verified legacy baseline must have its ten known public tables and
-  -- nothing from the post-baseline era.
   if not (
     select bool_and(to_regclass(format('public.%I', t)) is not null)
     from unnest(array[
@@ -158,8 +106,11 @@ $preflight_legacy_shape$;
 \ir ../migrations/20260822000000_canonical_baseline.sql
 
 -- ---------------------------------------------------------------------------
--- PHASE 2 — canonical postconditions. Read-only verification that the
--- convergence reached exactly the canonical end-state.
+-- PHASE 2 — informational post-commit checks. These duplicate a subset of
+-- the FINAL canonical assertions that already executed INSIDE the
+-- baseline transaction (before its commit); they are a human-visible
+-- confirmation only and are NOT rollback-protected success gates. The
+-- rollback-protected contract lives in the baseline itself.
 -- ---------------------------------------------------------------------------
 do $postconditions$
 declare
