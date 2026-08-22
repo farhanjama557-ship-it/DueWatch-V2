@@ -28,13 +28,15 @@ pool_mode = "transaction"
 default_pool_size = 20
 max_client_conn = 100
 
-# Disabled: `supabase start` would otherwise auto-apply everything under
-# supabase/migrations/ at container-boot time, before supabase/schema.sql
-# (which is not a timestamped migration) has been applied — breaking the
-# required apply order. The verification workflow applies schema.sql and
-# the Phase 0 migration explicitly, in the correct order, via psql instead.
+# Re-enabled by the 2026-08-22 canonical rebaseline (PR A): the active
+# chain is now a single timestamped migration —
+# 20260822000000_canonical_baseline.sql — which supabase db reset / db
+# push apply in the correct order by construction. The historical reason
+# for disabling (schema.sql was not a timestamped migration and had to
+# be applied before migrations) no longer exists; schema.sql itself is
+# archived under supabase/migrations_legacy/.
 [db.migrations]
-enabled = false
+enabled = true
 schema_paths = []
 
 [db.seed]
