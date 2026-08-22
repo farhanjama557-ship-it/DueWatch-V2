@@ -164,8 +164,11 @@ create policy promise_events_select_own on public.promise_events
   for select using (auth.uid() = user_id);
 
 -- No direct insert/update/delete policies: every write goes through the
--- hardened RPCs below.
-revoke all on public.promises, public.promise_events from public, anon, authenticated;
+-- hardened RPCs below. Explicitly revoke from service_role too, then grant
+-- select back -- do not rely on whatever this Postgres instance's default
+-- privileges happen to be for service_role; state the intended grant
+-- explicitly so it holds regardless of environment.
+revoke all on public.promises, public.promise_events from public, anon, authenticated, service_role;
 grant select on public.promises, public.promise_events to authenticated;
 grant select on public.promises, public.promise_events to service_role;
 
@@ -302,6 +305,14 @@ begin
 end;
 $$;
 
+-- Explicitly revoke first -- do not rely on whatever this Postgres
+-- instance's default function-execute privileges happen to be for
+-- public/anon/service_role; state the intended grant explicitly (only
+-- authenticated may call these) so it holds regardless of environment.
+revoke execute on function public.propose_promise(uuid, numeric, date, text, text)
+  from public, anon, service_role;
+revoke execute on function public.confirm_promise(uuid, numeric, date)
+  from public, anon, service_role;
 grant execute on function public.propose_promise(uuid, numeric, date, text, text) to authenticated;
 grant execute on function public.confirm_promise(uuid, numeric, date) to authenticated;
 
