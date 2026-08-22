@@ -682,3 +682,26 @@ PR #35 received independent final source review (0 blocker / 0 high / 0 medium) 
 
 **NOT merged** (explicit instruction: "STOP. Do not merge.").
 
+
+## Phase 8: Promise-to-Pay Slice 4 — Locked UX Decision (Summary Cards vs. Tabs Scroll Behavior)
+
+**Date:** 2026-08-22
+**Status:** Decision only — not built. Recorded ahead of Slice 4 (UI) so it isn't lost or re-litigated once that slice starts.
+**Affects:** Future Slice 4 UI work only. Does not touch PR #44 (Promise-to-Pay Slice 1, backend-only) or any other shipped code.
+
+**Did:** Locked a small interaction correction for the Promise-to-Pay north-star prototype (`duewatch-promise-to-pay.html`), to be carried into the real Slice 4 UI implementation, not into Slice 1.
+
+**The problem (in the prototype today):** The five summary cards (Needs Confirmation / Due Soon / Due Today / Broken / Fulfilled This Month) call the same `setTab()` as the sticky tabs row underneath, which calls `scrollToContent()`. On a long result list this scrolls the (non-sticky) summary cards out of the viewport, so comparing summary cards requires manually scrolling back up between every click.
+
+**Locked behavior for Slice 4:**
+1. Summary cards stay clickable filtering controls (not static display).
+2. A summary-card click updates `activeTab`/scope, resets the due filter, reconciles selection, and rerenders exactly as today — but must NOT call `scrollToContent()` or otherwise move the workspace scroll position. The founder stays at the summary area for rapid Needs Confirmation → Due Soon → Due Today → Broken → Fulfilled comparison.
+3. Tab clicks are unchanged: they may still filter, rerender, and scroll into the results. Summary cards = filter-in-place; tabs = filter-and-navigate. This distinction is intentional, not an oversight to reconcile later.
+4. The active-state visual (existing selection styling) must still apply on a summary-card click — removing the scroll must not make the click look like it did nothing.
+5. Everything else is unchanged: tab stickiness, List/Calendar behavior, search, due-filter behavior, Inspector behavior, selection reconciliation, rapid-review queue, status semantics, any PTP lifecycle logic, any backend logic.
+6. Implementation shape: do not duplicate `setTab()`. Use one function taking a scroll-behavior option (e.g. `setTab(tabId, scope, { scrollToResults: false })` for summary cards; tabs keep `scrollToResults: true` — the reference prototype implements this exact shape and can be used as the working reference for "correct," not necessarily its literal code, since production's component structure will differ).
+7. Reduced-motion: unaffected — this only removes a scroll, never adds motion, so the existing reduced-motion authority needs no change here.
+
+**Verification (when Slice 4 is built):** manually confirm with (A) a very long Needs Confirmation list, (B) a very long Broken list, (C) a short result list — summary-card clicks must never move the viewport in any case; tab clicks must retain existing navigation behavior.
+
+**Open question:** none — this is a locked decision, not an open one. Re-raise only if Slice 4's actual component structure makes the single-function-with-an-option shape impractical.
