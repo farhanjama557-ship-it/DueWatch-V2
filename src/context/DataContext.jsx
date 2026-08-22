@@ -117,6 +117,13 @@ export function DataProvider({ children }) {
   // parameter.
   const [autopilotSettingsUnavailable, setAutopilotSettingsUnavailable] = useState(false)
   const [awaitingSignature, setAwaitingSignature] = useState([])
+  // Promise-to-Pay Slice 1 (core lifecycle only — propose/confirm, no
+  // Broken/Fulfilled/supersession yet). Raw rows plus a derived map of the
+  // one 'confirmed' (governing) promise per invoice, if any — mirrors the
+  // partial unique index's own definition of "governing" in
+  // 20260822130000_promise_to_pay_foundation.sql. No optimistic mutator
+  // here yet since there is no UI consuming this in this slice (Slice 4).
+  const [promises, setPromises] = useState([])
   const [lastAutopilotRun, setLastAutopilotRun] = useState(null)
   const [autopilotRules, setAutopilotRules] = useState([])
   // Phase 2A.2 — evaluateNextActionAuthority's execution-history inputs.
@@ -426,6 +433,22 @@ export function DataProvider({ children }) {
       .then((r) => r.count ?? 0)
       .catch(() => 0)
 
+    // Promise-to-Pay Slice 1 — tolerant of failure like the other queries
+    // above (returns null on failure, [] on genuine zero rows). No UI
+    // consumes this yet; Slice 4 will.
+    const promisesPromise = supabase
+      .from('promises')
+      .select('*')
+      .eq('user_id', user.id)
+      .then((r) => {
+        if (r.error) console.warn('promises query failed:', r.error.message)
+        return r.error ? null : r.data || []
+      })
+      .catch((err) => {
+        console.warn('promises query threw:', err.message)
+        return null
+      })
+
     const draftedSincePromise =
       isFirstLoadThisSession && previousLastSeenAt
         ? supabase
@@ -452,6 +475,7 @@ export function DataProvider({ children }) {
       collectedLast,
       totalEvents,
       executionClaims,
+      promiseRows,
     ] = await Promise.all([
       profilePromise,
       invoicesPromise,
@@ -467,6 +491,7 @@ export function DataProvider({ children }) {
       collectedLastMonthPromise,
       totalEventsPromise,
       executionClaimsPromise,
+      promisesPromise,
     ])
 
     if (invErr) {
@@ -520,6 +545,7 @@ export function DataProvider({ children }) {
     setCollectedLastMonth(collectedLast?.sum || 0)
     setCollectedLastMonthCount(collectedLast?.count || 0)
     setTotalEventsCount(totalEvents || 0)
+    setPromises(promiseRows || [])
 
     if (isFirstLoadThisSession) {
       setSinceLastVisit(
@@ -642,6 +668,13 @@ export function DataProvider({ children }) {
     autopilotSettingsUnavailable,
     setAutopilotEnabledLocal: setAutopilotEnabled,
     awaitingSignature,
+    // Promise-to-Pay Slice 1 — raw rows plus the one confirmed (governing)
+    // promise per invoice, if any. No mutator exposed yet; nothing in the
+    // UI consumes this until Slice 4.
+    promises,
+    governingPromiseByInvoiceId: new Map(
+      promises.filter((p) => p.status === 'confirmed').map((p) => [p.invoice_id, p])
+    ),
     // Phase 2A.2: real Set on success, null when the load-bearing query
     // failed — never silently downgraded to empty. See state doc comments.
     handledKeys,

@@ -682,3 +682,35 @@ PR #35 received independent final source review (0 blocker / 0 high / 0 medium) 
 
 **NOT merged** (explicit instruction: "STOP. Do not merge.").
 
+
+## Phase 7: Promise-to-Pay Slice 1 — Core Lifecycle (Implementation)
+
+**Date:** 2026-08-22
+**Branch:** `qwen/verify-promise-to-pay`
+**Based on:** `main` @ `ea53dd509a33ff5f554fd3ceb7462b568930c378` (Payments Foundation, merged)
+
+**Did:** Implemented Promise-to-Pay Slice 1 — core lifecycle only, happy path: Proposed → founder confirms → Confirmed. This is the first of four planned slices (Slice 1: core lifecycle; Slice 2: fulfillment/breakage, integrating with Payments; Slice 3: supersession/Cancelled/Disputed/Rejected; Slice 4: UI, from the `duewatch-promise-to-pay.html` prototype). Split into more, smaller slices than Payments Foundation used, deliberately — Promise-to-Pay is a 10-state machine with supersession and immutability rules, more surface for a subtle governance bug than Payments' single record/reverse operation.
+
+**Scope, locked in this slice:**
+- `public.promises` (status `proposed`/`confirmed` only) + `public.promise_events` (append-only evidence log) in `supabase/migrations/20260822130000_promise_to_pay_foundation.sql`.
+- Two hardened RPCs: `propose_promise`, `confirm_promise`. All writes funneled through them (no direct insert/update/delete grants), mirroring Payments Foundation's `record_payment`/`reverse_payment` pattern.
+- **Governance invariant enforced at the DB level**: `promises_one_governing_per_invoice`, a partial unique index on `(invoice_id) where status = 'confirmed'` — only one promise can govern an invoice at a time. Durable representation decided and documented in the migration's own header: `governing == status = 'confirmed'`; Due Soon/Due Today/Broken are Slice 2/4 presentation computed from that same row, never separate stored statuses.
+- **Confirmed terms are immutable**: `duewatch_ops.guard_promise_immutability()` trigger rejects any change to `promised_amount`/`promised_date`/`currency`/`invoice_id`/`user_id` once `status = 'confirmed'`.
+- **Currency**: an immutable snapshot of the invoice's currency at proposal time, derived server-side (never client-supplied, never converted). Both RPCs re-validate it hasn't drifted from the invoice.
+- **Tenant FK**: composite `(user_id, invoice_id) → invoices(user_id, id)`, the same established pattern as `invoices_user_id_client_id_fkey`, targeting the existing `invoices_user_id_id_uidx`. `on delete restrict` everywhere (audit/evidence record — never cascaded away).
+- **Event log vs. current state**: `promises` is canonical current-state; `promise_events` is canonical historical/evidence. `confirm_promise` atomically transitions the promise, sets `confirmed_by`/`confirmed_at`, and writes the matching `confirmed` event in one transaction — `confirmed_at` is query metadata only, never a competing evidence source.
+- JS wrapper `src/lib/promiseToPay.js` (reuses `normalizePaymentAmount` from `payments.js`), `DataContext.jsx` wired with a tolerant `promises` query + `governingPromiseByInvoiceId` derived map (no UI consumer yet).
+- CI verification pair mirroring Payments Foundation's own adversarial-review-driven split: `scripts/ci/verify-promise-to-pay.sh` (targeted checkpoint bootstrap) and `scripts/ci/verify-promise-to-pay-current-schema.sh` (full current-main-schema compatibility, same documented `20260811000000` skip, same `docker exec` auth-schema bootstrap). New workflow `.github/workflows/phase2-slice1-promise-to-pay-verify.yml` on branch `qwen/verify-promise-to-pay`.
+- SQL integration tests (`supabase/tests/promise_to_pay_test.sql`, 8 groups) and a real two-session concurrency proof (`supabase/tests/promise_to_pay_concurrency_proof.sh`) proving the governance invariant holds under actual concurrent `confirm_promise` calls, not just sequential logic.
+
+**Explicitly out of scope (do not read this slice as implementing any of these):**
+- **Detected**: no detector exists; every `proposed` row originates from an explicit founder-recorded conversation.
+- Broken, Fulfilled, Cancelled, Disputed, Rejected, supersession chains.
+- Dunning-suppression / any Autopilot hold tied to a promise. Confirmed via codebase search: no shared Autopilot hold primitive exists yet (only the unrelated, already-shipped `invoices.autopilot_paused` boolean) — this slice does not invent a Promise-to-Pay-specific stand-in. Slice 2 needs that primitive spec'd first.
+- Any List/Calendar/Inspector UI (Slice 4).
+
+**Status:** Implemented, not yet reviewed or verified in CI at the time of this entry (workflow run pending on push). No deployment to the live Supabase project — verification stays inside the disposable local `supabase start` stack, matching Payments Foundation's own verification discipline. The live DueWatch backend is currently behind `main` pending separate backend-convergence work.
+
+**Affects:** New tables/RPCs only — does not modify Payments Foundation, invoices, or any existing table's behavior. `DataContext.jsx` gets one new additive, tolerant-of-failure query.
+
+**Open question:** Whether Slice 2's fulfillment-detection design should read `payments`/`payment_allocations` directly or through a new view — not yet decided, out of scope for this slice.
