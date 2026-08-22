@@ -66,7 +66,7 @@ begin
   end if;
   if (select (status, promised_amount, promised_date, confirmed_by)
       from public.promises where id = v_promise_id)
-     is distinct from row('confirmed', 250::numeric, '2026-09-05'::date, 'e2000000-0000-4000-8000-000000000001'::uuid) then
+     is distinct from row('confirmed'::text, 250::numeric, '2026-09-05'::date, 'e2000000-0000-4000-8000-000000000001'::uuid) then
     raise exception 'Confirmed promise row does not reflect the confirmed terms';
   end if;
   if (select confirmed_at from public.promises where id = v_promise_id) is null then
@@ -151,7 +151,7 @@ begin
   if not v_failed then raise exception 'Confirmed currency was mutated'; end if;
 
   if (select (promised_amount, promised_date, currency) from public.promises where id = v_promise_id)
-     is distinct from row(300::numeric, '2026-09-15'::date, 'USD') then
+     is distinct from row(300::numeric, '2026-09-15'::date, 'USD'::text) then
     raise exception 'Rejected mutation attempts changed confirmed terms';
   end if;
 end
