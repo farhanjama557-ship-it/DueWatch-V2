@@ -370,8 +370,18 @@ create policy "autopilot_rules_own" on public.autopilot_rules
 
 -- Canonical ACL: revoke-then-grant so pre-existing broader privileges
 -- (e.g. dashboard defaults) cannot survive into the canonical state.
-revoke all on public.autopilot_settings from anon, authenticated, service_role;
-revoke all on public.autopilot_rules from anon, authenticated, service_role;
+-- PUBLIC is revoked too: surviving PUBLIC privileges would silently
+-- bypass the intended anon/authenticated/service_role-only grant matrix.
+-- Column-level privileges are revoked explicitly as well — REVOKE ALL ON
+-- <table> does NOT remove column-level ACLs, and the table shapes are
+-- asserted exactly below, so the column lists are complete by
+-- construction.
+revoke all on public.autopilot_settings from PUBLIC, anon, authenticated, service_role;
+revoke all on public.autopilot_rules from PUBLIC, anon, authenticated, service_role;
+revoke all (id, user_id, enabled, approval_required, created_at, updated_at)
+  on public.autopilot_settings from PUBLIC, anon, authenticated, service_role;
+revoke all (id, user_id, name, trigger_type, trigger_days, tone, enabled, sort_order, created_at)
+  on public.autopilot_rules from PUBLIC, anon, authenticated, service_role;
 grant select, insert, update on public.autopilot_settings to authenticated;
 grant select, insert, update on public.autopilot_rules to authenticated;
 grant select, insert, update, delete on public.autopilot_settings to service_role;
@@ -493,49 +503,77 @@ begin
     raise exception 'autopilot policies deviate from the canonical definitions: %', v_bad_policy;
   end if;
 
-  -- Exact intended ACLs (catalog-faithful via aclexplode).
+  -- Exact intended ACLs, asserted PER TABLE x PER GRANTEE (no INTERSECT:
+  -- an intersection proves only common privileges, not each table's exact
+  -- set). PUBLIC is grantee OID 0 in aclexplode and has no pg_roles row,
+  -- so grantees are resolved without joining pg_roles. Each of the eight
+  -- (table, grantee) pairs must equal its intended exact privilege set.
   create temp table _autopilot_acl_checks on commit drop as
-    select c.relname, r.rolname, a.privilege_type
+    select c.relname,
+           case a.grantee when 0 then 'PUBLIC' else r.rolname end as grantee,
+           a.privilege_type
     from pg_class c,
          aclexplode(coalesce(c.relacl, '{}'::aclitem[])) as a(grantor, grantee, privilege_type, is_grantable)
-    join pg_roles r on r.oid = a.grantee
+    left join pg_roles r on r.oid = a.grantee
     where c.oid in ('public.autopilot_settings'::regclass, 'public.autopilot_rules'::regclass)
-      and r.rolname in ('anon', 'authenticated', 'service_role');
+      and (a.grantee = 0 or r.rolname in ('anon', 'authenticated', 'service_role'));
 
-  select
-    coalesce(string_agg(privilege_type, ',' order by privilege_type), '<none>')
+  select string_agg(
+    relname || ':' || grantee || '=' ||
+      coalesce((select string_agg(privilege_type, ',' order by privilege_type)
+                from _autopilot_acl_checks g
+                where g.relname = a.relname and g.grantee = a.grantee), '<none>'),
+    ' | ' order by relname, grantee)
   into v_anon_privs
-  from _autopilot_acl_checks where rolname = 'anon';
+  from (select distinct relname, grantee from _autopilot_acl_checks) a;
 
-  select
-    coalesce(string_agg(privilege_type, ',' order by privilege_type), '<none>')
-  into v_auth_privs
-  from (
-    select privilege_type from _autopilot_acl_checks where rolname = 'authenticated' and relname = 'autopilot_settings'
-    intersect
-    select privilege_type from _autopilot_acl_checks where rolname = 'authenticated' and relname = 'autopilot_rules'
-  ) p;
+  select 'autopilot_settings:PUBLIC=<none>'
+      || ' | autopilot_settings:anon=<none>'
+      || ' | autopilot_settings:authenticated=INSERT,SELECT,UPDATE'
+      || ' | autopilot_settings:service_role=DELETE,INSERT,SELECT,UPDATE'
+      || ' | autopilot_rules:PUBLIC=<none>'
+      || ' | autopilot_rules:anon=<none>'
+      || ' | autopilot_rules:authenticated=INSERT,SELECT,UPDATE'
+      || ' | autopilot_rules:service_role=DELETE,INSERT,SELECT,UPDATE'
+    into v_auth_privs;
+  if v_anon_privs is distinct from v_auth_privs then
+    -- Also cover (table, grantee) pairs that hold NO privileges at all
+    -- (absent from _autopilot_acl_checks and therefore absent from the
+    -- aggregate above): reconstruct all eight pairs explicitly.
+    select string_agg(
+      t.relname || ':' || t.grantee || '=' ||
+        coalesce((select string_agg(privilege_type, ',' order by privilege_type)
+                  from _autopilot_acl_checks g
+                  where g.relname = t.relname and g.grantee = t.grantee), '<none>'),
+      ' | ' order by t.relname, t.grantee)
+    into v_anon_privs
+    from (values ('autopilot_settings','PUBLIC'), ('autopilot_settings','anon'),
+                ('autopilot_settings','authenticated'), ('autopilot_settings','service_role'),
+                ('autopilot_rules','PUBLIC'), ('autopilot_rules','anon'),
+                ('autopilot_rules','authenticated'), ('autopilot_rules','service_role')
+         ) as t(relname, grantee);
+    raise exception 'autopilot table ACLs deviate from the canonical exact per-table/per-grantee matrix. expected: %; found: %', v_auth_privs, v_anon_privs;
+  end if;
 
-  select
-    coalesce(string_agg(privilege_type, ',' order by privilege_type), '<none>')
+  -- No column-level privileges may remain for PUBLIC or any client role
+  -- (an unexpected column ACL would bypass the table-level matrix).
+  select coalesce(string_agg(
+    c.relname || '.' || a2.attname || ':' ||
+      case a.grantee when 0 then 'PUBLIC' else r.rolname end || '=' || a.privilege_type,
+    ' | '), '<none>')
   into v_service_privs
-  from (
-    select privilege_type from _autopilot_acl_checks where rolname = 'service_role' and relname = 'autopilot_settings'
-    intersect
-    select privilege_type from _autopilot_acl_checks where rolname = 'service_role' and relname = 'autopilot_rules'
-  ) p;
+  from pg_class c
+  join pg_namespace n on n.oid = c.relnamespace
+  join pg_attribute a2 on a2.attrelid = c.oid and a2.attnum > 0 and not a2.attisdropped,
+       aclexplode(coalesce(a2.attacl, '{}'::aclitem[])) as a(grantor, grantee, privilege_type, is_grantable)
+  left join pg_roles r on r.oid = a.grantee
+  where c.oid in ('public.autopilot_settings'::regclass, 'public.autopilot_rules'::regclass)
+    and (a.grantee = 0 or r.rolname in ('anon', 'authenticated', 'service_role'));
+  if v_service_privs <> '<none>' then
+    raise exception 'autopilot tables must carry NO column-level privileges for PUBLIC/anon/authenticated/service_role; found: %', v_service_privs;
+  end if;
 
   drop table _autopilot_acl_checks;
-
-  if v_anon_privs <> '<none>' then
-    raise exception 'anon must hold NO direct privileges on autopilot tables; found: %', v_anon_privs;
-  end if;
-  if v_auth_privs <> 'INSERT,SELECT,UPDATE' then
-    raise exception 'authenticated autopilot privileges must be exactly SELECT,INSERT,UPDATE; found: %', v_auth_privs;
-  end if;
-  if v_service_privs <> 'DELETE,INSERT,SELECT,UPDATE' then
-    raise exception 'service_role autopilot privileges must be exactly SELECT,INSERT,UPDATE,DELETE; found: %', v_service_privs;
-  end if;
 end
 $assert_autopilot_canonical$;
 -- [SECTION: autopilot-canonical end]
@@ -4701,20 +4739,33 @@ $postflight$;
 -- baseline back, for both fresh construction and legacy convergence.
 --
 -- Deliberately does NOT call duewatch_ops.unknown_client_foreign_keys():
--- that function's allowlist is part of the archived chain's historical
--- end-state and predates the import tables (the same fact that made
--- 20260811000000 non-replay-safe). Calling it here would misreport the
--- import tables' own FKs as unknown. The assertions below check expected
--- facts directly instead.
+-- that function's final definition (refreshed by the archived
+-- 20260803021842) is NOT complete for the post-import schema — its
+-- allowlist predates the import tables and does not contain
+-- import_rows' composite/foreign-key pairs referencing clients and
+-- invoices (the same fact that made 20260811000000 non-replay-safe).
+-- Calling it here would misreport the import tables' own FKs as unknown.
+-- The assertions below check expected facts directly instead.
+--
+-- DORMANT LIMITATION (documented, intentional): execute_client_dedup()
+-- calls unknown_client_foreign_keys() as its blocking gate, and on the
+-- canonical state that gate returns the import_rows FKs as "unknown".
+-- Client dedup must not be enabled until import_rows reference behavior
+-- during client/invoice merge/delete is reviewed and proven. The current
+-- unknown-FK gate intentionally fails closed. (Regression-proven by
+-- PROOF 15 in run_canonical_proofs.sh.)
 -- ------------------------------------------------------------
 
 do $final_canonical_assertions$
 declare
   v_fk_def text;
+  v_fk_valid boolean;
+  v_idx_def text;
 begin
-  -- Invoice/client composite tenant FK, exact definition, validated.
-  select pg_get_constraintdef(oid) into v_fk_def
-  from pg_constraint
+  -- Invoice/client composite tenant FK: exact definition AND validated
+  -- (convalidated = true asserted explicitly, not just implied by name).
+  select pg_get_constraintdef(oid), con.convalidated into v_fk_def, v_fk_valid
+  from pg_constraint con
   where conrelid = 'public.invoices'::regclass
     and conname = 'invoices_user_id_client_id_fkey'
     and contype = 'f';
@@ -4722,6 +4773,9 @@ begin
     or v_fk_def not like 'FOREIGN KEY (user_id, client_id) REFERENCES clients(user_id, id)%'
     or v_fk_def not like '%ON DELETE SET NULL (client_id)%' then
     raise exception 'FINAL ASSERTION FAILED: invoice/client composite tenant FK is not canonical';
+  end if;
+  if v_fk_valid is distinct from true then
+    raise exception 'FINAL ASSERTION FAILED: invoice/client composite tenant FK is not validated (convalidated=%)', v_fk_valid;
   end if;
 
   -- Pending-only awaiting_signature uniqueness; legacy constraint gone.
@@ -4732,12 +4786,20 @@ begin
   ) then
     raise exception 'FINAL ASSERTION FAILED: legacy awaiting_signature three-column unique still present';
   end if;
-  if not exists (
-    select 1 from pg_indexes
-    where schemaname = 'public' and tablename = 'awaiting_signature'
-      and indexname = 'awaiting_signature_one_pending_per_invoice'
-  ) then
-    raise exception 'FINAL ASSERTION FAILED: pending-only awaiting_signature unique index missing';
+  -- The pending-only index is asserted by its FULL definition (unique,
+  -- exact key columns (user_id, invoice_id), predicate equivalent to
+  -- status = 'pending') — not merely by its name existing. A
+  -- same-name/wrong-definition index is rejected.
+  select pg_get_indexdef(i.oid) into v_idx_def
+  from pg_index x
+  join pg_class i on i.oid = x.indexrelid
+  join pg_class t on t.oid = x.indrelid
+  join pg_namespace n on n.oid = t.relnamespace
+  where n.nspname = 'public' and t.relname = 'awaiting_signature'
+    and i.relname = 'awaiting_signature_one_pending_per_invoice';
+  if v_idx_def is distinct from
+     'CREATE UNIQUE INDEX awaiting_signature_one_pending_per_invoice ON public.awaiting_signature USING btree (user_id, invoice_id) WHERE (status = ''pending''::text)' then
+    raise exception 'FINAL ASSERTION FAILED: pending-only awaiting_signature unique index missing or not the exact canonical definition: %', coalesce(v_idx_def, '<missing>');
   end if;
 
   -- Canonical era tables exist.
@@ -4754,7 +4816,9 @@ begin
     raise exception 'FINAL ASSERTION FAILED: one or more canonical public tables are missing';
   end if;
 
-  -- Canonical RPCs exist.
+  -- Canonical RPC EXISTENCE/completeness check (presence of the four
+  -- function names only — signatures/definitions/ACLs are not compared
+  -- here; definition fidelity is proven structurally by proofs 3+4).
   if not exists (
     select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
     where n.nspname = 'public' and p.proname in
@@ -4765,7 +4829,9 @@ begin
     raise exception 'FINAL ASSERTION FAILED: canonical RPC set incomplete';
   end if;
 
-  -- Canonical policies exist.
+  -- Canonical policy EXISTENCE/completeness check (presence of the five
+  -- (table, policy) pairs only — policy definitions are not compared
+  -- here).
   if exists (
     select 1 from (values
       ('payments', 'payments_select_own'),

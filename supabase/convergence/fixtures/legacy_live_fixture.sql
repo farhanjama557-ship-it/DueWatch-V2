@@ -22,11 +22,14 @@
 -- Column-level facts beyond the autopilot tables, the invoices FK, and
 -- the awaiting_signature constraint were not individually verified on
 -- live; the fixture therefore carries the schema.sql lineage columns for
--- the eight base tables. The baseline converges any MISSING additive
--- column via `add column if not exists`, and the convergence preflight
--- fails closed on any structure it does not recognize, so a live column
--- set that differs additively still converges; a non-additive difference
--- would stop the runbook before any mutation.
+-- the eight base tables. The convergence preflight requires EXACT
+-- equality with that shape (full structural fingerprint): if the live
+-- database differs in ANY way — including additively (an extra column,
+-- index, policy, or object) — convergence refuses before any mutation and
+-- the fingerprint must be re-verified against live before the window
+-- proceeds. The baseline's `add column if not exists` statements exist
+-- for FRESH construction ordering, not as a license for unverified live
+-- drift.
 --
 -- Expects: a database with the Supabase auth schema bootstrapped
 -- (auth.users with a primary key) and pgcrypto available.

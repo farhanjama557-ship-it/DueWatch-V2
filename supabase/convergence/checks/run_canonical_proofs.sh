@@ -17,10 +17,25 @@
 #      (one-time-tool contract; no weak "already canonical" shortcut)
 #   9  a failure in the FINAL canonical assertion stage (last step before
 #      commit) rolls the entire convergence back — legacy state intact
+#  10  ARBITRARY DRIFT: an unknown extra object (public.unexpected_drift)
+#      alongside an otherwise-perfect legacy state is REFUSED before any
+#      mutation; snapshot before/after identical
+#  11  SUBTLE DRIFT: drift INSIDE a recognized legacy object (unexpected
+#      column; unexpected index) is REFUSED before any mutation; snapshot
+#      before/after identical
+#  12  PUBLIC-privilege ACL proof: a legacy PUBLIC grant on an Autopilot
+#      table is canonicalized away; exact per-table/per-grantee matrix holds
+#  13  one-table-extra-privilege ACL proof: an extra privilege on ONLY ONE
+#      Autopilot table is canonicalized away; exact matrix holds
+#  14  column-ACL proof: an injected column-level privilege for anon is
+#      canonicalized away; no column ACLs remain for client roles/PUBLIC
+#  15  client-dedup FK-gate regression: on the canonical state
+#      unknown_client_foreign_keys() reports the import_rows FKs and
+#      execute_client_dedup's FK gate raises (dedup provably blocked)
 #   7  existing SQL test suites pass against the canonical baseline
 #   8  the active migration directory contains exactly the baseline file
 #      (no legacy migration is executable by standard tooling)
-# (Proof 9, executed between 6 and 7, proves final-assertion rollback.)
+# (Proof 9, executed between 6 and 10, proves final-assertion rollback.)
 #
 # Usage (from repo root, with the local stack running):
 #   ARTIFACT_DIR=./canonical-proofs-artifact \
@@ -68,6 +83,55 @@ fi
 log "Verified disposable local database target."
 
 ADMIN_DB_URL=$(echo "$BASE_DB_URL" | sed -E 's#/[^/]+$#/postgres#')
+
+# ---------------------------------------------------------------------------
+# Helper: assert the EXACT canonical Autopilot ACL matrix on a converged
+# database — per table x per grantee (PUBLIC, anon, authenticated,
+# service_role), table-level AND column-level. Zero deviations allowed:
+# every client-role/PUBLIC table privilege must be exactly the intended
+# set, PUBLIC/anon must hold nothing, and no column ACLs may exist.
+# ---------------------------------------------------------------------------
+assert_canonical_autopilot_acl() {
+  local db_url="$1" label="$2" bad
+  bad=$(psql "$db_url" -X -q -t -A -v ON_ERROR_STOP=1 -c "
+    with acl as (
+      select c.relname,
+             case a.grantee when 0 then 'PUBLIC' else r.rolname end as grantee,
+             a.privilege_type
+      from pg_class c,
+           aclexplode(coalesce(c.relacl, '{}'::aclitem[])) as a(grantor, grantee, privilege_type, is_grantable)
+      left join pg_roles r on r.oid = a.grantee
+      where c.oid in ('public.autopilot_settings'::regclass, 'public.autopilot_rules'::regclass)
+        and (a.grantee = 0 or r.rolname in ('anon', 'authenticated', 'service_role'))
+    ),
+    intended(relname, grantee, privilege_type) as (
+      values ('autopilot_settings','authenticated','INSERT'),
+             ('autopilot_settings','authenticated','SELECT'),
+             ('autopilot_settings','authenticated','UPDATE'),
+             ('autopilot_settings','service_role','DELETE'),
+             ('autopilot_settings','service_role','INSERT'),
+             ('autopilot_settings','service_role','SELECT'),
+             ('autopilot_settings','service_role','UPDATE'),
+             ('autopilot_rules','authenticated','INSERT'),
+             ('autopilot_rules','authenticated','SELECT'),
+             ('autopilot_rules','authenticated','UPDATE'),
+             ('autopilot_rules','service_role','DELETE'),
+             ('autopilot_rules','service_role','INSERT'),
+             ('autopilot_rules','service_role','SELECT'),
+             ('autopilot_rules','service_role','UPDATE')
+    )
+    select (select count(*) from ((select * from acl) except all (select * from intended)) x)
+         + (select count(*) from ((select * from intended) except all (select * from acl)) y)
+         + (select count(*)
+            from pg_class c
+            join pg_attribute a2 on a2.attrelid = c.oid and a2.attnum > 0 and not a2.attisdropped,
+                 aclexplode(coalesce(a2.attacl, '{}'::aclitem[])) as aa(grantor, grantee, privilege_type, is_grantable)
+            left join pg_roles r on r.oid = aa.grantee
+            where c.oid in ('public.autopilot_settings'::regclass, 'public.autopilot_rules'::regclass)
+              and (aa.grantee = 0 or r.rolname in ('anon', 'authenticated', 'service_role')))
+  ") || fail "$label: ACL matrix query failed"
+  [ "$bad" = "0" ] || fail "$label: autopilot ACL matrix is not exact after canonicalization ($bad deviations)"
+}
 
 # ---------------------------------------------------------------------------
 # Helper: create an independent database with the Supabase auth schema
@@ -313,6 +377,122 @@ PEND=$(psql "$FINAL_URL" -X -q -t -A -c "
 log "PROOF 9 PASSED: end-stage assertion failure rolled everything back (era objects absent, legacy FK intact, no pending index)."
 
 # ---------------------------------------------------------------------------
+# PROOF 10 — ARBITRARY DRIFT: an unknown extra object alongside an
+# otherwise-perfect legacy state must be refused BEFORE any mutation, and
+# the database must be byte-identical before/after. (Guards against the
+# old name-sampler preflight, which would have blessed this state.)
+# ---------------------------------------------------------------------------
+log "PROOF 10: arbitrary unknown extra object refused before mutation"
+DRIFT_URL=$(make_db canonical_drift_arbitrary)
+psql "$DRIFT_URL" -X -v ON_ERROR_STOP=1 -f "$FIXTURE" \
+  > "$ARTIFACT_DIR/drift_arbitrary_fixture.log" 2>&1 \
+  || { cat "$ARTIFACT_DIR/drift_arbitrary_fixture.log"; fail "fixture failed on arbitrary-drift DB"; }
+psql "$DRIFT_URL" -X -v ON_ERROR_STOP=1 \
+  -c "create table public.unexpected_drift (id integer);" \
+  >> "$ARTIFACT_DIR/drift_arbitrary_fixture.log" 2>&1 \
+  || { cat "$ARTIFACT_DIR/drift_arbitrary_fixture.log"; fail "could not inject unexpected_drift"; }
+snapshot_db "$DRIFT_URL" "$ARTIFACT_DIR/snapshot_drift_arbitrary_before.txt"
+if psql "$DRIFT_URL" -X -v ON_ERROR_STOP=1 -f "$CONVERGENCE" \
+     > "$ARTIFACT_DIR/drift_arbitrary_convergence.log" 2>&1; then
+  cat "$ARTIFACT_DIR/drift_arbitrary_convergence.log"
+  fail "convergence SUCCEEDED with an unknown extra object present — fingerprint preflight broken"
+fi
+grep -q "does not match the VERIFIED legacy baseline fingerprint" "$ARTIFACT_DIR/drift_arbitrary_convergence.log" \
+  || { cat "$ARTIFACT_DIR/drift_arbitrary_convergence.log"; fail "arbitrary-drift refusal failed for an unexpected reason"; }
+grep -q "RELATION|unexpected_drift|r" "$ARTIFACT_DIR/drift_arbitrary_convergence.log" \
+  || { cat "$ARTIFACT_DIR/drift_arbitrary_convergence.log"; fail "arbitrary-drift refusal diagnostics did not surface the unknown object"; }
+snapshot_db "$DRIFT_URL" "$ARTIFACT_DIR/snapshot_drift_arbitrary_after.txt"
+if diff -u "$ARTIFACT_DIR/snapshot_drift_arbitrary_before.txt" "$ARTIFACT_DIR/snapshot_drift_arbitrary_after.txt" \
+   > "$ARTIFACT_DIR/diff_drift_arbitrary.txt"; then
+  log "PROOF 10 PASSED: unknown extra object refused before mutation; snapshot identical."
+else
+  cat "$ARTIFACT_DIR/diff_drift_arbitrary.txt"
+  fail "arbitrary-drift refusal mutated the database"
+fi
+
+# ---------------------------------------------------------------------------
+# PROOF 11 — SUBTLE DRIFT: drift INSIDE an otherwise-recognized legacy
+# object (an unexpected column; then an unexpected index) must be refused
+# before any mutation, database unchanged. Both cases run on one DB: each
+# refusal is verified to be non-mutating, so the injections can be undone
+# cleanly between cases.
+# ---------------------------------------------------------------------------
+log "PROOF 11: subtle drift inside a recognized legacy object refused"
+DRIFT2_URL=$(make_db canonical_drift_subtle)
+psql "$DRIFT2_URL" -X -v ON_ERROR_STOP=1 -f "$FIXTURE" \
+  > "$ARTIFACT_DIR/drift_subtle_fixture.log" 2>&1 \
+  || { cat "$ARTIFACT_DIR/drift_subtle_fixture.log"; fail "fixture failed on subtle-drift DB"; }
+
+# Case A: unexpected column on a recognized table.
+psql "$DRIFT2_URL" -X -v ON_ERROR_STOP=1 -c "alter table public.events add column surprise_col text;" \
+  >> "$ARTIFACT_DIR/drift_subtle_fixture.log" 2>&1 \
+  || { cat "$ARTIFACT_DIR/drift_subtle_fixture.log"; fail "could not inject unexpected column"; }
+snapshot_db "$DRIFT2_URL" "$ARTIFACT_DIR/snapshot_drift_subtle_a_before.txt"
+if psql "$DRIFT2_URL" -X -v ON_ERROR_STOP=1 -f "$CONVERGENCE" \
+     > "$ARTIFACT_DIR/drift_subtle_a_convergence.log" 2>&1; then
+  cat "$ARTIFACT_DIR/drift_subtle_a_convergence.log"
+  fail "convergence SUCCEEDED despite an unexpected legacy column — fingerprint preflight broken"
+fi
+grep -q "does not match the VERIFIED legacy baseline fingerprint" "$ARTIFACT_DIR/drift_subtle_a_convergence.log" \
+  || { cat "$ARTIFACT_DIR/drift_subtle_a_convergence.log"; fail "subtle-drift (column) refusal failed for an unexpected reason"; }
+snapshot_db "$DRIFT2_URL" "$ARTIFACT_DIR/snapshot_drift_subtle_a_after.txt"
+diff -u "$ARTIFACT_DIR/snapshot_drift_subtle_a_before.txt" "$ARTIFACT_DIR/snapshot_drift_subtle_a_after.txt" \
+  > "$ARTIFACT_DIR/diff_drift_subtle_a.txt" \
+  || { cat "$ARTIFACT_DIR/diff_drift_subtle_a.txt"; fail "subtle-drift (column) refusal mutated the database"; }
+log "  case A (unexpected column): refused before mutation, unchanged."
+
+# Case B: unexpected index on a recognized table.
+psql "$DRIFT2_URL" -X -v ON_ERROR_STOP=1 \
+  -c "alter table public.events drop column surprise_col;" \
+  -c "create index events_surprise_idx on public.events (created_at);" \
+  >> "$ARTIFACT_DIR/drift_subtle_fixture.log" 2>&1 \
+  || { cat "$ARTIFACT_DIR/drift_subtle_fixture.log"; fail "could not inject unexpected index"; }
+snapshot_db "$DRIFT2_URL" "$ARTIFACT_DIR/snapshot_drift_subtle_b_before.txt"
+if psql "$DRIFT2_URL" -X -v ON_ERROR_STOP=1 -f "$CONVERGENCE" \
+     > "$ARTIFACT_DIR/drift_subtle_b_convergence.log" 2>&1; then
+  cat "$ARTIFACT_DIR/drift_subtle_b_convergence.log"
+  fail "convergence SUCCEEDED despite an unexpected legacy index — fingerprint preflight broken"
+fi
+grep -q "does not match the VERIFIED legacy baseline fingerprint" "$ARTIFACT_DIR/drift_subtle_b_convergence.log" \
+  || { cat "$ARTIFACT_DIR/drift_subtle_b_convergence.log"; fail "subtle-drift (index) refusal failed for an unexpected reason"; }
+snapshot_db "$DRIFT2_URL" "$ARTIFACT_DIR/snapshot_drift_subtle_b_after.txt"
+diff -u "$ARTIFACT_DIR/snapshot_drift_subtle_b_before.txt" "$ARTIFACT_DIR/snapshot_drift_subtle_b_after.txt" \
+  > "$ARTIFACT_DIR/diff_drift_subtle_b.txt" \
+  || { cat "$ARTIFACT_DIR/diff_drift_subtle_b.txt"; fail "subtle-drift (index) refusal mutated the database"; }
+log "PROOF 11 PASSED: subtle drift (column, index) refused before mutation, unchanged."
+
+# ---------------------------------------------------------------------------
+# PROOFS 12-14 — AUTOPILOT ACL CANONICALIZATION ADVERSARIAL PROOFS.
+# Each proof injects a specific disallowed privilege into the LEGACY
+# fixture state, converges, and then requires the EXACT canonical matrix
+# (per table x per grantee, incl. PUBLIC, table- and column-level): the
+# injected privilege must NOT survive.
+# ---------------------------------------------------------------------------
+acl_proof() {
+  local proof_no="$1" label="$2" inject_sql="$3" db
+  log "PROOF $proof_no: $label"
+  db=$(make_db "canonical_acl_p$proof_no")
+  psql "$db" -X -v ON_ERROR_STOP=1 -f "$FIXTURE" \
+    > "$ARTIFACT_DIR/acl_p${proof_no}_fixture.log" 2>&1 \
+    || { cat "$ARTIFACT_DIR/acl_p${proof_no}_fixture.log"; fail "fixture failed on ACL proof $proof_no DB"; }
+  psql "$db" -X -v ON_ERROR_STOP=1 -c "$inject_sql" \
+    >> "$ARTIFACT_DIR/acl_p${proof_no}_fixture.log" 2>&1 \
+    || { cat "$ARTIFACT_DIR/acl_p${proof_no}_fixture.log"; fail "could not inject ACL drift for proof $proof_no"; }
+  psql "$db" -X -v ON_ERROR_STOP=1 -f "$CONVERGENCE" \
+    > "$ARTIFACT_DIR/acl_p${proof_no}_convergence.log" 2>&1 \
+    || { cat "$ARTIFACT_DIR/acl_p${proof_no}_convergence.log"; fail "convergence failed on ACL proof $proof_no DB"; }
+  assert_canonical_autopilot_acl "$db" "PROOF $proof_no"
+  log "PROOF $proof_no PASSED: $label canonicalized away; exact ACL matrix holds."
+}
+
+acl_proof 12 "PUBLIC table privilege on an Autopilot table" \
+  "grant select on public.autopilot_settings to public;"
+acl_proof 13 "extra privilege on ONLY ONE Autopilot table" \
+  "grant delete on public.autopilot_rules to authenticated;"
+acl_proof 14 "column-level privilege for anon" \
+  "grant update (user_id) on public.autopilot_settings to anon;"
+
+# ---------------------------------------------------------------------------
 # PROOF 7 — existing SQL test suites against the canonical baseline.
 # ---------------------------------------------------------------------------
 log "PROOF 7: existing test suites against canonical baseline"
@@ -368,6 +548,38 @@ run_suite payments_reapply psql "$PAY_URL" -X -v ON_ERROR_STOP=1 \
 chmod +x supabase/tests/payments_foundation_concurrency_proof.sh
 run_suite payments_concurrency supabase/tests/payments_foundation_concurrency_proof.sh "$PAY_URL"
 log "PROOF 7 PASSED: claims/awaiting suites green against the canonical baseline; payments suite green via its CI bootstrap sequence against the archived migration."
+
+# ---------------------------------------------------------------------------
+# PROOF 15 — CLIENT-DEDUP FK-GATE REGRESSION (documented dormant
+# limitation): on the canonical state, the import_rows FK references to
+# clients/invoices are NOT in unknown_client_foreign_keys()'s allowlist,
+# so the gate reports them and execute_client_dedup's FK gate raises.
+# This proves dedup is BLOCKED (fails closed) rather than silently
+# proceeding. Client dedup must stay disabled until import_rows reference
+# behavior during client/invoice merge/delete is reviewed and proven.
+# ---------------------------------------------------------------------------
+log "PROOF 15: client-dedup FK gate fails closed on the canonical state"
+UNKNOWN_FKS=$(psql "$TESTS_URL" -X -q -t -A -v ON_ERROR_STOP=1 -c "
+  select count(*) || ':' || coalesce(string_agg(table_name || '.' || column_name, ',' order by table_name, column_name), '')
+  from duewatch_ops.unknown_client_foreign_keys()
+  where table_name = 'import_rows';")
+case "$UNKNOWN_FKS" in
+  [1-9]*":"*) ;;
+  *) fail "unknown_client_foreign_keys() did not report the import_rows FKs on the canonical state (got: $UNKNOWN_FKS) — the dedup gate is not provably blocking";;
+esac
+# Enable execution in a disposable copy of the gate config and prove the
+# execute path itself raises on the FK gate (not merely on 'disabled').
+if psql "$TESTS_URL" -X -q -v ON_ERROR_STOP=1 -c "update duewatch_ops.client_dedup_config set execution_enabled = true where singleton;" \
+     > "$ARTIFACT_DIR/dedup_gate.log" 2>&1 \
+   && psql "$TESTS_URL" -X -q -t -A -v ON_ERROR_STOP=1 \
+     -c "select duewatch_ops.execute_client_dedup(gen_random_uuid(), 'EXECUTE nope')" \
+     >> "$ARTIFACT_DIR/dedup_gate.log" 2>&1; then
+  cat "$ARTIFACT_DIR/dedup_gate.log"
+  fail "execute_client_dedup did NOT fail closed on the unknown-FK gate — dedup gate regression broken"
+fi
+grep -q "Unknown client/invoice foreign keys exist; execution blocked" "$ARTIFACT_DIR/dedup_gate.log" \
+  || { cat "$ARTIFACT_DIR/dedup_gate.log"; fail "execute_client_dedup failed for an unexpected reason (expected the FK gate refusal)"; }
+log "PROOF 15 PASSED: unknown_client_foreign_keys() reports import_rows FKs ($UNKNOWN_FKS); execute_client_dedup FK gate raises; dedup provably blocked."
 
 log "=== ALL CANONICAL PROOFS PASSED ==="
 exit 0

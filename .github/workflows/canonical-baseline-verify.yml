@@ -22,11 +22,17 @@ name: "Canonical Baseline Verification"
 #   8  the active migration directory contains exactly the baseline file
 #   9  a failure in the final canonical assertion stage (last step before
 #      commit) rolls the entire convergence back
+#  10  arbitrary unknown extra object refused before mutation (fingerprint)
+#  11  subtle drift inside a recognized legacy object refused before mutation
+#  12  PUBLIC privilege on an Autopilot table canonicalized to nothing
+#  13  one-table extra privilege canonicalized to the exact matrix
+#  14  injected column-level privilege canonicalized away
+#  15  client-dedup unknown-FK gate provably fails closed on canonical state
 #
 # Plus the no-ledger rehearsal (run_ledger_rehearsal.sh), which proves the
 # production ledger-bootstrap commands against a database with NO
 # supabase_migrations metadata, using the SAME pinned CLI version the
-# production window must use.
+# production window must use, and the JavaScript test suite (npm test).
 
 on:
   push:
@@ -85,6 +91,12 @@ jobs:
           chmod +x supabase/convergence/checks/run_ledger_rehearsal.sh
           ARTIFACT_DIR=./canonical-proofs-artifact \
             bash supabase/convergence/checks/run_ledger_rehearsal.sh
+
+      - name: "Run JavaScript test suite"
+        run: |
+          npm ci
+          npm test > canonical-proofs-artifact/npm_test.log 2>&1 || { cat canonical-proofs-artifact/npm_test.log; exit 1; }
+          tail -5 canonical-proofs-artifact/npm_test.log
 
       - name: "Upload verification artifacts"
         if: always()

@@ -66,6 +66,25 @@ Two tables were never in any migration — `autopilot_settings` and
 live-verified DDL is codified in the baseline's autopilot canonical
 section.
 
+## Dormant limitation: the client-dedup unknown-FK gate
+
+`duewatch_ops.unknown_client_foreign_keys()`'s FINAL definition (refreshed
+by the archived `20260803021842`) is **not complete for the post-import
+schema**: its allowlist predates the import tables and does not contain
+`import_rows`' foreign-key references to `clients` and `invoices`. On the
+canonical baseline state the function therefore returns rows
+(`import_rows.client_id` / `import_rows.invoice_id`), and
+`duewatch_ops.execute_client_dedup()` — which calls it as a blocking gate
+— fails closed.
+
+> Client dedup must not be enabled until import_rows reference behavior
+> during client/invoice merge/delete is reviewed and proven. The current
+> unknown-FK gate intentionally fails closed.
+
+This is a documented dormant limitation of PR A, not a defect to fix by
+blindly whitelisting the import_rows FK pairs. Regression-proven by
+PROOF 15 in `supabase/convergence/checks/run_canonical_proofs.sh`.
+
 ## Rules
 
 * **Never** move these files back into `supabase/migrations/`.
