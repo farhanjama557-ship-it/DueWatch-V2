@@ -664,6 +664,7 @@ drift_refusal_proof "PROOF 16B" "$TRIG2_URL" "$ARTIFACT_DIR/drift_trigger_disabl
 log "PROOF 17: inappropriate ownership of a recognized table refused"
 OWNER_URL=$(make_drift_db canonical_drift_owner)
 psql "$OWNER_URL" -X -v ON_ERROR_STOP=1 \
+  -c "grant usage, create on schema public to authenticated;" \
   -c "alter table public.invoices owner to authenticated;" \
   >> "$ARTIFACT_DIR/canonical_drift_owner_fixture.log" 2>&1 \
   || { cat "$ARTIFACT_DIR/canonical_drift_owner_fixture.log"; fail "could not re-own invoices"; }
