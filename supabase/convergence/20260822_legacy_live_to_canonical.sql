@@ -115,34 +115,6 @@ $preflight_refuse_mutated$;
 do $preflight_legacy_fingerprint$
 declare
   v_expected text := $fp$
-CONSTRAINT|autopilot_rules_pkey|p|PRIMARY KEY (id)|validated=true|deferrable=false|deferred=false
-CONSTRAINT|autopilot_rules_user_id_fkey|f|FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE|validated=true|deferrable=false|deferred=false
-CONSTRAINT|autopilot_runs_pkey|p|PRIMARY KEY (id)|validated=true|deferrable=false|deferred=false
-CONSTRAINT|autopilot_runs_user_id_fkey|f|FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE|validated=true|deferrable=false|deferred=false
-CONSTRAINT|autopilot_settings_pkey|p|PRIMARY KEY (id)|validated=true|deferrable=false|deferred=false
-CONSTRAINT|autopilot_settings_user_id_fkey|f|FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE|validated=true|deferrable=false|deferred=false
-CONSTRAINT|autopilot_settings_user_id_key|u|UNIQUE (user_id)|validated=true|deferrable=false|deferred=false
-CONSTRAINT|awaiting_signature_invoice_id_fkey|f|FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE CASCADE|validated=true|deferrable=false|deferred=false
-CONSTRAINT|awaiting_signature_pkey|p|PRIMARY KEY (id)|validated=true|deferrable=false|deferred=false
-CONSTRAINT|awaiting_signature_user_id_fkey|f|FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE|validated=true|deferrable=false|deferred=false
-CONSTRAINT|awaiting_signature_user_id_invoice_id_status_key|u|UNIQUE (user_id, invoice_id, status)|validated=true|deferrable=false|deferred=false
-CONSTRAINT|clients_pkey|p|PRIMARY KEY (id)|validated=true|deferrable=false|deferred=false
-CONSTRAINT|clients_user_id_fkey|f|FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE|validated=true|deferrable=false|deferred=false
-CONSTRAINT|events_invoice_id_fkey|f|FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE SET NULL|validated=true|deferrable=false|deferred=false
-CONSTRAINT|events_previous_action_id_fkey|f|FOREIGN KEY (previous_action_id) REFERENCES events(id)|validated=true|deferrable=false|deferred=false
-CONSTRAINT|events_pkey|p|PRIMARY KEY (id)|validated=true|deferrable=false|deferred=false
-CONSTRAINT|events_user_id_fkey|f|FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE|validated=true|deferrable=false|deferred=false
-CONSTRAINT|invoices_client_id_fkey|f|FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE|validated=true|deferrable=false|deferred=false
-CONSTRAINT|invoices_pkey|p|PRIMARY KEY (id)|validated=true|deferrable=false|deferred=false
-CONSTRAINT|invoices_user_id_fkey|f|FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE|validated=true|deferrable=false|deferred=false
-CONSTRAINT|line_items_invoice_id_fkey|f|FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE CASCADE|validated=true|deferrable=false|deferred=false
-CONSTRAINT|line_items_pkey|p|PRIMARY KEY (id)|validated=true|deferrable=false|deferred=false
-CONSTRAINT|line_items_user_id_fkey|f|FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE|validated=true|deferrable=false|deferred=false
-CONSTRAINT|profiles_id_fkey|f|FOREIGN KEY (id) REFERENCES auth.users(id) ON DELETE CASCADE|validated=true|deferrable=false|deferred=false
-CONSTRAINT|profiles_pkey|p|PRIMARY KEY (id)|validated=true|deferrable=false|deferred=false
-CONSTRAINT|reminders_invoice_id_fkey|f|FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE CASCADE|validated=true|deferrable=false|deferred=false
-CONSTRAINT|reminders_pkey|p|PRIMARY KEY (id)|validated=true|deferrable=false|deferred=false
-CONSTRAINT|reminders_user_id_fkey|f|FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE|validated=true|deferrable=false|deferred=false
 COLUMN|autopilot_rules.created_at|timestamp with time zone|true|now()
 COLUMN|autopilot_rules.enabled|boolean|true|true
 COLUMN|autopilot_rules.id|uuid|true|gen_random_uuid()
@@ -152,12 +124,6 @@ COLUMN|autopilot_rules.tone|text|true|'friendly'::text
 COLUMN|autopilot_rules.trigger_days|integer|true|-
 COLUMN|autopilot_rules.trigger_type|text|true|-
 COLUMN|autopilot_rules.user_id|uuid|true|-
-COLUMN|autopilot_settings.approval_required|boolean|true|true
-COLUMN|autopilot_settings.created_at|timestamp with time zone|true|now()
-COLUMN|autopilot_settings.enabled|boolean|true|false
-COLUMN|autopilot_settings.id|uuid|true|gen_random_uuid()
-COLUMN|autopilot_settings.updated_at|timestamp with time zone|true|now()
-COLUMN|autopilot_settings.user_id|uuid|true|-
 COLUMN|autopilot_runs.completed_at|timestamp with time zone|false|-
 COLUMN|autopilot_runs.errors|integer|true|0
 COLUMN|autopilot_runs.id|uuid|true|gen_random_uuid()
@@ -167,6 +133,12 @@ COLUMN|autopilot_runs.reminders_skipped|integer|true|0
 COLUMN|autopilot_runs.started_at|timestamp with time zone|true|now()
 COLUMN|autopilot_runs.status|text|true|'running'::text
 COLUMN|autopilot_runs.user_id|uuid|true|-
+COLUMN|autopilot_settings.approval_required|boolean|true|true
+COLUMN|autopilot_settings.created_at|timestamp with time zone|true|now()
+COLUMN|autopilot_settings.enabled|boolean|true|false
+COLUMN|autopilot_settings.id|uuid|true|gen_random_uuid()
+COLUMN|autopilot_settings.updated_at|timestamp with time zone|true|now()
+COLUMN|autopilot_settings.user_id|uuid|true|-
 COLUMN|awaiting_signature.action_type|text|true|'send_reminder'::text
 COLUMN|awaiting_signature.ai_context|jsonb|false|'{}'::jsonb
 COLUMN|awaiting_signature.ai_reason|text|true|-
@@ -196,8 +168,8 @@ COLUMN|events.lifecycle_stage|text|false|-
 COLUMN|events.lifecycle_state|text|false|-
 COLUMN|events.previous_action_id|uuid|false|-
 COLUMN|events.user_id|uuid|true|-
-COLUMN|invoices.amount|numeric(12,2)|true|0
 COLUMN|invoices.amount_paid|numeric(12,2)|true|0
+COLUMN|invoices.amount|numeric(12,2)|true|0
 COLUMN|invoices.autopilot_paused|boolean|true|false
 COLUMN|invoices.client_id|uuid|false|-
 COLUMN|invoices.created_at|timestamp with time zone|true|now()
@@ -227,8 +199,36 @@ COLUMN|reminders.id|uuid|true|gen_random_uuid()
 COLUMN|reminders.invoice_id|uuid|true|-
 COLUMN|reminders.title|text|true|-
 COLUMN|reminders.user_id|uuid|true|-
+CONSTRAINT|autopilot_rules.autopilot_rules_pkey|p|PRIMARY KEY (id)|validated=true|deferrable=false|deferred=false
+CONSTRAINT|autopilot_rules.autopilot_rules_user_id_fkey|f|FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE|validated=true|deferrable=false|deferred=false
+CONSTRAINT|autopilot_runs.autopilot_runs_pkey|p|PRIMARY KEY (id)|validated=true|deferrable=false|deferred=false
+CONSTRAINT|autopilot_runs.autopilot_runs_user_id_fkey|f|FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE|validated=true|deferrable=false|deferred=false
+CONSTRAINT|autopilot_settings.autopilot_settings_pkey|p|PRIMARY KEY (id)|validated=true|deferrable=false|deferred=false
+CONSTRAINT|autopilot_settings.autopilot_settings_user_id_fkey|f|FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE|validated=true|deferrable=false|deferred=false
+CONSTRAINT|autopilot_settings.autopilot_settings_user_id_key|u|UNIQUE (user_id)|validated=true|deferrable=false|deferred=false
+CONSTRAINT|awaiting_signature.awaiting_signature_invoice_id_fkey|f|FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE CASCADE|validated=true|deferrable=false|deferred=false
+CONSTRAINT|awaiting_signature.awaiting_signature_pkey|p|PRIMARY KEY (id)|validated=true|deferrable=false|deferred=false
+CONSTRAINT|awaiting_signature.awaiting_signature_user_id_fkey|f|FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE|validated=true|deferrable=false|deferred=false
+CONSTRAINT|awaiting_signature.awaiting_signature_user_id_invoice_id_status_key|u|UNIQUE (user_id, invoice_id, status)|validated=true|deferrable=false|deferred=false
+CONSTRAINT|clients.clients_pkey|p|PRIMARY KEY (id)|validated=true|deferrable=false|deferred=false
+CONSTRAINT|clients.clients_user_id_fkey|f|FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE|validated=true|deferrable=false|deferred=false
+CONSTRAINT|events.events_invoice_id_fkey|f|FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE SET NULL|validated=true|deferrable=false|deferred=false
+CONSTRAINT|events.events_pkey|p|PRIMARY KEY (id)|validated=true|deferrable=false|deferred=false
+CONSTRAINT|events.events_previous_action_id_fkey|f|FOREIGN KEY (previous_action_id) REFERENCES events(id)|validated=true|deferrable=false|deferred=false
+CONSTRAINT|events.events_user_id_fkey|f|FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE|validated=true|deferrable=false|deferred=false
+CONSTRAINT|invoices.invoices_client_id_fkey|f|FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE|validated=true|deferrable=false|deferred=false
+CONSTRAINT|invoices.invoices_pkey|p|PRIMARY KEY (id)|validated=true|deferrable=false|deferred=false
+CONSTRAINT|invoices.invoices_user_id_fkey|f|FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE|validated=true|deferrable=false|deferred=false
+CONSTRAINT|line_items.line_items_invoice_id_fkey|f|FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE CASCADE|validated=true|deferrable=false|deferred=false
+CONSTRAINT|line_items.line_items_pkey|p|PRIMARY KEY (id)|validated=true|deferrable=false|deferred=false
+CONSTRAINT|line_items.line_items_user_id_fkey|f|FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE|validated=true|deferrable=false|deferred=false
+CONSTRAINT|profiles.profiles_id_fkey|f|FOREIGN KEY (id) REFERENCES auth.users(id) ON DELETE CASCADE|validated=true|deferrable=false|deferred=false
+CONSTRAINT|profiles.profiles_pkey|p|PRIMARY KEY (id)|validated=true|deferrable=false|deferred=false
+CONSTRAINT|reminders.reminders_invoice_id_fkey|f|FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE CASCADE|validated=true|deferrable=false|deferred=false
+CONSTRAINT|reminders.reminders_pkey|p|PRIMARY KEY (id)|validated=true|deferrable=false|deferred=false
+CONSTRAINT|reminders.reminders_user_id_fkey|f|FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE|validated=true|deferrable=false|deferred=false
+FUNCTION|handle_new_user()|CREATE OR REPLACE FUNCTION public.handle_new_user()\n RETURNS trigger\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'public'\nAS $function$\nbegin\n  insert into public.profiles (id, email, full_name)\n  values (\n    new.id,\n    new.email,\n    coalesce(new.raw_user_meta_data ->> 'full_name', '')\n  )\n  on conflict (id) do nothing;\n  return new;\nend;\n$function$\n
 INDEX|autopilot_rules.autopilot_rules_pkey|CREATE UNIQUE INDEX autopilot_rules_pkey ON public.autopilot_rules USING btree (id)
-INDEX|autopilot_rules.autopilot_rules_user_id_idx|CREATE INDEX autopilot_rules_user_id_idx ON public.autopilot_rules USING btree (user_id)
 INDEX|autopilot_runs.autopilot_runs_pkey|CREATE UNIQUE INDEX autopilot_runs_pkey ON public.autopilot_runs USING btree (id)
 INDEX|autopilot_runs.autopilot_runs_user_idx|CREATE INDEX autopilot_runs_user_idx ON public.autopilot_runs USING btree (user_id, started_at DESC)
 INDEX|autopilot_settings.autopilot_settings_pkey|CREATE UNIQUE INDEX autopilot_settings_pkey ON public.autopilot_settings USING btree (id)
@@ -285,7 +285,7 @@ TABLE_RLS|invoices|rls=true,force=false
 TABLE_RLS|line_items|rls=true,force=false
 TABLE_RLS|profiles|rls=true,force=false
 TABLE_RLS|reminders|rls=true,force=false
-FUNCTION|handle_new_user()|CREATE OR REPLACE FUNCTION public.handle_new_user()\n RETURNS trigger\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'public'\n AS $function$\nbegin\n  insert into public.profiles (id, email, full_name)\n  values (\n    new.id,\n    new.email,\n    coalesce(new.raw_user_meta_data ->> 'full_name', '')\n  )\n  on conflict (id) do nothing;\n  return new;\nend;\n$function$
+
 $fp$;
   v_actual text;
   v_exp text[];
