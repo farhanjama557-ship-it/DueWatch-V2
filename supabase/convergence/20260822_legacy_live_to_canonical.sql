@@ -628,7 +628,7 @@ begin
   if not v_enabled then
     raise exception 'drifted state: the DueWatch-owned trigger on_auth_user_created on auth.users is DISABLED (expected enabled); refusing before any mutation';
   end if;
-  if v_def <> 'CREATE TRIGGER on_auth_user_created AFTER INSERT ON auth.users FOR EACH ROW EXECUTE FUNCTION public.handle_new_user()' then
+  if v_def <> 'CREATE TRIGGER on_auth_user_created AFTER INSERT ON auth.users FOR EACH ROW EXECUTE FUNCTION handle_new_user()' then
     raise exception 'drifted state: the on_auth_user_created trigger on auth.users does not match its exact canonical definition; actual: %', v_def;
   end if;
   if exists (
