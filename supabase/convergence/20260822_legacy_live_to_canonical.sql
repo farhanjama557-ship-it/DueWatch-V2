@@ -293,6 +293,9 @@ $fp$;
   v_i int;
   v_j int;
 begin
+  -- Normalize away stray leading/trailing newlines so only the fingerprint
+  -- CONTENT is compared.
+  v_expected := btrim(v_expected, chr(10));
   select string_agg(line, chr(10) order by line) into v_actual
   from (
     -- Exact inventory of EVERY public relation of every relkind: the ten
