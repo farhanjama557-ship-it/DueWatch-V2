@@ -652,7 +652,7 @@ drift_refusal_proof "PROOF 16A" "$TRIG_URL" "$ARTIFACT_DIR/drift_trigger_before.
 log "PROOF 16B: disabled expected auth.users trigger refused"
 TRIG2_URL=$(make_drift_db canonical_drift_trigger_disabled)
 psql "$TRIG2_URL" -X -v ON_ERROR_STOP=1 \
-  -c "alter trigger on_auth_user_created on auth.users disable;" \
+  -c "alter table auth.users disable trigger on_auth_user_created;" \
   >> "$ARTIFACT_DIR/canonical_drift_trigger_disabled_fixture.log" 2>&1 \
   || { cat "$ARTIFACT_DIR/canonical_drift_trigger_disabled_fixture.log"; fail "could not disable the auth.users trigger"; }
 snapshot_db "$TRIG2_URL" "$ARTIFACT_DIR/drift_trigger_disabled_before.txt"
