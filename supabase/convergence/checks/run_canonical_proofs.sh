@@ -99,7 +99,7 @@ assert_canonical_autopilot_acl() {
              case a.grantee when 0 then 'PUBLIC' else r.rolname end as grantee,
              a.privilege_type
       from pg_class c,
-           aclexplode(coalesce(c.relacl, '{}'::aclitem[])) as a(grantor, grantee, privilege_type, is_grantable)
+           aclexplode(coalesce(c.relacl, array[]::aclitem[])) as a(grantor, grantee, privilege_type, is_grantable)
       left join pg_roles r on r.oid = a.grantee
       where c.oid in ('public.autopilot_settings'::regclass, 'public.autopilot_rules'::regclass)
         and (a.grantee = 0 or r.rolname in ('anon', 'authenticated', 'service_role'))
@@ -124,8 +124,9 @@ assert_canonical_autopilot_acl() {
          + (select count(*) from ((select * from intended) except all (select * from acl)) y)
          + (select count(*)
             from pg_class c
-            join pg_attribute a2 on a2.attrelid = c.oid and a2.attnum > 0 and not a2.attisdropped,
-                 aclexplode(coalesce(a2.attacl, '{}'::aclitem[])) as aa(grantor, grantee, privilege_type, is_grantable)
+            join pg_attribute a2 on a2.attrelid = c.oid and a2.attnum > 0 and not a2.attisdropped
+                 and a2.attacl is not null
+            cross join lateral aclexplode(a2.attacl) as aa(grantor, grantee, privilege_type, is_grantable)
             left join pg_roles r on r.oid = aa.grantee
             where c.oid in ('public.autopilot_settings'::regclass, 'public.autopilot_rules'::regclass)
               and (aa.grantee = 0 or r.rolname in ('anon', 'authenticated', 'service_role')))
