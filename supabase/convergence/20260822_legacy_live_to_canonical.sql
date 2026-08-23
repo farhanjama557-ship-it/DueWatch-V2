@@ -298,7 +298,7 @@ begin
     -- Exact inventory of EVERY public relation of every relkind: the ten
     -- verified legacy tables and nothing else — no views, matviews,
     -- sequences, or foreign tables, no unknown extra tables.
-    select 'RELATION|' || c.relname || '|' || c.relkind as line
+    select 'RELATION|' || c.relname || '|' || c.relkind::text as line
     from pg_class c
     join pg_namespace n on n.oid = c.relnamespace
     where n.nspname = 'public' and c.relkind in ('r','p','v','m','S','f')
@@ -320,7 +320,7 @@ begin
     where n.nspname = 'public' and c.relkind in ('r','p')
     union all
     select 'CONSTRAINT|' || c.relname || '.' || con.conname
-         || '|' || con.contype
+         || '|' || con.contype::text
          || '|' || pg_get_constraintdef(con.oid)
          || '|validated=' || con.convalidated
          || '|deferrable=' || con.condeferrable
