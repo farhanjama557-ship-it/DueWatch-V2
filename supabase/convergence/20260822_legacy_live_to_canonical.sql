@@ -303,18 +303,6 @@ RELATION|invoices|r
 RELATION|line_items|r
 RELATION|profiles|r
 RELATION|reminders|r
-TABLE_GRANT|autopilot_rules|privilege=MAINTAIN,grantee=anon
-TABLE_GRANT|autopilot_rules|privilege=MAINTAIN,grantee=authenticated
-TABLE_GRANT|autopilot_rules|privilege=MAINTAIN,grantee=service_role
-TABLE_GRANT|autopilot_rules|privilege=REFERENCES,grantee=anon
-TABLE_GRANT|autopilot_rules|privilege=REFERENCES,grantee=authenticated
-TABLE_GRANT|autopilot_rules|privilege=REFERENCES,grantee=service_role
-TABLE_GRANT|autopilot_rules|privilege=TRIGGER,grantee=anon
-TABLE_GRANT|autopilot_rules|privilege=TRIGGER,grantee=authenticated
-TABLE_GRANT|autopilot_rules|privilege=TRIGGER,grantee=service_role
-TABLE_GRANT|autopilot_rules|privilege=TRUNCATE,grantee=anon
-TABLE_GRANT|autopilot_rules|privilege=TRUNCATE,grantee=authenticated
-TABLE_GRANT|autopilot_rules|privilege=TRUNCATE,grantee=service_role
 TABLE_GRANT|autopilot_runs|privilege=MAINTAIN,grantee=anon
 TABLE_GRANT|autopilot_runs|privilege=MAINTAIN,grantee=authenticated
 TABLE_GRANT|autopilot_runs|privilege=MAINTAIN,grantee=service_role
@@ -327,18 +315,6 @@ TABLE_GRANT|autopilot_runs|privilege=TRIGGER,grantee=service_role
 TABLE_GRANT|autopilot_runs|privilege=TRUNCATE,grantee=anon
 TABLE_GRANT|autopilot_runs|privilege=TRUNCATE,grantee=authenticated
 TABLE_GRANT|autopilot_runs|privilege=TRUNCATE,grantee=service_role
-TABLE_GRANT|autopilot_settings|privilege=MAINTAIN,grantee=anon
-TABLE_GRANT|autopilot_settings|privilege=MAINTAIN,grantee=authenticated
-TABLE_GRANT|autopilot_settings|privilege=MAINTAIN,grantee=service_role
-TABLE_GRANT|autopilot_settings|privilege=REFERENCES,grantee=anon
-TABLE_GRANT|autopilot_settings|privilege=REFERENCES,grantee=authenticated
-TABLE_GRANT|autopilot_settings|privilege=REFERENCES,grantee=service_role
-TABLE_GRANT|autopilot_settings|privilege=TRIGGER,grantee=anon
-TABLE_GRANT|autopilot_settings|privilege=TRIGGER,grantee=authenticated
-TABLE_GRANT|autopilot_settings|privilege=TRIGGER,grantee=service_role
-TABLE_GRANT|autopilot_settings|privilege=TRUNCATE,grantee=anon
-TABLE_GRANT|autopilot_settings|privilege=TRUNCATE,grantee=authenticated
-TABLE_GRANT|autopilot_settings|privilege=TRUNCATE,grantee=service_role
 TABLE_GRANT|awaiting_signature|privilege=MAINTAIN,grantee=anon
 TABLE_GRANT|awaiting_signature|privilege=MAINTAIN,grantee=authenticated
 TABLE_GRANT|awaiting_signature|privilege=MAINTAIN,grantee=service_role
@@ -536,6 +512,9 @@ begin
     -- Explicit security-relevant table privileges (catalog-faithful
     -- aclexplode of relacl — explicit entries only, no acldefault
     -- expansion; grantors are irrelevant). PUBLIC is grantee OID 0.
+    -- The two Autopilot tables are the one documented exception: their
+    -- ACL drift is deterministically canonicalized by the baseline with
+    -- exact postcondition assertion (proofs 12-14), not refused here.
     select 'TABLE_GRANT|' || c.relname
          || '|privilege=' || a.privilege_type
          || ',grantee=' || case a.grantee when 0 then 'PUBLIC' else r.rolname end
@@ -545,8 +524,10 @@ begin
     left join pg_roles r on r.oid = a.grantee
     where n.nspname = 'public' and c.relkind in ('r','p')
       and (a.grantee = 0 or r.rolname in ('anon', 'authenticated', 'service_role'))
+      and c.relname not in ('autopilot_settings', 'autopilot_rules')
     union all
-    -- Explicit column-level privileges (attacl), same grantees.
+    -- Explicit column-level privileges (attacl), same grantees, same
+    -- Autopilot exception as above.
     select 'COLUMN_GRANT|' || c.relname || '.' || g.attname
          || '|privilege=' || a.privilege_type
          || ',grantee=' || case a.grantee when 0 then 'PUBLIC' else r.rolname end
@@ -558,6 +539,7 @@ begin
     left join pg_roles r on r.oid = a.grantee
     where n.nspname = 'public' and c.relkind in ('r','p')
       and (a.grantee = 0 or r.rolname in ('anon', 'authenticated', 'service_role'))
+      and c.relname not in ('autopilot_settings', 'autopilot_rules')
     union all
     -- Explicit function EXECUTE privileges (proacl), same grantees.
     select 'FUNCTION_GRANT|' || p.proname
