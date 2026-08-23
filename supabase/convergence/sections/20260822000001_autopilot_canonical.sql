@@ -110,6 +110,7 @@ created_at|timestamp with time zone|NO|now()$ddl$;
   v_auth_privs text;
   v_service_privs text;
   v_bad_policy text;
+  v_acl_pair record;
 begin
   -- Columns: name/type/nullability/default, exact set and order.
   select coalesce(string_agg(
@@ -211,42 +212,27 @@ begin
     where c.oid in ('public.autopilot_settings'::regclass, 'public.autopilot_rules'::regclass)
       and (a.grantee = 0 or r.rolname in ('anon', 'authenticated', 'service_role'));
 
-  select string_agg(
-    relname || ':' || grantee || '=' ||
-      coalesce((select string_agg(privilege_type, ',' order by privilege_type)
-                from _autopilot_acl_checks g
-                where g.relname = a.relname and g.grantee = a.grantee), '<none>'),
-    ' | ' order by relname, grantee)
-  into v_anon_privs
-  from (select distinct relname, grantee from _autopilot_acl_checks) a;
-
-  select 'autopilot_settings:PUBLIC=<none>'
-      || ' | autopilot_settings:anon=<none>'
-      || ' | autopilot_settings:authenticated=INSERT,SELECT,UPDATE'
-      || ' | autopilot_settings:service_role=DELETE,INSERT,SELECT,UPDATE'
-      || ' | autopilot_rules:PUBLIC=<none>'
-      || ' | autopilot_rules:anon=<none>'
-      || ' | autopilot_rules:authenticated=INSERT,SELECT,UPDATE'
-      || ' | autopilot_rules:service_role=DELETE,INSERT,SELECT,UPDATE'
-    into v_auth_privs;
-  if v_anon_privs is distinct from v_auth_privs then
-    -- Also cover (table, grantee) pairs that hold NO privileges at all
-    -- (absent from _autopilot_acl_checks and therefore absent from the
-    -- aggregate above): reconstruct all eight pairs explicitly.
-    select string_agg(
-      t.relname || ':' || t.grantee || '=' ||
-        coalesce((select string_agg(privilege_type, ',' order by privilege_type)
-                  from _autopilot_acl_checks g
-                  where g.relname = t.relname and g.grantee = t.grantee), '<none>'),
-      ' | ' order by t.relname, t.grantee)
-    into v_anon_privs
-    from (values ('autopilot_settings','PUBLIC'), ('autopilot_settings','anon'),
-                ('autopilot_settings','authenticated'), ('autopilot_settings','service_role'),
-                ('autopilot_rules','PUBLIC'), ('autopilot_rules','anon'),
-                ('autopilot_rules','authenticated'), ('autopilot_rules','service_role')
-         ) as t(relname, grantee);
-    raise exception 'autopilot table ACLs deviate from the canonical exact per-table/per-grantee matrix. expected: %; found: %', v_auth_privs, v_anon_privs;
-  end if;
+  for v_acl_pair in
+    select * from (values
+      ('autopilot_settings','PUBLIC','<none>'),
+      ('autopilot_settings','anon','<none>'),
+      ('autopilot_settings','authenticated','INSERT,SELECT,UPDATE'),
+      ('autopilot_settings','service_role','DELETE,INSERT,SELECT,UPDATE'),
+      ('autopilot_rules','PUBLIC','<none>'),
+      ('autopilot_rules','anon','<none>'),
+      ('autopilot_rules','authenticated','INSERT,SELECT,UPDATE'),
+      ('autopilot_rules','service_role','DELETE,INSERT,SELECT,UPDATE')
+    ) p(relname, grantee, expected_privs)
+  loop
+    select coalesce(string_agg(privilege_type, ',' order by privilege_type), '<none>')
+      into v_anon_privs
+      from _autopilot_acl_checks
+      where relname = v_acl_pair.relname and grantee = v_acl_pair.grantee;
+    if v_anon_privs <> v_acl_pair.expected_privs then
+      raise exception 'autopilot table ACL deviates from the canonical exact matrix: %.% expected [%] found [%]',
+        v_acl_pair.relname, v_acl_pair.grantee, v_acl_pair.expected_privs, v_anon_privs;
+    end if;
+  end loop;
 
   -- No column-level privileges may remain for PUBLIC or any client role
   -- (an unexpected column ACL would bypass the table-level matrix).
