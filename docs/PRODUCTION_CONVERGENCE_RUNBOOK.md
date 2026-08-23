@@ -21,8 +21,9 @@ Purpose: move the legacy production database (verified live state, 2026-08-22) t
 2. Supabase CLI **2.109.1** installed locally: `supabase --version`.
 3. psql client available (any recent version).
 4. **[PROD]** A verified backup / restore point exists for the production project — restore has been TESTED, not assumed. This is the only destructive recovery path.
-5. **[PROD]** The live database matches the verified legacy baseline EXACTLY: the convergence preflight enforces a full structural fingerprint (exact public-schema inventory, columns, constraints, indexes, policies, RLS flags, and function definitions — not just the 10 table names; no `duewatch_ops`, import, claims, or payments objects, and no extra or drifted objects of any kind). If the fingerprint refuses, STOP: do not weaken the fingerprint; re-verify live and re-derive it first.
-6. A maintenance-window decision has been made (the convergence holds brief locks; the baseline is one transaction; the run is minutes, not hours, on this data size).
+5. **[PROD]** The live database matches the verified legacy baseline EXACTLY: the convergence preflight enforces a full structural + security fingerprint (exact public-schema inventory, columns, constraints, indexes, policies, RLS flags, function definitions, non-internal triggers on the application tables, the DueWatch-owned `on_auth_user_created` trigger on auth.users asserted separately, object ownership by normalized role name, and the explicit security-relevant privilege state for PUBLIC/anon/authenticated/service_role across tables, columns, and function EXECUTE — not just the 10 table names; no `duewatch_ops`, import, claims, or payments objects, and no extra or drifted objects of any kind). If the fingerprint refuses, STOP: do not weaken the fingerprint; re-verify live and re-derive it first.
+6. **[PROD]** Ownership specifically: the fingerprint requires every application table/function to be owned by the platform `postgres` role (role NAME, never OID). If production ownership differs (e.g. a custom role), the window must re-verify and re-derive the trusted-owner expectation BEFORE proceeding — an owner change is never silently accepted. anon/authenticated/service_role or any unknown custom role owning a DueWatch object always refuses.
+7. A maintenance-window decision has been made (the convergence holds brief locks; the baseline is one transaction; the run is minutes, not hours, on this data size).
 
 ## 2. Local rehearsal (mandatory, immediately before the window)
 
@@ -64,7 +65,7 @@ psql "$PROD_DB_URL" -X -v ON_ERROR_STOP=1 \
   -f supabase/convergence/20260822_legacy_live_to_canonical.sql
 ```
 
-* Expected on the verified legacy state: the preflight NOTICE ("verified legacy baseline fingerprint matched exactly"), the baseline's one transaction ending with "final canonical assertions: all passed (inside the mutation transaction, before commit)", then the informational PHASE 2 checks, exit 0.
+* Expected on the verified legacy state: the preflight NOTICE ("verified legacy baseline fingerprint matched exactly (inventory, columns, constraints, indexes, policies, RLS, functions, triggers, ownership, ACLs)"), the auth.users trigger NOTICE, the baseline's one transaction ending with "final canonical assertions: all passed (inside the mutation transaction, before commit)", then the informational PHASE 2 checks, exit 0.
 * Any failure: either before any mutation (preflight) or inside the baseline's single transaction — including the FINAL canonical assertions, which run immediately before commit. Nothing partial remains. Go to §4.
 * A SECOND invocation after a successful convergence is EXPECTED to fail closed ("already-mutated state") without changing anything — this is a one-time tool by contract, not a bug.
 
@@ -147,6 +148,7 @@ merge/delete is reviewed and proven.
 | Rehearsal CLI | 2.109.1 |
 | Rehearsal Postgres | 17.6 |
 | repair self-initializes missing metadata | YES (observed; fallback unused) |
-| Fresh-chain proofs | 15/15 PASS (2026-08-22, incl. fingerprint/ACL/dedup-gate proofs) |
+| Fresh-chain proofs | 19/19 PASS (2026-08-22, incl. fingerprint/trigger/ownership/ACL/dedup-gate proofs + data preservation) |
+| Data preservation | PASS — every pre-existing row/column value preserved except the two documented transformations (clients identity backfill; client_source_identities backfill) |
 | Payments/claims/awaiting suites | PASS (canonical + CI-bootstrap paths) |
 | Production Postgres major | NOT VERIFIED (check in 3.1) |

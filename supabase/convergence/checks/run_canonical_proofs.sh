@@ -32,6 +32,26 @@
 #  15  client-dedup FK-gate regression: on the canonical state
 #      unknown_client_foreign_keys() reports the import_rows FKs and
 #      execute_client_dedup's FK gate raises (dedup provably blocked)
+#  16A TRIGGER DRIFT (unexpected): an unknown trigger on a recognized
+#      public table is refused before mutation; normalized structural
+#      snapshot identical before/after
+#  16B TRIGGER DRIFT (expected, disabled): disabling the DueWatch-owned
+#      on_auth_user_created trigger on auth.users is refused before
+#      mutation; snapshot identical
+#  17  OWNERSHIP DRIFT: re-owning a recognized legacy table to an
+#      inappropriate client role is refused before mutation; snapshot
+#      identical
+#  18  BASE-TABLE/-column/FUNCTION ACL DRIFT: unexpected security-relevant
+#      grants outside Autopilot (table DELETE to anon; column UPDATE to
+#      anon; function EXECUTE to authenticated) are refused before
+#      mutation; snapshots identical (fail-closed preferred over
+#      canonicalization for non-Autopilot legacy objects)
+#  19  LEGACY BUSINESS DATA PRESERVATION: every pre-existing business row
+#      in all ten legacy tables survives convergence with identical
+#      values in every pre-existing column (compared as a deterministic
+#      UTC-normalized row rendering), plus exact assertions of the two
+#      intentional, documented transformations (clients identity-column
+#      backfill; client_source_identities backfill rows)
 #   7  existing SQL test suites pass against the canonical baseline
 #   8  the active migration directory contains exactly the baseline file
 #      (no legacy migration is executable by standard tooling)
@@ -581,6 +601,190 @@ fi
 grep -q "Unknown client/invoice foreign keys exist; execution blocked" "$ARTIFACT_DIR/dedup_gate.log" \
   || { cat "$ARTIFACT_DIR/dedup_gate.log"; fail "execute_client_dedup failed for an unexpected reason (expected the FK gate refusal)"; }
 log "PROOF 15 PASSED: unknown_client_foreign_keys() reports import_rows FKs ($UNKNOWN_FKS); execute_client_dedup FK gate raises; dedup provably blocked."
+
+# ---------------------------------------------------------------------------
+# Shared helper: run the convergence against a drifted legacy fixture and
+# require (a) refusal, (b) the fingerprint refusal reason, and (c) an
+# UNCHANGED normalized structural snapshot before/after (no mutation).
+# ---------------------------------------------------------------------------
+drift_refusal_proof() {
+  local label="$1" db="$2" snapshot_before="$3" log_prefix="$4"
+  if psql "$db" -X -v ON_ERROR_STOP=1 -f "$CONVERGENCE" \
+       > "$ARTIFACT_DIR/${log_prefix}_convergence.log" 2>&1; then
+    cat "$ARTIFACT_DIR/${log_prefix}_convergence.log"
+    fail "$label: convergence SUCCEEDED despite the injected drift — fingerprint preflight broken"
+  fi
+  grep -q "refusing before any mutation" "$ARTIFACT_DIR/${log_prefix}_convergence.log" \
+    || { cat "$ARTIFACT_DIR/${log_prefix}_convergence.log"; fail "$label: refusal failed for an unexpected reason (expected a pre-mutation refusal)"; }
+  snapshot_db "$db" "$ARTIFACT_DIR/${log_prefix}_after.txt"
+  if diff -u "$snapshot_before" "$ARTIFACT_DIR/${log_prefix}_after.txt" \
+     > "$ARTIFACT_DIR/${log_prefix}_diff.txt"; then
+    log "$label PASSED: refused before mutation; normalized structural snapshot identical."
+  else
+    cat "$ARTIFACT_DIR/${log_prefix}_diff.txt"
+    fail "$label: refusal mutated the database"
+  fi
+}
+
+make_drift_db() {
+  local db; db=$(make_db "$1")
+  psql "$db" -X -v ON_ERROR_STOP=1 -f "$FIXTURE" \
+    > "$ARTIFACT_DIR/$1_fixture.log" 2>&1 \
+    || { cat "$ARTIFACT_DIR/$1_fixture.log"; fail "fixture failed on $1 DB"; }
+  echo "$db"
+}
+
+# ---------------------------------------------------------------------------
+# PROOF 16A — TRIGGER DRIFT (unexpected trigger on a recognized table).
+# ---------------------------------------------------------------------------
+log "PROOF 16A: unexpected trigger on a recognized public table refused"
+TRIG_URL=$(make_drift_db canonical_drift_trigger)
+psql "$TRIG_URL" -X -v ON_ERROR_STOP=1 \
+  -c "create trigger unexpected_drift_trig after insert on public.events for each row execute function public.handle_new_user();" \
+  >> "$ARTIFACT_DIR/canonical_drift_trigger_fixture.log" 2>&1 \
+  || { cat "$ARTIFACT_DIR/canonical_drift_trigger_fixture.log"; fail "could not inject unexpected trigger"; }
+snapshot_db "$TRIG_URL" "$ARTIFACT_DIR/drift_trigger_before.txt"
+drift_refusal_proof "PROOF 16A" "$TRIG_URL" "$ARTIFACT_DIR/drift_trigger_before.txt" "drift_trigger"
+
+# ---------------------------------------------------------------------------
+# PROOF 16B — TRIGGER DRIFT (expected DueWatch-owned trigger disabled).
+# ---------------------------------------------------------------------------
+log "PROOF 16B: disabled expected auth.users trigger refused"
+TRIG2_URL=$(make_drift_db canonical_drift_trigger_disabled)
+psql "$TRIG2_URL" -X -v ON_ERROR_STOP=1 \
+  -c "alter trigger on_auth_user_created on auth.users disable;" \
+  >> "$ARTIFACT_DIR/canonical_drift_trigger_disabled_fixture.log" 2>&1 \
+  || { cat "$ARTIFACT_DIR/canonical_drift_trigger_disabled_fixture.log"; fail "could not disable the auth.users trigger"; }
+snapshot_db "$TRIG2_URL" "$ARTIFACT_DIR/drift_trigger_disabled_before.txt"
+drift_refusal_proof "PROOF 16B" "$TRIG2_URL" "$ARTIFACT_DIR/drift_trigger_disabled_before.txt" "drift_trigger_disabled"
+
+# ---------------------------------------------------------------------------
+# PROOF 17 — OWNERSHIP DRIFT (recognized table re-owned to a client role).
+# ---------------------------------------------------------------------------
+log "PROOF 17: inappropriate ownership of a recognized table refused"
+OWNER_URL=$(make_drift_db canonical_drift_owner)
+psql "$OWNER_URL" -X -v ON_ERROR_STOP=1 \
+  -c "alter table public.invoices owner to authenticated;" \
+  >> "$ARTIFACT_DIR/canonical_drift_owner_fixture.log" 2>&1 \
+  || { cat "$ARTIFACT_DIR/canonical_drift_owner_fixture.log"; fail "could not re-own invoices"; }
+snapshot_db "$OWNER_URL" "$ARTIFACT_DIR/drift_owner_before.txt"
+drift_refusal_proof "PROOF 17" "$OWNER_URL" "$ARTIFACT_DIR/drift_owner_before.txt" "drift_owner"
+
+# ---------------------------------------------------------------------------
+# PROOF 18 — SECURITY-RELEVANT ACL DRIFT OUTSIDE AUTOPILOT (fail-closed).
+# Three independent cases on one DB: an unexpected table privilege, an
+# unexpected column privilege, and an unexpected function EXECUTE grant.
+# For non-Autopilot legacy objects the fingerprint refuses (option 1 of
+# the drift invariant); the Autopilot canonicalization (option 2) is
+# proven by PROOFS 12-14.
+# ---------------------------------------------------------------------------
+log "PROOF 18: unexpected non-Autopilot ACL drift refused (table, column, function)"
+ACLDRIFT_URL=$(make_drift_db canonical_drift_acl)
+
+psql "$ACLDRIFT_URL" -X -v ON_ERROR_STOP=1 \
+  -c "grant delete on public.invoices to anon;" \
+  >> "$ARTIFACT_DIR/canonical_drift_acl_fixture.log" 2>&1 \
+  || { cat "$ARTIFACT_DIR/canonical_drift_acl_fixture.log"; fail "could not inject table ACL drift"; }
+snapshot_db "$ACLDRIFT_URL" "$ARTIFACT_DIR/drift_acl_table_before.txt"
+drift_refusal_proof "PROOF 18 (table DELETE to anon)" "$ACLDRIFT_URL" "$ARTIFACT_DIR/drift_acl_table_before.txt" "drift_acl_table"
+
+psql "$ACLDRIFT_URL" -X -v ON_ERROR_STOP=1 \
+  -c "revoke delete on public.invoices from anon;" \
+  -c "grant update (notes) on public.invoices to anon;" \
+  >> "$ARTIFACT_DIR/canonical_drift_acl_fixture.log" 2>&1 \
+  || { cat "$ARTIFACT_DIR/canonical_drift_acl_fixture.log"; fail "could not inject column ACL drift"; }
+snapshot_db "$ACLDRIFT_URL" "$ARTIFACT_DIR/drift_acl_column_before.txt"
+drift_refusal_proof "PROOF 18 (column UPDATE to anon)" "$ACLDRIFT_URL" "$ARTIFACT_DIR/drift_acl_column_before.txt" "drift_acl_column"
+
+psql "$ACLDRIFT_URL" -X -v ON_ERROR_STOP=1 \
+  -c "revoke update (notes) on public.invoices from anon;" \
+  -c "grant execute on function public.handle_new_user() to authenticated;" \
+  >> "$ARTIFACT_DIR/canonical_drift_acl_fixture.log" 2>&1 \
+  || { cat "$ARTIFACT_DIR/canonical_drift_acl_fixture.log"; fail "could not inject function EXECUTE drift"; }
+snapshot_db "$ACLDRIFT_URL" "$ARTIFACT_DIR/drift_acl_function_before.txt"
+drift_refusal_proof "PROOF 18 (function EXECUTE to authenticated)" "$ACLDRIFT_URL" "$ARTIFACT_DIR/drift_acl_function_before.txt" "drift_acl_function"
+
+# ---------------------------------------------------------------------------
+# PROOF 19 — LEGACY BUSINESS DATA PRESERVATION.
+#
+# Distinct from schema equivalence: proves every PRE-EXISTING business row
+# in all ten legacy tables survives convergence with identical values in
+# every pre-existing column (deterministic UTC-normalized row rendering,
+# compared by primary key), and that the ONLY row-level effects are the
+# two intentional, documented transformations:
+#   1. clients identity backfill (canonical_id = id; normalized_* derived
+#      exactly from the source columns via the migration's own functions);
+#   2. one client_source_identities backfill row per legacy client
+#      (source='duewatch', external_id = client_id::text, provenance
+#      canonical_id = client id; the volatile backfilled_at timestamp is
+#      excluded from comparison).
+# ---------------------------------------------------------------------------
+log "PROOF 19: legacy business data preservation across convergence"
+DATA_URL=$(make_drift_db canonical_datapres)
+DATA_TABLES="profiles clients invoices line_items reminders events awaiting_signature autopilot_settings autopilot_rules autopilot_runs"
+: > "$ARTIFACT_DIR/datapres_columns.txt"
+for t in $DATA_TABLES; do
+  COLS=$(psql "$DATA_URL" -X -q -t -A -v ON_ERROR_STOP=1 -c "
+    select string_agg(column_name, ',' order by ordinal_position)
+    from information_schema.columns
+    where table_schema = 'public' and table_name = '$t';")
+  [ -n "$COLS" ] || fail "PROOF 19: no columns found for $t"
+  echo "$t|$COLS" >> "$ARTIFACT_DIR/datapres_columns.txt"
+  PGTZ=UTC psql "$DATA_URL" -X -q -t -A -v ON_ERROR_STOP=1 -c "
+    select 'ROW|$t|' || id || '|' || row_to_json(q.*)::text
+    from (select $COLS from public.$t) q order by id" \
+    > "$ARTIFACT_DIR/datapres_before_$t.txt" \
+    || fail "PROOF 19: before-dump failed for $t"
+done
+psql "$DATA_URL" -X -v ON_ERROR_STOP=1 -f "$CONVERGENCE" \
+  > "$ARTIFACT_DIR/datapres_convergence.log" 2>&1 \
+  || { cat "$ARTIFACT_DIR/datapres_convergence.log"; fail "PROOF 19: convergence failed on the data-preservation DB"; }
+while IFS='|' read -r t cols; do
+  PGTZ=UTC psql "$DATA_URL" -X -q -t -A -v ON_ERROR_STOP=1 -c "
+    select 'ROW|$t|' || id || '|' || row_to_json(q.*)::text
+    from (select $cols from public.$t) q order by id" \
+    > "$ARTIFACT_DIR/datapres_after_$t.txt" \
+    || fail "PROOF 19: after-dump failed for $t"
+  if ! diff -u "$ARTIFACT_DIR/datapres_before_$t.txt" "$ARTIFACT_DIR/datapres_after_$t.txt" \
+       > "$ARTIFACT_DIR/datapres_diff_$t.txt"; then
+    cat "$ARTIFACT_DIR/datapres_diff_$t.txt"
+    fail "PROOF 19: pre-existing rows/columns of public.$t changed across convergence"
+  fi
+  log "  $t: all pre-existing rows and column values preserved exactly"
+done < "$ARTIFACT_DIR/datapres_columns.txt"
+
+# Intentional transformation 1: clients identity backfill, exact values.
+CLIENTS_BACKFILL_BAD=$(psql "$DATA_URL" -X -q -t -A -v ON_ERROR_STOP=1 -c "
+  select count(*) from public.clients
+  where canonical_id is distinct from id
+     or normalized_name is distinct from public.normalize_client_text(name)
+     or normalized_email is distinct from public.normalize_client_email(email)
+     or normalized_domain is distinct from nullif(split_part(public.normalize_client_email(email), '@', 2), '')
+     or normalized_phone is distinct from public.normalize_client_phone(phone)
+     or normalized_company is distinct from public.normalize_client_text(company);")
+[ "$CLIENTS_BACKFILL_BAD" = "0" ] \
+  || fail "PROOF 19: clients identity backfill deviates from the documented transformation ($CLIENTS_BACKFILL_BAD rows)"
+log "  clients: identity-column backfill matches the documented transformation exactly"
+
+# Intentional transformation 2: client_source_identities backfill rows.
+CSI_BAD=$(psql "$DATA_URL" -X -q -t -A -v ON_ERROR_STOP=1 -c "
+  with expected as (
+    select user_id, id as client_id from public.clients
+  ),
+  actual as (
+    select user_id, client_id from public.client_source_identities where source = 'duewatch'
+  )
+  select (select count(*) from ((select * from expected) except all (select * from actual)) e)
+       + (select count(*) from ((select * from actual) except all (select * from expected)) a)
+       + (select count(*) from public.client_source_identities where source <> 'duewatch')
+       + (select count(*) from public.client_source_identities csi
+          where csi.source = 'duewatch'
+            and (csi.external_id is distinct from csi.client_id::text
+             or csi.provenance ->> 'canonical_id' is distinct from csi.client_id::text));")
+[ "$CSI_BAD" = "0" ] \
+  || fail "PROOF 19: client_source_identities backfill deviates from the documented transformation ($CSI_BAD deviations)"
+log "  client_source_identities: exactly one documented backfill row per legacy client"
+log "PROOF 19 PASSED: all pre-existing business facts preserved exactly, except the two enumerated, verified transformations."
 
 log "=== ALL CANONICAL PROOFS PASSED ==="
 exit 0

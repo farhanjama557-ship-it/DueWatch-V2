@@ -28,11 +28,20 @@ name: "Canonical Baseline Verification"
 #  13  one-table extra privilege canonicalized to the exact matrix
 #  14  injected column-level privilege canonicalized away
 #  15  client-dedup unknown-FK gate provably fails closed on canonical state
+#  16A unexpected trigger on a recognized legacy table refused pre-mutation
+#  16B disabled DueWatch-owned auth.users trigger refused pre-mutation
+#  17  inappropriate ownership of a legacy table refused pre-mutation
+#  18  unexpected non-Autopilot ACL drift (table/column/function) refused
+#  19  legacy business data preservation: every pre-existing row/column
+#      value survives convergence except the two documented transformations
 #
-# Plus the no-ledger rehearsal (run_ledger_rehearsal.sh), which proves the
+# Plus, before any proof runs: an assembler reproducibility check proving
+# the committed generated baseline is exactly what
+# assemble_canonical_baseline.sh produces from the committed sources; the
+# no-ledger rehearsal (run_ledger_rehearsal.sh), which proves the
 # production ledger-bootstrap commands against a database with NO
 # supabase_migrations metadata, using the SAME pinned CLI version the
-# production window must use, and the JavaScript test suite (npm test).
+# production window must use; and the JavaScript test suite (npm test).
 
 on:
   push:
@@ -79,6 +88,19 @@ jobs:
 
       - name: "Start disposable Supabase stack"
         run: supabase start
+
+      # The canonical baseline is GENERATED. Regenerate it from the
+      # committed sources and require the committed artifact to be exactly
+      # what the assembler produces — if any section/archive input changed
+      # without regenerating the baseline, CI fails here rather than
+      # silently overwriting and continuing.
+      - name: "Verify generated baseline is reproducible"
+        run: |
+          bash -n supabase/convergence/assemble_canonical_baseline.sh
+          bash -n supabase/convergence/checks/run_canonical_proofs.sh
+          bash -n supabase/convergence/checks/run_ledger_rehearsal.sh
+          bash supabase/convergence/assemble_canonical_baseline.sh
+          git diff --exit-code -- supabase/migrations/20260822000000_canonical_baseline.sql
 
       - name: "Run canonical proof suite"
         run: |

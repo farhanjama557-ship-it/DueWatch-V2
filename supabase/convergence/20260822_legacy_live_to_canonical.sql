@@ -91,22 +91,38 @@ $preflight_refuse_mutated$;
 -- unknown objects (e.g. public.unexpected_drift) or subtle drift inside a
 -- recognized object. That is not "verified legacy only".
 --
--- Instead the preflight renders the COMPLETE normalized structure of the
--- public schema — every relation of every kind, every column, every
--- constraint, every index, every policy, every RLS flag, every function —
--- and requires exact equality with the verified legacy shape (the archived
--- schema.sql lineage plus the two live-verified drifts: the invoices
--- client FK ON DELETE CASCADE and the legacy three-column
--- awaiting_signature uniqueness, plus the live-verified autopilot tables).
+-- Instead the preflight renders the COMPLETE normalized structure and
+-- security state of the public schema — every relation of every kind,
+-- every column, every constraint, every index, every policy, every RLS
+-- flag, every function, every non-internal trigger on the application
+-- tables, object ownership (normalized role names), and the explicit
+-- security-relevant privilege state (table/column/function ACLs for
+-- PUBLIC, anon, authenticated, service_role, catalog-faithful via
+-- aclexplode) — and requires exact equality with the verified legacy
+-- shape (the archived schema.sql lineage plus the two live-verified
+-- drifts: the invoices client FK ON DELETE CASCADE and the legacy
+-- three-column awaiting_signature uniqueness, plus the live-verified
+-- autopilot tables).
 --
 -- Equality is required on object names, types, definitions, nullability,
 -- defaults, constraint validity/deferrability, index definitions (via
 -- pg_get_indexdef, which embeds uniqueness, key columns and predicates),
--- policy commands/roles/expressions, and full function definitions
--- (pg_get_functiondef). NOT compared: catalog OIDs, physical ordering,
--- relacl/owner (environment-specific grant state is canonicalized by the
--- Autopilot section and asserted there), and the auth/extensions/platform
--- schemas (platform territory, not DueWatch application structure).
+-- policy commands/roles/expressions, full function definitions
+-- (pg_get_functiondef), trigger enabled-state and definitions
+-- (pg_get_triggerdef), owners (role NAMES, never OIDs), and the exact
+-- explicit ACL entries above. NOT compared: catalog OIDs, physical
+-- ordering, grantors, and the auth/extensions/platform schemas (platform
+-- territory, not DueWatch application structure — the one DueWatch-owned
+-- platform trigger, on_auth_user_created on auth.users, is asserted
+-- separately and exactly below).
+--
+-- An unexpected trigger, a removed/changed/disabled expected trigger, a
+-- non-trusted owner (anything other than the platform 'postgres' role),
+-- or any unexpected security-relevant grant on a legacy application
+-- object refuses BEFORE any mutation. (The Autopilot tables' ACLs are
+-- the one intentional exception: they are deterministically
+-- canonicalized in the baseline with exact postcondition assertion;
+-- their LEGACY input state is still fingerprinted here.)
 --
 -- On mismatch the ACTUAL rendering is emitted line-by-line as NOTICEs and
 -- the exception reports the first differing line, so any refusal is fully
@@ -115,6 +131,7 @@ $preflight_refuse_mutated$;
 do $preflight_legacy_fingerprint$
 declare
   v_expected text := $fp$
+
 COLUMN|autopilot_rules.created_at|timestamp with time zone|true|now()
 COLUMN|autopilot_rules.enabled|boolean|true|true
 COLUMN|autopilot_rules.id|uuid|true|gen_random_uuid()
@@ -253,6 +270,17 @@ INDEX|profiles.profiles_pkey|CREATE UNIQUE INDEX profiles_pkey ON public.profile
 INDEX|reminders.reminders_invoice_id_idx|CREATE INDEX reminders_invoice_id_idx ON public.reminders USING btree (invoice_id)
 INDEX|reminders.reminders_pkey|CREATE UNIQUE INDEX reminders_pkey ON public.reminders USING btree (id)
 INDEX|reminders.reminders_user_id_idx|CREATE INDEX reminders_user_id_idx ON public.reminders USING btree (user_id)
+OWNER_FUNCTION|handle_new_user()|postgres
+OWNER_TABLE|autopilot_rules|postgres
+OWNER_TABLE|autopilot_runs|postgres
+OWNER_TABLE|autopilot_settings|postgres
+OWNER_TABLE|awaiting_signature|postgres
+OWNER_TABLE|clients|postgres
+OWNER_TABLE|events|postgres
+OWNER_TABLE|invoices|postgres
+OWNER_TABLE|line_items|postgres
+OWNER_TABLE|profiles|postgres
+OWNER_TABLE|reminders|postgres
 POLICY|autopilot_rules.autopilot_rules_own|ALL|roles=public|permissive=PERMISSIVE|qual=(auth.uid() = user_id)|withcheck=(auth.uid() = user_id)
 POLICY|autopilot_runs.autopilot_runs_own|ALL|roles=public|permissive=PERMISSIVE|qual=(auth.uid() = user_id)|withcheck=(auth.uid() = user_id)
 POLICY|autopilot_settings.autopilot_settings_own|ALL|roles=public|permissive=PERMISSIVE|qual=(auth.uid() = user_id)|withcheck=(auth.uid() = user_id)
@@ -275,6 +303,126 @@ RELATION|invoices|r
 RELATION|line_items|r
 RELATION|profiles|r
 RELATION|reminders|r
+TABLE_GRANT|autopilot_rules|privilege=MAINTAIN,grantee=anon
+TABLE_GRANT|autopilot_rules|privilege=MAINTAIN,grantee=authenticated
+TABLE_GRANT|autopilot_rules|privilege=MAINTAIN,grantee=service_role
+TABLE_GRANT|autopilot_rules|privilege=REFERENCES,grantee=anon
+TABLE_GRANT|autopilot_rules|privilege=REFERENCES,grantee=authenticated
+TABLE_GRANT|autopilot_rules|privilege=REFERENCES,grantee=service_role
+TABLE_GRANT|autopilot_rules|privilege=TRIGGER,grantee=anon
+TABLE_GRANT|autopilot_rules|privilege=TRIGGER,grantee=authenticated
+TABLE_GRANT|autopilot_rules|privilege=TRIGGER,grantee=service_role
+TABLE_GRANT|autopilot_rules|privilege=TRUNCATE,grantee=anon
+TABLE_GRANT|autopilot_rules|privilege=TRUNCATE,grantee=authenticated
+TABLE_GRANT|autopilot_rules|privilege=TRUNCATE,grantee=service_role
+TABLE_GRANT|autopilot_runs|privilege=MAINTAIN,grantee=anon
+TABLE_GRANT|autopilot_runs|privilege=MAINTAIN,grantee=authenticated
+TABLE_GRANT|autopilot_runs|privilege=MAINTAIN,grantee=service_role
+TABLE_GRANT|autopilot_runs|privilege=REFERENCES,grantee=anon
+TABLE_GRANT|autopilot_runs|privilege=REFERENCES,grantee=authenticated
+TABLE_GRANT|autopilot_runs|privilege=REFERENCES,grantee=service_role
+TABLE_GRANT|autopilot_runs|privilege=TRIGGER,grantee=anon
+TABLE_GRANT|autopilot_runs|privilege=TRIGGER,grantee=authenticated
+TABLE_GRANT|autopilot_runs|privilege=TRIGGER,grantee=service_role
+TABLE_GRANT|autopilot_runs|privilege=TRUNCATE,grantee=anon
+TABLE_GRANT|autopilot_runs|privilege=TRUNCATE,grantee=authenticated
+TABLE_GRANT|autopilot_runs|privilege=TRUNCATE,grantee=service_role
+TABLE_GRANT|autopilot_settings|privilege=MAINTAIN,grantee=anon
+TABLE_GRANT|autopilot_settings|privilege=MAINTAIN,grantee=authenticated
+TABLE_GRANT|autopilot_settings|privilege=MAINTAIN,grantee=service_role
+TABLE_GRANT|autopilot_settings|privilege=REFERENCES,grantee=anon
+TABLE_GRANT|autopilot_settings|privilege=REFERENCES,grantee=authenticated
+TABLE_GRANT|autopilot_settings|privilege=REFERENCES,grantee=service_role
+TABLE_GRANT|autopilot_settings|privilege=TRIGGER,grantee=anon
+TABLE_GRANT|autopilot_settings|privilege=TRIGGER,grantee=authenticated
+TABLE_GRANT|autopilot_settings|privilege=TRIGGER,grantee=service_role
+TABLE_GRANT|autopilot_settings|privilege=TRUNCATE,grantee=anon
+TABLE_GRANT|autopilot_settings|privilege=TRUNCATE,grantee=authenticated
+TABLE_GRANT|autopilot_settings|privilege=TRUNCATE,grantee=service_role
+TABLE_GRANT|awaiting_signature|privilege=MAINTAIN,grantee=anon
+TABLE_GRANT|awaiting_signature|privilege=MAINTAIN,grantee=authenticated
+TABLE_GRANT|awaiting_signature|privilege=MAINTAIN,grantee=service_role
+TABLE_GRANT|awaiting_signature|privilege=REFERENCES,grantee=anon
+TABLE_GRANT|awaiting_signature|privilege=REFERENCES,grantee=authenticated
+TABLE_GRANT|awaiting_signature|privilege=REFERENCES,grantee=service_role
+TABLE_GRANT|awaiting_signature|privilege=TRIGGER,grantee=anon
+TABLE_GRANT|awaiting_signature|privilege=TRIGGER,grantee=authenticated
+TABLE_GRANT|awaiting_signature|privilege=TRIGGER,grantee=service_role
+TABLE_GRANT|awaiting_signature|privilege=TRUNCATE,grantee=anon
+TABLE_GRANT|awaiting_signature|privilege=TRUNCATE,grantee=authenticated
+TABLE_GRANT|awaiting_signature|privilege=TRUNCATE,grantee=service_role
+TABLE_GRANT|clients|privilege=MAINTAIN,grantee=anon
+TABLE_GRANT|clients|privilege=MAINTAIN,grantee=authenticated
+TABLE_GRANT|clients|privilege=MAINTAIN,grantee=service_role
+TABLE_GRANT|clients|privilege=REFERENCES,grantee=anon
+TABLE_GRANT|clients|privilege=REFERENCES,grantee=authenticated
+TABLE_GRANT|clients|privilege=REFERENCES,grantee=service_role
+TABLE_GRANT|clients|privilege=TRIGGER,grantee=anon
+TABLE_GRANT|clients|privilege=TRIGGER,grantee=authenticated
+TABLE_GRANT|clients|privilege=TRIGGER,grantee=service_role
+TABLE_GRANT|clients|privilege=TRUNCATE,grantee=anon
+TABLE_GRANT|clients|privilege=TRUNCATE,grantee=authenticated
+TABLE_GRANT|clients|privilege=TRUNCATE,grantee=service_role
+TABLE_GRANT|events|privilege=MAINTAIN,grantee=anon
+TABLE_GRANT|events|privilege=MAINTAIN,grantee=authenticated
+TABLE_GRANT|events|privilege=MAINTAIN,grantee=service_role
+TABLE_GRANT|events|privilege=REFERENCES,grantee=anon
+TABLE_GRANT|events|privilege=REFERENCES,grantee=authenticated
+TABLE_GRANT|events|privilege=REFERENCES,grantee=service_role
+TABLE_GRANT|events|privilege=TRIGGER,grantee=anon
+TABLE_GRANT|events|privilege=TRIGGER,grantee=authenticated
+TABLE_GRANT|events|privilege=TRIGGER,grantee=service_role
+TABLE_GRANT|events|privilege=TRUNCATE,grantee=anon
+TABLE_GRANT|events|privilege=TRUNCATE,grantee=authenticated
+TABLE_GRANT|events|privilege=TRUNCATE,grantee=service_role
+TABLE_GRANT|invoices|privilege=MAINTAIN,grantee=anon
+TABLE_GRANT|invoices|privilege=MAINTAIN,grantee=authenticated
+TABLE_GRANT|invoices|privilege=MAINTAIN,grantee=service_role
+TABLE_GRANT|invoices|privilege=REFERENCES,grantee=anon
+TABLE_GRANT|invoices|privilege=REFERENCES,grantee=authenticated
+TABLE_GRANT|invoices|privilege=REFERENCES,grantee=service_role
+TABLE_GRANT|invoices|privilege=TRIGGER,grantee=anon
+TABLE_GRANT|invoices|privilege=TRIGGER,grantee=authenticated
+TABLE_GRANT|invoices|privilege=TRIGGER,grantee=service_role
+TABLE_GRANT|invoices|privilege=TRUNCATE,grantee=anon
+TABLE_GRANT|invoices|privilege=TRUNCATE,grantee=authenticated
+TABLE_GRANT|invoices|privilege=TRUNCATE,grantee=service_role
+TABLE_GRANT|line_items|privilege=MAINTAIN,grantee=anon
+TABLE_GRANT|line_items|privilege=MAINTAIN,grantee=authenticated
+TABLE_GRANT|line_items|privilege=MAINTAIN,grantee=service_role
+TABLE_GRANT|line_items|privilege=REFERENCES,grantee=anon
+TABLE_GRANT|line_items|privilege=REFERENCES,grantee=authenticated
+TABLE_GRANT|line_items|privilege=REFERENCES,grantee=service_role
+TABLE_GRANT|line_items|privilege=TRIGGER,grantee=anon
+TABLE_GRANT|line_items|privilege=TRIGGER,grantee=authenticated
+TABLE_GRANT|line_items|privilege=TRIGGER,grantee=service_role
+TABLE_GRANT|line_items|privilege=TRUNCATE,grantee=anon
+TABLE_GRANT|line_items|privilege=TRUNCATE,grantee=authenticated
+TABLE_GRANT|line_items|privilege=TRUNCATE,grantee=service_role
+TABLE_GRANT|profiles|privilege=MAINTAIN,grantee=anon
+TABLE_GRANT|profiles|privilege=MAINTAIN,grantee=authenticated
+TABLE_GRANT|profiles|privilege=MAINTAIN,grantee=service_role
+TABLE_GRANT|profiles|privilege=REFERENCES,grantee=anon
+TABLE_GRANT|profiles|privilege=REFERENCES,grantee=authenticated
+TABLE_GRANT|profiles|privilege=REFERENCES,grantee=service_role
+TABLE_GRANT|profiles|privilege=TRIGGER,grantee=anon
+TABLE_GRANT|profiles|privilege=TRIGGER,grantee=authenticated
+TABLE_GRANT|profiles|privilege=TRIGGER,grantee=service_role
+TABLE_GRANT|profiles|privilege=TRUNCATE,grantee=anon
+TABLE_GRANT|profiles|privilege=TRUNCATE,grantee=authenticated
+TABLE_GRANT|profiles|privilege=TRUNCATE,grantee=service_role
+TABLE_GRANT|reminders|privilege=MAINTAIN,grantee=anon
+TABLE_GRANT|reminders|privilege=MAINTAIN,grantee=authenticated
+TABLE_GRANT|reminders|privilege=MAINTAIN,grantee=service_role
+TABLE_GRANT|reminders|privilege=REFERENCES,grantee=anon
+TABLE_GRANT|reminders|privilege=REFERENCES,grantee=authenticated
+TABLE_GRANT|reminders|privilege=REFERENCES,grantee=service_role
+TABLE_GRANT|reminders|privilege=TRIGGER,grantee=anon
+TABLE_GRANT|reminders|privilege=TRIGGER,grantee=authenticated
+TABLE_GRANT|reminders|privilege=TRIGGER,grantee=service_role
+TABLE_GRANT|reminders|privilege=TRUNCATE,grantee=anon
+TABLE_GRANT|reminders|privilege=TRUNCATE,grantee=authenticated
+TABLE_GRANT|reminders|privilege=TRUNCATE,grantee=service_role
 TABLE_RLS|autopilot_rules|rls=true,force=false
 TABLE_RLS|autopilot_runs|rls=true,force=false
 TABLE_RLS|autopilot_settings|rls=true,force=false
@@ -356,6 +504,72 @@ begin
     from pg_proc p
     join pg_namespace n on n.oid = p.pronamespace
     where n.nspname = 'public' and p.prokind = 'f'
+    union all
+    -- Non-internal triggers on the application tables: name, enabled
+    -- state, full definition. An unexpected trigger, a missing expected
+    -- one, a changed target/function/timing/event, or a disabled/enabled
+    -- drift is a fingerprint mismatch.
+    select 'TRIGGER|' || c.relname || '.' || t.tgname
+         || '|enabled=' || (t.tgenabled = 'O')
+         || '|def=' || pg_get_triggerdef(t.oid)
+    from pg_trigger t
+    join pg_class c on c.oid = t.tgrelid
+    join pg_namespace n on n.oid = c.relnamespace
+    where n.nspname = 'public' and not t.tgisinternal
+    union all
+    -- Ownership of application objects by normalized role NAME (never
+    -- OID). anon/authenticated/service_role or any unknown custom role
+    -- owning a DueWatch application table/function is a mismatch.
+    select 'OWNER_TABLE|' || c.relname || '|' || r.rolname
+    from pg_class c
+    join pg_namespace n on n.oid = c.relnamespace
+    join pg_roles r on r.oid = c.relowner
+    where n.nspname = 'public' and c.relkind in ('r','p')
+    union all
+    select 'OWNER_FUNCTION|' || p.proname
+         || '(' || pg_get_function_identity_arguments(p.oid) || ')|' || r.rolname
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    join pg_roles r on r.oid = p.proowner
+    where n.nspname = 'public' and p.prokind = 'f'
+    union all
+    -- Explicit security-relevant table privileges (catalog-faithful
+    -- aclexplode of relacl — explicit entries only, no acldefault
+    -- expansion; grantors are irrelevant). PUBLIC is grantee OID 0.
+    select 'TABLE_GRANT|' || c.relname
+         || '|privilege=' || a.privilege_type
+         || ',grantee=' || case a.grantee when 0 then 'PUBLIC' else r.rolname end
+    from pg_class c
+    join pg_namespace n on n.oid = c.relnamespace,
+         aclexplode(coalesce(c.relacl, array[]::aclitem[])) as a(grantor, grantee, privilege_type, is_grantable)
+    left join pg_roles r on r.oid = a.grantee
+    where n.nspname = 'public' and c.relkind in ('r','p')
+      and (a.grantee = 0 or r.rolname in ('anon', 'authenticated', 'service_role'))
+    union all
+    -- Explicit column-level privileges (attacl), same grantees.
+    select 'COLUMN_GRANT|' || c.relname || '.' || g.attname
+         || '|privilege=' || a.privilege_type
+         || ',grantee=' || case a.grantee when 0 then 'PUBLIC' else r.rolname end
+    from pg_class c
+    join pg_namespace n on n.oid = c.relnamespace
+    join pg_attribute g on g.attrelid = c.oid and g.attnum > 0 and not g.attisdropped
+         and g.attacl is not null
+    cross join lateral aclexplode(g.attacl) as a(grantor, grantee, privilege_type, is_grantable)
+    left join pg_roles r on r.oid = a.grantee
+    where n.nspname = 'public' and c.relkind in ('r','p')
+      and (a.grantee = 0 or r.rolname in ('anon', 'authenticated', 'service_role'))
+    union all
+    -- Explicit function EXECUTE privileges (proacl), same grantees.
+    select 'FUNCTION_GRANT|' || p.proname
+         || '(' || pg_get_function_identity_arguments(p.oid) || ')'
+         || '|privilege=' || a.privilege_type
+         || ',grantee=' || case a.grantee when 0 then 'PUBLIC' else r.rolname end
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace,
+         aclexplode(coalesce(p.proacl, array[]::aclitem[])) as a(grantor, grantee, privilege_type, is_grantable)
+    left join pg_roles r on r.oid = a.grantee
+    where n.nspname = 'public' and p.prokind = 'f'
+      and (a.grantee = 0 or r.rolname in ('anon', 'authenticated', 'service_role'))
   ) all_lines;
 
   if v_actual is distinct from v_expected then
@@ -380,9 +594,60 @@ begin
     raise exception 'unknown/drifted state: fingerprint mismatch detected but no differing line found (length difference only)';
   end if;
 
-  raise notice 'convergence preflight: verified legacy baseline fingerprint matched exactly (inventory, columns, constraints, indexes, policies, RLS, functions)';
+  raise notice 'convergence preflight: verified legacy baseline fingerprint matched exactly (inventory, columns, constraints, indexes, policies, RLS, functions, triggers, ownership, ACLs)';
 end
 $preflight_legacy_fingerprint$;
+
+-- ---------------------------------------------------------------------------
+-- DUEWATCH-OWNED PLATFORM TRIGGER — exact separate assertion.
+--
+-- schema.sql installs exactly one DueWatch-owned trigger on a platform
+-- table: on_auth_user_created on auth.users, calling
+-- public.handle_new_user(). It is part of the verified legacy state and
+-- must exist, be ENABLED, and match its exact definition. Arbitrary
+-- Supabase platform triggers on auth.users are NOT fingerprinted; any
+-- OTHER trigger on auth.users whose function lives in public (i.e.
+-- DueWatch-owned code) is an unexpected drift and refuses.
+-- ---------------------------------------------------------------------------
+do $preflight_auth_users_trigger$
+declare
+  v_def text;
+  v_enabled boolean;
+begin
+  select pg_get_triggerdef(t.oid), t.tgenabled = 'O'
+    into v_def, v_enabled
+  from pg_trigger t
+  join pg_class c on c.oid = t.tgrelid
+  join pg_namespace n on n.oid = c.relnamespace
+  where n.nspname = 'auth' and c.relname = 'users'
+    and not t.tgisinternal
+    and t.tgname = 'on_auth_user_created';
+  if v_def is null then
+    raise exception 'unknown state: the expected DueWatch-owned trigger on_auth_user_created on auth.users is missing; this is not the verified legacy baseline';
+  end if;
+  if not v_enabled then
+    raise exception 'drifted state: the DueWatch-owned trigger on_auth_user_created on auth.users is DISABLED (expected enabled); refusing before any mutation';
+  end if;
+  if v_def <> 'CREATE TRIGGER on_auth_user_created AFTER INSERT ON auth.users FOR EACH ROW EXECUTE FUNCTION public.handle_new_user()' then
+    raise exception 'drifted state: the on_auth_user_created trigger on auth.users does not match its exact canonical definition; actual: %', v_def;
+  end if;
+  if exists (
+    select 1
+    from pg_trigger t
+    join pg_class c on c.oid = t.tgrelid
+    join pg_namespace n on n.oid = c.relnamespace
+    join pg_proc f on f.oid = t.tgfoid
+    join pg_namespace fn on fn.oid = f.pronamespace
+    where n.nspname = 'auth' and c.relname = 'users'
+      and not t.tgisinternal
+      and fn.nspname = 'public'
+      and t.tgname <> 'on_auth_user_created'
+  ) then
+    raise exception 'unknown state: an unexpected DueWatch-owned (public-function) trigger exists on auth.users in addition to on_auth_user_created; refusing before any mutation';
+  end if;
+  raise notice 'convergence preflight: DueWatch-owned auth.users trigger on_auth_user_created verified (present, enabled, exact definition)';
+end
+$preflight_auth_users_trigger$;
 
 -- ---------------------------------------------------------------------------
 -- PHASE 1 — the canonical baseline, verbatim. On the legacy state this
