@@ -541,7 +541,7 @@ begin
          || ',grantee=' || case a.grantee when 0 then 'PUBLIC' else r.rolname end
     from pg_class c
     join pg_namespace n on n.oid = c.relnamespace,
-         aclexplode(coalesce(c.relacl, array[]::aclitem[])) as a(grantor, grantee, privilege_type, is_grantable)
+         aclexplode(c.relacl) as a(grantor, grantee, privilege_type, is_grantable)
     left join pg_roles r on r.oid = a.grantee
     where n.nspname = 'public' and c.relkind in ('r','p')
       and (a.grantee = 0 or r.rolname in ('anon', 'authenticated', 'service_role'))
@@ -566,7 +566,7 @@ begin
          || ',grantee=' || case a.grantee when 0 then 'PUBLIC' else r.rolname end
     from pg_proc p
     join pg_namespace n on n.oid = p.pronamespace,
-         aclexplode(coalesce(p.proacl, array[]::aclitem[])) as a(grantor, grantee, privilege_type, is_grantable)
+         aclexplode(p.proacl) as a(grantor, grantee, privilege_type, is_grantable)
     left join pg_roles r on r.oid = a.grantee
     where n.nspname = 'public' and p.prokind = 'f'
       and (a.grantee = 0 or r.rolname in ('anon', 'authenticated', 'service_role'))
