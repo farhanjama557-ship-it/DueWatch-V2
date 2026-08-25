@@ -6,6 +6,7 @@ import { useData } from '../context/DataContext'
 import StatusPill from './StatusPill'
 import JourneyBar from './JourneyBar'
 import CognitiveCompose from '../features/reminders/CognitiveCompose'
+import DwInvoiceIntelligencePanel from '../features/dwIntelligence/DwInvoiceIntelligencePanel'
 import { CloseIcon, CheckIcon } from './icons'
 import {
   formatMoney,
@@ -62,6 +63,8 @@ export default function InvoiceDetailPanel({
   onMutated,
   signatureContext = null,
   onSignatureResolved,
+  // Read-only Phase 2B projection. Never execution authority.
+  dwCase = null,
 }) {
   const { user } = useAuth()
   const {
@@ -366,6 +369,8 @@ export default function InvoiceDetailPanel({
             isPendingSignature={hasPendingSignature}
             hasAutopilotRun={hasCompletedAutopilotRun}
           />
+
+          <DwInvoiceIntelligencePanel model={dwCase} />
 
           {autopilotEnabled && (
             <div className={invoicePaused ? 'invoice-autopilot-block paused' : 'invoice-autopilot-block'}>

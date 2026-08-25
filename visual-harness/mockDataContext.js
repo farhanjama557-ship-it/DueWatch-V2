@@ -1,3 +1,5 @@
+import { buildDwPhase2bPreviewData } from './dwPhase2bPreviewData'
+
 const userId = 'visual-user'
 const now = new Date('2026-08-15T14:00:00.000Z')
 const fixtureParams = new URLSearchParams(window.location.search)
@@ -186,9 +188,13 @@ const exactEvents = [
 
 const events = isExact ? exactEvents : truthfulEvents
 
+// LOCAL VISUAL HARNESS ONLY — explicit proof data, never hosted/project data.
+const dwIntelligence = buildDwPhase2bPreviewData({ userId, invoices })
+
 const value = {
   userId,
   invoices,
+  dwIntelligence,
   clients: Object.values(clients),
   events,
   name: 'Farhan',

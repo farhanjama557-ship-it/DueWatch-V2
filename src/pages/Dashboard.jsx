@@ -19,6 +19,8 @@ import {
 } from '../lib/pulseAuthority'
 import { activityMeta, activityDescription, activityIcon, isPaymentEvent } from '../lib/activity'
 import DuewatchAssistant from '../components/DuewatchAssistant'
+import DwPulseIntelligence from '../features/dwIntelligence/DwPulseIntelligence'
+import DwNeedsYouQueue from '../features/dwIntelligence/DwNeedsYouQueue'
 import {
   formatMoney,
   formatShortDate,
@@ -453,6 +455,8 @@ export default function Dashboard() {
     collectedLastMonth,
     collectedLastMonthCount,
     lastSyncedAt,
+    // Phase 2B: optional, read-only intelligence projection.
+    dwIntelligence,
   } = useData()
   const [selected, setSelected] = useState(null)
   const [signatureContext, setSignatureContext] = useState(null)
@@ -728,6 +732,15 @@ export default function Dashboard() {
       <div className="brief-shell">
         {/* ---- White canvas: the business ---- */}
         <div className="brief-main">
+          <DwPulseIntelligence
+            model={dwIntelligence?.pulse ?? null}
+            invoices={invoices}
+            onOpenInvoice={(invoiceId) => {
+              const target = invoices.find((inv) => inv.id === invoiceId)
+              if (target) setSelected(target)
+            }}
+          />
+
           <section className="kpi-grid">
             <KpiCard
               Icon={CollectedIcon}
@@ -993,6 +1006,15 @@ export default function Dashboard() {
 
         {/* ---- Dark rail: Duewatch itself ---- */}
         <aside className="pulse-rail">
+          <DwNeedsYouQueue
+            model={dwIntelligence?.needsYou ?? null}
+            invoices={invoices}
+            onOpenInvoice={(invoiceId) => {
+              const target = invoices.find((inv) => inv.id === invoiceId)
+              if (target) setSelected(target)
+            }}
+          />
+
           {awaitingSignature.length > 0 && (
             <div ref={signatureSectionRef} className="rail-section rail-approval-section">
               <SignatureSection
@@ -1021,6 +1043,7 @@ export default function Dashboard() {
         onMutated={refresh}
         signatureContext={signatureContext}
         onSignatureResolved={resolveSignatureLocal}
+        dwCase={dwIntelligence?.casesByInvoiceId?.[selected?.id] ?? null}
       />
 
       {composeInvoice && (
