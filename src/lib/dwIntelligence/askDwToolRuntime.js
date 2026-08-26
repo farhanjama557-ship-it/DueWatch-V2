@@ -128,7 +128,7 @@ export function createAskDwReadToolRegistry({ definitions = {} } = {}) {
         asOf: context.asOf ?? null,
       })
 
-      const raw = await definition.handler({ input: safeInput, context: safeContext })
+      const raw = await definition.handler({ input: safeInput, context: safeContext, scope })
       const result = plainClone(raw ?? null)
       inspectForbiddenKeys(result)
 
