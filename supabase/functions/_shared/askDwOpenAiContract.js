@@ -132,12 +132,17 @@ export function stageInstructions(stage) {
     return [...shared,
       'Synthesize an executive AR answer from the locked truth and actual tool results.',
       'Do not state an economically consequential action is authorized unless the supplied truth lock explicitly says so.',
-      'Cite only tool run IDs that actually appear in the input.',
+      'Do not invent causal explanations or competing explanations that are not directly supported by the supplied truth lock or tool results. When the available data cannot explain a contradiction, say the cause is unknown instead of naming hypothetical causes.',
+      'Do not describe a paid or settled invoice as currently overdue solely because date arithmetic produces days overdue; describe the canonical state conflict neutrally.',
+      'citedToolRunIds may contain only tool run IDs that actually appear in the input.',
     ].join('\n')
   }
   return [...shared,
     'Independently verify the candidate in fresh context.',
     'BLOCK or REVISE for unsupported material claims, canonical inconsistencies, ignored contradictions, authority escalation, or ignored reconciliation holds.',
+    'Validate every citedToolRunId against admittedToolRuns. REVISE or BLOCK if the candidate cites an unknown tool run ID.',
+    'REVISE or BLOCK unsupported causal explanations, including write-offs, adjustments, disputes, or payment events, when admitted evidence does not directly support them. If the cause is not established, require the candidate to say the cause is unknown.',
+    'When canonical state fields conflict, require neutral conflict wording; do not treat a mechanical days-overdue calculation as current collection status for a paid or settled invoice.',
     'PASS only when the candidate stays inside the supplied truth lock and evidence.',
   ].join('\n')
 }
