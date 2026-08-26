@@ -14,6 +14,53 @@ function plainClone(value) {
   return JSON.parse(JSON.stringify(value))
 }
 
+const FORBIDDEN_CASE_CONTEXT_KEYS = new Set([
+  'amount',
+  'amount_paid',
+  'balance',
+  'paid',
+  'currency',
+  'due_date',
+  'inv_date',
+  'invoice_date',
+  'canonicalFacts',
+  'canonical_facts',
+  'rawToolResponse',
+  'raw_tool_response',
+  'toolOutput',
+  'tool_output',
+  'truthLock',
+  'arState',
+  'authority',
+  'authoritySnapshot',
+  'authority_snapshot',
+  'authorized',
+  'executionAuthorized',
+  'canActAutomatically',
+  'permissions',
+])
+
+function inspectCaseContext(value, path = '$caseContext') {
+  if (!value || typeof value !== 'object') return
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => inspectCaseContext(item, path + '[' + index + ']'))
+    return
+  }
+  for (const [key, nested] of Object.entries(value)) {
+    if (FORBIDDEN_CASE_CONTEXT_KEYS.has(key)) {
+      throw new Error('Ask DW forbidden case context field at ' + path + '.' + key)
+    }
+    inspectCaseContext(nested, path + '.' + key)
+  }
+}
+
+function sanitizeCaseContext(value) {
+  if (value == null) return null
+  const cloned = plainClone(value)
+  inspectCaseContext(cloned)
+  return freeze(cloned)
+}
+
 function toolRunId(index, request) {
   return `tool-${String(index + 1).padStart(2, '0')}-${request.name}`
 }
@@ -44,13 +91,14 @@ function lockTruth(core) {
   })
 }
 
-function buildPlannerInput({ text, context, core }) {
+function buildPlannerInput({ text, context, core, caseContext = null }) {
   return {
     question: String(text || ''),
     requestedMode: core.policy?.requestedMode,
     internalDepth: core.policy?.internalDepth,
     job: core.intent?.job,
     scope: core.intent?.scope,
+    caseContext,
     truthPacket: {
       canonicalFacts: core.packet?.canonicalFacts ?? null,
       arState: core.packet?.arState ?? null,
@@ -91,12 +139,13 @@ async function executeRequests({ requests, registry, context }) {
   return Object.freeze(runs)
 }
 
-function buildSynthesisInput({ text, core, plan, toolRuns }) {
+function buildSynthesisInput({ text, core, plan, toolRuns, caseContext = null }) {
   return {
     question: String(text || ''),
     requestedMode: core.policy?.requestedMode,
     internalDepth: core.policy?.internalDepth,
     job: core.intent?.job,
+    caseContext,
     truthLock: lockTruth(core),
     claims: core.packet?.claims ?? [],
     uncertainty: core.packet?.uncertainty ?? null,
@@ -114,9 +163,10 @@ function buildSynthesisInput({ text, core, plan, toolRuns }) {
   }
 }
 
-function buildVerificationInput({ core, candidate, plan, toolRuns }) {
+function buildVerificationInput({ core, candidate, plan, toolRuns, caseContext = null }) {
   return {
     verificationMode: 'FRESH_CONTEXT',
+    caseContext,
     truthLock: lockTruth(core),
     candidate,
     hypotheses: plan.hypotheses,
@@ -220,6 +270,7 @@ export function createAskDwOrchestrator({
     async run({ mode, text, context = {}, proposedIntent = null, intelligenceInput = {} } = {}) {
       const tenantId = String(context.tenantId || intelligenceInput.tenantId || '').trim()
       if (!tenantId) throw new Error('Ask DW orchestration tenantId required')
+      const caseContext = sanitizeCaseContext(context.caseContext ?? null)
 
       const scopedContext = freeze({
         tenantId,
@@ -230,10 +281,31 @@ export function createAskDwOrchestrator({
 
       const core = await deterministicCore({ mode, text, context, proposedIntent, intelligenceInput })
       const truthLock = lockTruth(core)
-      const plan = await primaryModel.plan(buildPlannerInput({ text, context: scopedContext, core }))
-      const toolRuns = await executeRequests({ requests: plan.toolRequests, registry: toolRegistry, context: scopedContext })
-      const candidate = await primaryModel.synthesize(buildSynthesisInput({ text, core, plan, toolRuns }))
-      const modelVerification = await verifierModel.verify(buildVerificationInput({ core, candidate, plan, toolRuns }))
+      const plan = await primaryModel.plan(buildPlannerInput({
+        text,
+        context: scopedContext,
+        core,
+        caseContext,
+      }))
+      const toolRuns = await executeRequests({
+        requests: plan.toolRequests,
+        registry: toolRegistry,
+        context: scopedContext,
+      })
+      const candidate = await primaryModel.synthesize(buildSynthesisInput({
+        text,
+        core,
+        plan,
+        toolRuns,
+        caseContext,
+      }))
+      const modelVerification = await verifierModel.verify(buildVerificationInput({
+        core,
+        candidate,
+        plan,
+        toolRuns,
+        caseContext,
+      }))
       const verification = hardenVerification({
         verification: modelVerification,
         candidate,
@@ -260,6 +332,7 @@ export function createAskDwOrchestrator({
           toolsReadOnly: true,
           directProviderExecution: false,
           verificationRequiredBeforeModelNarrative: true,
+          caseContextReferenceOnly: caseContext != null,
           rawChainOfThoughtVisible: false,
         }),
       })
