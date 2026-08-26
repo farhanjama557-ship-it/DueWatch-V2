@@ -11,6 +11,43 @@ function assertSupabase(supabase) {
   if (!supabase?.functions?.invoke) throw new Error('Ask DW live model provider requires supabase.functions.invoke')
 }
 
+async function readEdgeFunctionError(error) {
+  const response = error?.context
+  if (!response || typeof response.clone !== 'function') return null
+  try {
+    return await response.clone().json()
+  } catch {
+    return null
+  }
+}
+
+function normalizeRetryAfterSeconds(value) {
+  const retryAfterSeconds = Number(value)
+  return Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
+    ? Math.ceil(retryAfterSeconds)
+    : null
+}
+
+async function throwEdgeFunctionError(error, role) {
+  const payload = await readEdgeFunctionError(error)
+  const message = payload?.error || error?.message || `Ask DW ${role} model invocation failed`
+
+  if (payload?.code === 'GROQ_RATE_LIMITED') {
+    const retryAfterSeconds = normalizeRetryAfterSeconds(payload?.retryAfterSeconds)
+    const retryCopy = retryAfterSeconds
+      ? ` Try again in about ${retryAfterSeconds} seconds.`
+      : ' Try again shortly.'
+    const rateLimitError = new Error(`${message}${retryCopy}`)
+    rateLimitError.code = 'GROQ_RATE_LIMITED'
+    rateLimitError.retryAfterSeconds = retryAfterSeconds
+    throw rateLimitError
+  }
+
+  const invocationError = new Error(message)
+  if (payload?.code) invocationError.code = payload.code
+  throw invocationError
+}
+
 function createEdgeInvoke({ supabase, functionName, role }) {
   assertSupabase(supabase)
   return async (request) => {
@@ -22,7 +59,7 @@ function createEdgeInvoke({ supabase, functionName, role }) {
         input: request.input,
       },
     })
-    if (error) throw new Error(error.message || `Ask DW ${role} model invocation failed`)
+    if (error) await throwEdgeFunctionError(error, role)
     if (!data?.ok || !data?.output || typeof data.output !== 'object') {
       throw new Error(data?.error || `Ask DW ${role} model returned no structured output`)
     }
@@ -31,7 +68,7 @@ function createEdgeInvoke({ supabase, functionName, role }) {
 }
 
 /**
- * Browser-safe provider adapter. The OpenAI key never exists in this module;
+ * Browser-safe provider adapter. The provider key never exists in this module;
  * model calls go through the authenticated Supabase Edge Function.
  */
 export function createAskDwLiveModels({
