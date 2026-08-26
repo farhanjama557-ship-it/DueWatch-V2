@@ -10,7 +10,8 @@
     "test": "node --test",
     "clients:dedupe": "node scripts/client-dedupe.mjs",
     "system-brain:audit": "node scripts/system-brain-audit.mjs",
-    "system-brain:deployment": "node scripts/system-brain-deployment-fingerprint.mjs"
+    "system-brain:deployment": "node scripts/system-brain-deployment-fingerprint.mjs",
+    "system-brain:compatibility": "node scripts/system-brain-compatibility.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",

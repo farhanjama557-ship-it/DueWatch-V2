@@ -101,10 +101,8 @@ export function extractAuthorityActions(authoritySource = '') {
 }
 
 function extractSelectAfter(source, fromEnd) {
-  const nextFrom = source.indexOf('.from(', fromEnd)
-  const windowEnd = nextFrom >= 0 ? nextFrom : Math.min(source.length, fromEnd + 2500)
-  const window = source.slice(fromEnd, windowEnd)
-  const match = /\.select\(\s*(['"`])([\s\S]*?)\1\s*\)/.exec(window)
+  const window = source.slice(fromEnd, Math.min(source.length, fromEnd + 2500))
+  const match = /^\s*\.select\(\s*(['"`])([\s\S]*?)\1\s*\)/.exec(window)
   return match ? match[2].replace(/\s+/g, ' ').trim() : null
 }
 

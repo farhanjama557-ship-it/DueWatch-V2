@@ -81,6 +81,31 @@ test('route and database extraction are structural rather than prose-driven', ()
   ])
 })
 
+test('Supabase select attribution stays attached to the immediate from() chain', () => {
+  const source = `
+    const awaiting = supabase
+      .from('awaiting_signature')
+      .select('*, invoices(*, clients(name))')
+      .order('created_at')
+
+    const unrelated = object.select(
+      'autopilotSettingsResult, awaitingHistory, handledKeys, pendingInvoiceIds'
+    )
+
+    const writer = supabase
+      .from('events')
+      .insert({ event_type: 'x' })
+
+    const later = something.select('not_an_events_column')
+  `
+
+  const deps = extractSupabaseDependencies(source, 'fixture.js')
+  const awaiting = deps.find((item) => item.name === 'awaiting_signature')
+  const events = deps.find((item) => item.name === 'events')
+
+  assert.equal(awaiting.select, '*, invoices(*, clients(name))')
+  assert.equal(events.select, null)
+})
 test('code manifest contains no source code bodies or tenant examples', async () => {
   const manifest = await buildCodeCapabilityAudit({ repoRoot, generatedAt: '2026-01-01T00:00:00.000Z' })
   const serialized = JSON.stringify(manifest)
