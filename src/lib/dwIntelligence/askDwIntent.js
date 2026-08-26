@@ -26,6 +26,14 @@ function hasAny(text, terms) {
   return terms.some((term) => text.includes(term))
 }
 
+function isMarkPaidCommand(text) {
+  // Distinguish an imperative/action request ("mark this invoice paid")
+  // from a status/investigation question ("why is this invoice marked paid?").
+  // Past-tense "marked paid" is never an execution command.
+  if (/\bmarked\s+(?:as\s+)?paid\b/.test(text)) return false
+  return /\bmark\s+(?:(?:this|the)\s+)?(?:invoice\s+|it\s+)?(?:as\s+)?paid\b/.test(text)
+}
+
 /**
  * Deterministic bootstrap classifier for the runtime seam.
  *
@@ -40,7 +48,7 @@ export function classifyAskDwIntent({ text, context = {} } = {}) {
   let job = ASK_DW_JOB.EXPLAIN
   let confidence = ASK_DW_INTENT_CONFIDENCE.MEDIUM
 
-  if (hasAny(value, ['send ', 'email ', 'remind ', 'pause ', 'resume ', 'mark paid', 'apply cash', 'write off', 'issue credit', 'do it', 'take care of']) || (value.includes('mark') && value.includes('paid'))) {
+  if (hasAny(value, ['send ', 'email ', 'remind ', 'pause ', 'resume ', 'apply cash', 'write off', 'issue credit', 'do it', 'take care of']) || isMarkPaidCommand(value)) {
     job = ASK_DW_JOB.ACT
     confidence = ASK_DW_INTENT_CONFIDENCE.HIGH
   } else if (hasAny(value, ['what should', 'should we', 'recommend', 'best next', 'next action', 'what do we do'])) {
