@@ -1,0 +1,195 @@
+/* Phase 2B read-only visual layer. No animation exists unless a model
+   truthfully carries live=true from a persisted running DW run. */
+.dw-command-room {
+  margin: 0 0 18px;
+  padding: 18px;
+  border: 1px solid rgba(180, 83, 55, 0.2);
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(255, 250, 247, 0.98), rgba(255, 255, 255, 0.98));
+  box-shadow: 0 10px 30px rgba(35, 28, 24, 0.05);
+}
+.dw-command-head { display:flex; justify-content:space-between; gap:16px; align-items:flex-start; }
+.dw-command-kicker,.dw-case-kicker { font-size:11px; font-weight:700; letter-spacing:.09em; text-transform:uppercase; color:var(--primary); }
+.dw-command-head h2 { margin:5px 0 0; max-width:720px; font-size:20px; line-height:1.3; color:var(--text); }
+.dw-live-badge { display:inline-flex; align-items:center; gap:7px; min-height:30px; padding:6px 9px; border-radius:999px; font-size:10px; font-weight:800; letter-spacing:.08em; white-space:nowrap; }
+.dw-live-badge.is-live { background:rgba(180,83,55,.1); color:var(--primary); }
+.dw-live-badge.is-caught-up { background:rgba(32,106,73,.08); color:var(--green); }
+.dw-live-dot,.dw-live-job-dot { width:7px; height:7px; border-radius:50%; background:currentColor; flex:0 0 auto; }
+.dw-live-badge.is-live .dw-live-dot { animation:dw-live-pulse 1.8s ease-in-out infinite; }
+.dw-live-detail { color:var(--text-muted); letter-spacing:0; font-weight:600; }
+@keyframes dw-live-pulse { 0%,100%{ opacity:.45; transform:scale(.88);} 50%{opacity:1; transform:scale(1.12);} }
+@media (prefers-reduced-motion: reduce) { .dw-live-badge.is-live .dw-live-dot { animation:none; } }
+.dw-command-metrics { margin-top:16px; display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); border:1px solid var(--border); border-radius:12px; overflow:hidden; background:#fff; }
+.dw-command-metric { padding:12px 14px; display:flex; flex-direction:column; gap:4px; border-right:1px solid var(--border); }
+.dw-command-metric:last-child { border-right:0; }
+.dw-command-metric span { font-size:11px; color:var(--text-muted); }
+.dw-command-metric strong { font-size:18px; color:var(--text); }
+.dw-command-metric.needs-you strong { color:var(--amber); }
+.dw-live-now,.dw-needs-you { margin-top:14px; padding-top:14px; border-top:1px solid var(--border); }
+.dw-live-now-title,.dw-needs-you-head { display:flex; justify-content:space-between; font-size:12px; font-weight:700; color:var(--text); }
+.dw-live-now ul,.dw-needs-you ul { margin:8px 0 0; padding:0; list-style:none; }
+.dw-live-job,.dw-needs-you button { width:100%; border:0; background:transparent; padding:9px 4px; display:flex; align-items:center; gap:10px; text-align:left; color:inherit; cursor:pointer; border-radius:8px; }
+.dw-live-job:hover,.dw-needs-you button:hover { background:rgba(180,83,55,.05); }
+.dw-live-job-dot { color:var(--primary); }
+.dw-live-job-main,.dw-needs-you button>span:first-child { min-width:0; flex:1; display:flex; flex-direction:column; gap:2px; }
+.dw-live-job-main strong,.dw-needs-you strong { font-size:12px; color:var(--text); }
+.dw-live-job-main span,.dw-needs-you small { font-size:11px; color:var(--text-muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.dw-live-job-amount,.dw-needs-you button>span:last-child { font-size:11px; font-weight:700; color:var(--primary); }
+.dw-command-footnote { margin:9px 0 0; font-size:10px; line-height:1.45; color:var(--text-muted); }
+.dw-case-file { margin:0 0 16px; padding:14px; border:1px solid rgba(180,83,55,.18); background:rgba(255,250,247,.72); border-radius:12px; }
+.dw-case-file-head { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+.dw-case-file-head>div { display:flex; flex-direction:column; gap:3px; }
+.dw-case-file-head strong { font-size:13px; text-transform:capitalize; }
+.dw-case-state { font-size:10px; font-weight:800; letter-spacing:.05em; text-transform:uppercase; padding:5px 7px; border-radius:999px; background:rgba(0,0,0,.05); }
+.dw-case-state.state-approval,.dw-case-state.state-investigating { color:var(--amber); background:rgba(205,137,28,.1); }
+.dw-case-state.state-handled { color:var(--green); background:rgba(32,106,73,.08); }
+.dw-case-state.state-blocked { color:var(--red,#a33); background:rgba(163,51,51,.08); }
+.dw-case-message { margin:10px 0; font-size:12px; line-height:1.5; color:var(--text); }
+.dw-case-proof-row { display:flex; flex-wrap:wrap; gap:7px; }
+.dw-case-proof-row span { padding:5px 7px; border-radius:7px; background:#fff; border:1px solid var(--border); font-size:10px; color:var(--text-muted); }
+.dw-case-next { margin-top:10px; display:flex; justify-content:space-between; gap:10px; padding:9px 10px; border-radius:9px; background:#fff; border:1px solid var(--border); font-size:11px; }
+.dw-case-next span { color:var(--text-muted); }
+.dw-case-details { margin-top:9px; border-top:1px solid var(--border); padding-top:8px; }
+.dw-case-details summary { cursor:pointer; font-size:11px; font-weight:700; color:var(--text); }
+.dw-case-details ul { margin:7px 0 0 18px; padding:0; }
+.dw-case-details li { margin:4px 0; font-size:11px; line-height:1.4; color:var(--text-muted); }
+.dw-evidence-grid { margin-top:8px; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px; }
+.dw-evidence-grid span { font-size:10px; color:var(--text-muted); }
+.dw-evidence-grid strong { color:var(--text); }
+.dw-case-founder-boundary { margin-top:10px; padding:9px 10px; border-radius:9px; background:rgba(205,137,28,.08); display:flex; flex-direction:column; gap:3px; }
+.dw-case-founder-boundary strong { font-size:11px; color:var(--amber); }
+.dw-case-founder-boundary span,.dw-case-proof-mode { font-size:10px; color:var(--text-muted); }
+.dw-case-proof-mode { margin-top:9px; }
+@media (max-width: 900px) { .dw-command-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); } .dw-command-metric:nth-child(2){border-right:0;} .dw-command-metric:nth-child(-n+2){border-bottom:1px solid var(--border);} }
+
+/* Increment 6 — founder command queue + What's Done journal. */
+.dw-command-queue,
+.dw-work-journal {
+  border: 1px solid rgba(102, 67, 49, 0.14);
+  border-radius: 18px;
+  background: var(--surface, #fff);
+  box-shadow: 0 10px 30px rgba(34, 24, 19, 0.05);
+}
+
+.dw-command-queue { padding: 18px; }
+.dw-command-queue-head,
+.dw-work-journal-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.dw-command-queue-head h2,
+.dw-work-journal-head h2 { margin: 2px 0 0; font-size: 18px; }
+.dw-command-queue-count {
+  min-width: 30px;
+  height: 30px;
+  padding: 0 9px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(190, 91, 56, 0.12);
+  color: var(--primary, #b85d3d);
+  font-weight: 700;
+}
+.dw-command-queue-list,
+.dw-work-journal-list { list-style: none; margin: 14px 0 0; padding: 0; }
+.dw-command-queue-list li + li,
+.dw-work-journal-list > li + li { border-top: 1px solid rgba(102, 67, 49, 0.10); }
+.dw-command-queue-list button {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 13px 0;
+  text-align: left;
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  cursor: pointer;
+  color: inherit;
+}
+.dw-command-queue-main,
+.dw-command-queue-side,
+.dw-work-journal-main,
+.dw-work-journal-proof { display: flex; flex-direction: column; gap: 4px; }
+.dw-command-queue-main small,
+.dw-work-journal-main small,
+.dw-work-journal-proof small,
+.dw-work-journal-head p { color: var(--text-muted, #766b65); }
+.dw-command-recommendation { font-size: 12px; color: var(--primary, #b85d3d); }
+.dw-command-queue-side { text-align: right; align-items: flex-end; white-space: nowrap; }
+.dw-command-queue-side > span { font-size: 12px; text-decoration: underline; text-underline-offset: 3px; }
+.dw-command-footnote { margin: 12px 0 0; font-size: 11px; color: var(--text-muted, #766b65); line-height: 1.45; }
+
+.dw-work-journal { padding: 22px; margin: 18px 0; }
+.dw-work-journal-head p { margin: 5px 0 0; font-size: 13px; }
+.dw-work-journal-integrity { text-align: right; display: flex; flex-direction: column; }
+.dw-work-journal-integrity strong { font-size: 24px; }
+.dw-work-journal-integrity span { font-size: 11px; color: var(--text-muted, #766b65); }
+.dw-work-journal-summary { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+.dw-work-journal-summary span,
+.dw-work-kind {
+  display: inline-flex;
+  border-radius: 999px;
+  padding: 5px 8px;
+  background: rgba(102, 67, 49, 0.07);
+  font-size: 11px;
+  font-weight: 650;
+}
+.dw-work-journal-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+  padding: 14px 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+}
+.dw-work-kind.kind-handled { background: rgba(52, 135, 92, 0.12); }
+.dw-work-kind.kind-escalated { background: rgba(190, 91, 56, 0.12); }
+.dw-work-kind.kind-withheld { background: rgba(107, 104, 101, 0.12); }
+.dw-work-journal-proof { text-align: right; align-items: flex-end; white-space: nowrap; font-size: 12px; }
+.dw-work-journal-why { margin: -6px 0 12px 84px; font-size: 12px; color: var(--text-muted, #766b65); }
+.dw-work-journal-why summary { cursor: pointer; color: var(--text, #2f2a27); }
+.dw-work-journal-why ul { margin: 8px 0 0; padding-left: 18px; }
+.dw-work-journal-empty { color: var(--text-muted, #766b65); margin: 16px 0 0; }
+
+.pulse-rail .dw-command-queue {
+  background: rgba(255,255,255,0.055);
+  border-color: rgba(255,255,255,0.10);
+  box-shadow: none;
+  border-radius: 14px;
+  color: inherit;
+  margin-bottom: 12px;
+}
+.pulse-rail .dw-command-queue-main small,
+.pulse-rail .dw-command-footnote { color: rgba(255,255,255,0.62); }
+
+@media (max-width: 720px) {
+  .dw-work-journal-row { grid-template-columns: 1fr; }
+  .dw-work-kind { width: max-content; }
+  .dw-work-journal-proof { text-align: left; align-items: flex-start; }
+  .dw-work-journal-why { margin-left: 0; }
+  .dw-command-queue-list button { flex-direction: column; }
+  .dw-command-queue-side { align-items: flex-start; text-align: left; }
+}
+
+/* Increment 8–10: truthful LIVE / Replay / DW Check. */
+.dw-live-feed,.dw-replay-shift,.dw-check-panel{border:1px solid var(--border);border-radius:14px;padding:16px;background:var(--surface,#fff)}
+.dw-live-feed-head,.dw-replay-head,.dw-replay-run-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.dw-live-feed ol,.dw-replay-shift ol{list-style:none;padding:0;margin:12px 0 0;display:grid;gap:8px}
+.dw-live-feed-item{display:grid;grid-template-columns:auto auto 1fr auto;gap:10px;align-items:center;padding:9px 0;border-top:1px solid var(--border)}
+.dw-live-feed-item.has-side-effect{font-weight:700}
+.dw-live-feed-time{font-variant-numeric:tabular-nums;color:var(--text-muted)}
+.dw-live-feed-phase{text-transform:capitalize;font-weight:600}
+.dw-replay-run{padding:14px 0;border-top:1px solid var(--border)}
+.dw-replay-run li{display:grid;grid-template-columns:110px 1fr;gap:8px}
+.dw-replay-run p{grid-column:1/-1;margin:0;color:var(--text-muted)}
+.dw-check-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.dw-check-metrics div{padding:10px;border:1px solid var(--border);border-radius:10px}.dw-check-metrics dt{color:var(--text-muted);font-size:12px}.dw-check-metrics dd{margin:4px 0 0;font-weight:700}
+@media (prefers-reduced-motion: reduce){.dw-live-feed *,.dw-replay-shift *,.dw-check-panel *{animation:none!important;transition:none!important}}

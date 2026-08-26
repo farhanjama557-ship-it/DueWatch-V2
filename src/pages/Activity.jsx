@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Bot } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
+import { useData } from '../context/DataContext'
+import DwWhatsDoneJournal from '../features/dwIntelligence/DwWhatsDoneJournal'
+import DwReplayCheckSurface from '../features/dwIntelligence/DwReplayCheckSurface'
 import { supabase } from '../lib/supabase'
 import { SearchIcon } from '../components/icons'
 import { formatEventDate } from '../lib/format'
@@ -21,6 +24,7 @@ const TABS = [
 
 export default function Activity() {
   const { user } = useAuth()
+  const { invoices, dwIntelligence } = useData()
   const [events, setEvents] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -66,6 +70,16 @@ export default function Activity() {
     <div className="brief">
       <h1 className="brief-greeting">Activity Log</h1>
       <p className="brief-subline">Everything you and Duewatch have done.</p>
+
+      <DwWhatsDoneJournal
+        model={dwIntelligence?.whatsDone ?? null}
+        invoices={invoices}
+      />
+
+      <DwReplayCheckSurface
+        replay={dwIntelligence?.replay ?? null}
+        checks={dwIntelligence?.dwChecks ?? []}
+      />
 
       <div className="list-controls">
         <div className="tabs">

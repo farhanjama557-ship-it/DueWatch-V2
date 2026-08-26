@@ -1,0 +1,38 @@
+{
+  "audit_date": "2026-08-24",
+  "scope": "Read-only comparison of GitHub main against the connected active DueWatch Supabase project.",
+  "mutations_performed": false,
+  "phase2b_migration_applied": false,
+  "edge_functions_invoked": false,
+  "repo_main_tree_sha": "8597c2a661496b88afc92cf4a27c3e58f62dc86e",
+  "live_schema_indicators": {
+    "clients.canonical_id": false,
+    "client_source_identities": false,
+    "import_runs": false,
+    "autopilot_execution_claims": false,
+    "awaiting_signature.authority_receipt": false,
+    "awaiting_signature.rule_snapshot": false,
+    "payments": false,
+    "payment_allocations": false,
+    "invoice_client_composite_tenant_fk": false,
+    "cross_tenant_invoice_client_relationship_count": 0,
+    "awaiting_signature_has_old_user_invoice_status_unique_index": true
+  },
+  "deployed_edge_functions": {
+    "autopilot-scheduler": {
+      "version": 2,
+      "behavior": "legacy Session 7 path; direct sendEmail path; does not use repo-current nextActionAuthority/autopilotExecutionCore execution boundary"
+    },
+    "send-reminder-email": {
+      "version": 3,
+      "behavior": "legacy direct sendEmail path after caller/invoice ownership check; does not use repo-current autopilotExecutionCore"
+    }
+  },
+  "repo_expected_backend": {
+    "autopilot-scheduler": "imports nextActionAuthority, autopilotExecutionCore, authority-input helpers and execution-claim helpers",
+    "execution_claims_migration": "20260813161329_autopilot_execution_claims.sql",
+    "canonical_receipt_migration": "20260814100000_autopilot_execution_claims_canonical_receipt.sql",
+    "payments_foundation_migration": "20260816120000_payments_foundation.sql"
+  },
+  "conclusion": "BASELINE_DEPLOYMENT_DRIFT_BLOCKER"
+}
