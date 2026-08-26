@@ -137,6 +137,24 @@ function buildVerificationInput({ core, candidate, plan, toolRuns }) {
   }
 }
 
+function hardenVerification({ verification, candidate, toolRuns }) {
+  const admittedIds = new Set(toolRuns.map((run) => run.id))
+  const citedIds = safeArray(candidate?.citedToolRunIds)
+  const unknownIds = citedIds.filter((id) => !admittedIds.has(id))
+  if (unknownIds.length === 0) return verification
+
+  return freeze({
+    verdict: verification?.verdict === 'BLOCK' ? 'BLOCK' : 'REVISE',
+    issues: [
+      ...safeArray(verification?.issues),
+      `Candidate cited unknown tool run IDs: ${unknownIds.join(', ')}`,
+    ],
+    checkedClaims: [
+      ...safeArray(verification?.checkedClaims),
+      'cited tool run IDs validated deterministically',
+    ],
+  })
+}
 function buildReasoningTrail({ core, plan, toolRuns, verification }) {
   const trail = [...safeArray(core.reasoningTrail)]
   for (const run of toolRuns) {
@@ -215,7 +233,12 @@ export function createAskDwOrchestrator({
       const plan = await primaryModel.plan(buildPlannerInput({ text, context: scopedContext, core }))
       const toolRuns = await executeRequests({ requests: plan.toolRequests, registry: toolRegistry, context: scopedContext })
       const candidate = await primaryModel.synthesize(buildSynthesisInput({ text, core, plan, toolRuns }))
-      const verification = await verifierModel.verify(buildVerificationInput({ core, candidate, plan, toolRuns }))
+      const modelVerification = await verifierModel.verify(buildVerificationInput({ core, candidate, plan, toolRuns }))
+      const verification = hardenVerification({
+        verification: modelVerification,
+        candidate,
+        toolRuns,
+      })
 
       const answer = verification.verdict === 'PASS' ? candidate : answerFallback(core)
       const reasoningTrail = buildReasoningTrail({ core, plan, toolRuns, verification })
