@@ -7,6 +7,7 @@ import StatusPill from './StatusPill'
 import JourneyBar from './JourneyBar'
 import CognitiveCompose from '../features/reminders/CognitiveCompose'
 import DwInvoiceIntelligencePanel from '../features/dwIntelligence/DwInvoiceIntelligencePanel'
+import AskDwInvoiceLiveProbe from '../features/dwIntelligence/AskDwInvoiceLiveProbe'
 import { CloseIcon, CheckIcon } from './icons'
 import {
   formatMoney,
@@ -371,6 +372,7 @@ export default function InvoiceDetailPanel({
           />
 
           <DwInvoiceIntelligencePanel model={dwCase} />
+          <AskDwInvoiceLiveProbe invoiceId={data.id} />
 
           {autopilotEnabled && (
             <div className={invoicePaused ? 'invoice-autopilot-block paused' : 'invoice-autopilot-block'}>

@@ -1,0 +1,115 @@
+.ask-dw-live-probe {
+  border: 1px solid var(--border, #e6e1db);
+  border-radius: 12px;
+  padding: 14px;
+  margin: 12px 0 16px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.ask-dw-live-probe__header,
+.ask-dw-live-probe__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ask-dw-live-probe__header h3 {
+  margin: 2px 0 0;
+  font-size: 15px;
+}
+
+.ask-dw-live-probe__eyebrow {
+  font-size: 10px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--text-muted, #7a746d);
+}
+
+.ask-dw-live-probe__badge {
+  border: 1px solid var(--border, #e6e1db);
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: 11px;
+  color: var(--text-muted, #7a746d);
+}
+
+.ask-dw-live-probe__copy {
+  margin: 10px 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted, #6e6862);
+}
+
+.ask-dw-live-probe textarea {
+  width: 100%;
+  resize: vertical;
+  box-sizing: border-box;
+  border: 1px solid var(--border, #ddd7cf);
+  border-radius: 9px;
+  padding: 10px 11px;
+  font: inherit;
+  background: white;
+}
+
+.ask-dw-live-probe__actions {
+  margin-top: 9px;
+  justify-content: flex-end;
+}
+
+.ask-dw-live-probe__actions button {
+  border: 0;
+  border-radius: 9px;
+  padding: 8px 12px;
+  font: inherit;
+  cursor: pointer;
+  background: var(--primary, #b65f3a);
+  color: white;
+}
+
+.ask-dw-live-probe__actions button:disabled {
+  opacity: .55;
+  cursor: default;
+}
+
+.ask-dw-live-probe__error {
+  margin-top: 10px;
+  border-radius: 9px;
+  padding: 9px 10px;
+  background: #fff3f0;
+  font-size: 12px;
+  color: #9f3429;
+}
+
+.ask-dw-live-probe__result {
+  margin-top: 12px;
+  border-top: 1px solid var(--border, #e6e1db);
+  padding-top: 12px;
+}
+
+.ask-dw-live-probe__section strong,
+.ask-dw-live-probe__grid strong {
+  display: block;
+  margin-bottom: 5px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--text-muted, #6e6862);
+}
+
+.ask-dw-live-probe__grid {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.ask-dw-live-probe pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  padding: 9px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, .035);
+  font-size: 11px;
+  line-height: 1.45;
+}
