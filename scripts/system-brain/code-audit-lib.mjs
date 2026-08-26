@@ -157,7 +157,7 @@ export async function buildCodeCapabilityAudit({ repoRoot, generatedAt = new Dat
     fs.readFile(path.join(repoRoot, 'src', 'lib', 'nextActionAuthority.js'), 'utf8'),
   ])
 
-  const packageJson = JSON.parse(packageRaw)
+  const packageJson = JSON.parse(packageRaw.replace(/^\uFEFF/, ''))
   const sourceFiles = await walk(path.join(repoRoot, 'src'))
   const dependencies = []
 
