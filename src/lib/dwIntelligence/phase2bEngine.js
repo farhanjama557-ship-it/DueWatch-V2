@@ -1,3 +1,12 @@
+import {
+  assessPrecedentStructure,
+  buildArAnalysisPlan,
+  buildConstraintPlan,
+  buildExecutionIntent,
+  projectArControlState,
+  projectAttributedClaims,
+} from './phase2bArControl.js'
+
 const DAY_MS = 86_400_000
 
 export const OPERATIONAL_STATE = Object.freeze({
@@ -154,12 +163,9 @@ export function selectPrecedents({ tenantId, clientId, current = {}, precedents 
   const checked = precedents
     .filter((p) => p.tenantId === tenantId)
     .map((p) => {
-      const disputeCompatible = Boolean(p.disputed) === Boolean(current.disputed)
-      const actionCompatible = !p.actionType || p.actionType === current.actionType
-      const clientCompatible = !p.clientId || p.clientId === clientId || p.allowCrossClient === true
-      const stale = p.stale === true
-      const applicable = disputeCompatible && actionCompatible && clientCompatible && !stale
-      return { ...p, applicable, reasons: { disputeCompatible, actionCompatible, clientCompatible, stale } }
+      const reasons = assessPrecedentStructure({ precedent: p, current, clientId })
+      const applicable = Object.values(reasons).every(Boolean)
+      return { ...p, applicable, reasons }
     })
   return {
     checked,
@@ -183,10 +189,12 @@ export function partialPool({ local, prior } = {}) {
   const posteriorDirection = posteriorRate >= 0.5 ? 'HIGH' : 'LOW'
   const priorOvercome = strongLocalSupport && localDirection !== priorDirection && posteriorDirection === localDirection
   return {
+    method: 'EMPIRICAL_PARTIAL_POOL',
     localN,
     localRate,
     priorRate,
     priorEss,
+    effectiveSampleSize: denom,
     localWeight,
     priorWeight,
     posteriorRate,
@@ -202,18 +210,23 @@ export function assessPrediction(prediction) {
   const intervalDays = Math.max(0, Number(prediction.intervalDays) || 0)
   const staleDays = Math.max(0, Number(prediction.staleDays) || 0)
   const assumptionsOk = prediction.assumptionsOk !== false
-  const actionable = sampleN >= 5 && intervalDays <= 14 && staleDays <= 90 && assumptionsOk
+  const driftScore = prediction.driftScore == null ? null : Math.min(1, Math.max(0, Number(prediction.driftScore) || 0))
+  const driftOk = driftScore == null || driftScore <= 0.35
+  const actionable = sampleN >= 5 && intervalDays <= 14 && staleDays <= 90 && assumptionsOk && driftOk
   const reasons = []
   if (sampleN < 5) reasons.push('sparse_sample')
   if (intervalDays > 14) reasons.push('interval_too_wide')
   if (staleDays > 90) reasons.push('stale_prediction')
   if (!assumptionsOk) reasons.push('assumption_failure')
+  if (!driftOk) reasons.push('distribution_drift')
   return {
     point: prediction.point ?? null,
     coverage: prediction.coverage ?? null,
+    method: prediction.method ?? null,
     sampleN,
     intervalDays,
     staleDays,
+    driftScore,
     assumptionsOk,
     actionable,
     reasons,
@@ -221,12 +234,16 @@ export function assessPrediction(prediction) {
 }
 
 export function chooseFounderQuestion({ candidateQuestion, informationValue = 0, burdenCost = 0.20, liveUncertainty = false, safeReversibleAvailable = false } = {}) {
-  const ask = Boolean(candidateQuestion) && liveUncertainty && !safeReversibleAvailable && Number(informationValue) > Number(burdenCost)
+  const info = Number(informationValue) || 0
+  const burden = Number(burdenCost) || 0
+  const netDecisionValue = info - burden
+  const ask = Boolean(candidateQuestion) && liveUncertainty && !safeReversibleAvailable && netDecisionValue > 0
   return {
     question: ask ? candidateQuestion : null,
     asked: ask,
-    informationValue: Number(informationValue) || 0,
-    burdenCost: Number(burdenCost) || 0,
+    informationValue: info,
+    burdenCost: burden,
+    netDecisionValue,
     suppressedReason: ask ? null : (safeReversibleAvailable ? 'safe_reversible_action_available' : 'insufficient_decision_value'),
   }
 }
@@ -241,17 +258,13 @@ export function filterPreferenceEvidence(events = []) {
   return { admitted, excluded }
 }
 
-function hasPaymentClaim(admission) {
-  return [...admission.admitted, ...admission.contextOnly].some((e) => e.claimType === 'payment_claim' || e.claimsPayment === true)
-}
-
 function authorityActual(authorityEvaluation, founderApproved) {
   if (founderApproved === true && authorityEvaluation?.authority?.authorized === true) return 'GRANTED'
   if (authorityEvaluation?.authority?.authorized === true && authorityEvaluation?.permission?.canActAutomatically === true) return 'GRANTED'
   return 'NOT_GRANTED'
 }
 
-function buildVerifier({ canonical, admission, authorityEvaluation, paymentConflict, predictionAssessment, rejectStagedAction }) {
+function buildVerifier({ canonical, admission, authorityEvaluation, arState, predictionAssessment, rejectStagedAction }) {
   const instructionBearing = admission.records.filter((e) =>
     e.containsInstructions === true ||
     e.attemptsAuthorityGrant === true ||
@@ -259,7 +272,8 @@ function buildVerifier({ canonical, admission, authorityEvaluation, paymentConfl
   )
   const checks = {
     invoiceOpen: canonical.canonicalStatus === 'OPEN',
-    noCanonicalPaymentConflict: !paymentConflict,
+    noCanonicalPaymentConflict: !arState?.reconciliation?.requiresPaymentReconciliation,
+    noBlockingReconciliation: !arState?.reconciliation?.blocksCustomerContact,
     externalInstructionsQuarantined: instructionBearing.every(
       (e) => e.status === EVIDENCE_STATUS.QUARANTINED_INSTRUCTION
     ),
@@ -267,23 +281,13 @@ function buildVerifier({ canonical, admission, authorityEvaluation, paymentConfl
     predictionActionableOrNotRequired: !predictionAssessment || predictionAssessment.actionable,
     stagedActionNotRejected: rejectStagedAction !== true,
   }
-  const passed =
-    checks.invoiceOpen &&
-    checks.noCanonicalPaymentConflict &&
-    checks.externalInstructionsQuarantined &&
-    checks.recommendationAuthorizedByPolicy &&
-    checks.predictionActionableOrNotRequired &&
-    checks.stagedActionNotRejected
+  const passed = Object.values(checks).every(Boolean)
   return { passed, checks }
 }
 
 function toProofEvidenceRecord(record) {
   const rejected = record.status === EVIDENCE_STATUS.REJECTED_TENANT || record.status === EVIDENCE_STATUS.REJECTED_SCOPE
   if (rejected) {
-    // A rejected foreign/out-of-scope source is evidence that the admission
-    // boundary worked, not content the tenant is entitled to inspect. Keep the
-    // rejection classification but redact source identity/trust/lineage from
-    // the durable/browser-readable proof object.
     return {
       id: null,
       trust: null,
@@ -319,6 +323,16 @@ export function auditHardGates(result, input) {
   if (result.proof.identificationStatus === 'IDENTIFIED' && input.identificationStatus && input.identificationStatus !== 'IDENTIFIED') violations.push('H09')
   if (result.proof.memory.rederivedFromBlockedEvidence === true) violations.push('H10')
   return violations
+}
+
+function emptyArProof() {
+  return {
+    analysisPlan: null,
+    claims: [],
+    arState: null,
+    reconciliation: null,
+    constraints: null,
+  }
 }
 
 export function runPhase2BWorkflow(input = {}) {
@@ -362,44 +376,89 @@ export function runPhase2BWorkflow(input = {}) {
         policy: authorityEvaluation?.recommendation ?? null,
         authority: { policyAuthorized: false, actual: 'NOT_GRANTED', canActAutomatically: false },
         verifier: { passed: false, checks: { tenantScope: false } },
+        ...emptyArProof(),
       },
     }
     result.hardViolations = auditHardGates(result, input)
     return result
   }
 
+  const analysisPlan = buildArAnalysisPlan(input)
   const canonical = canonicalSnapshot(invoice, now)
   const admission = admitEvidence({ tenantId, invoiceId: invoice.id, clientId: client.id, evidence })
-  const memoryResolution = resolveMemory({ tenantId, clientId: client.id, invoiceId: invoice.id, memory, tombstones, evidenceAdmission: admission })
-  const precedentResolution = selectPrecedents({ tenantId, clientId: client.id, current: { disputed: input.disputed === true, actionType: 'send_reminder' }, precedents })
-  const poolingAssessment = partialPool(pooling || undefined)
-  const predictionAssessment = assessPrediction(prediction)
-  const preference = filterPreferenceEvidence(preferenceEvents)
-  const questionDecision = chooseFounderQuestion(question || {})
+  const claims = projectAttributedClaims({ admission, observedAt: now instanceof Date ? now.toISOString() : String(now) })
+  const arState = projectArControlState({
+    canonical,
+    admission,
+    disputed: input.disputed === true,
+    promise: input.promise ?? null,
+  })
 
-  const paymentConflict = canonical.canonicalStatus === 'OPEN' && hasPaymentClaim(admission)
+  const memoryResolution = analysisPlan.run.memory
+    ? resolveMemory({ tenantId, clientId: client.id, invoiceId: invoice.id, memory, tombstones, evidenceAdmission: admission })
+    : { active: [], blocked: [] }
+
+  const precedentResolution = analysisPlan.run.precedent
+    ? selectPrecedents({
+        tenantId,
+        clientId: client.id,
+        current: {
+          disputed: arState.dispute.status !== 'NONE',
+          actionType: authorityEvaluation?.recommendation?.action ?? 'send_reminder',
+          promiseStatus: arState.promise.status,
+          paymentState: arState.payment.status,
+          collectionStage: arState.collection.status,
+        },
+        precedents,
+      })
+    : { checked: [], applicable: [] }
+
+  const poolingAssessment = analysisPlan.run.pooling ? partialPool(pooling || undefined) : null
+  const predictionAssessment = analysisPlan.run.uncertainty ? assessPrediction(prediction) : null
+  const preference = analysisPlan.run.preferenceEvidence ? filterPreferenceEvidence(preferenceEvents) : { admitted: [], excluded: [] }
+  const questionDecision = analysisPlan.run.founderQuestion ? chooseFounderQuestion(question || {}) : {
+    question: null,
+    asked: false,
+    informationValue: 0,
+    burdenCost: 0,
+    netDecisionValue: 0,
+    suppressedReason: 'no_question_candidate',
+  }
+
   const policyAuthorized = authorityEvaluation?.authority?.authorized === true
   const recommendation = authorityEvaluation?.recommendation ?? null
   const actualAuthority = authorityActual(authorityEvaluation, founderApproved)
   const predictionBlocks = predictionRequired && (!predictionAssessment || !predictionAssessment.actionable)
+  const reconciliationBlocks = arState.reconciliation.blocksCustomerContact === true
+
+  const constraintPlan = buildConstraintPlan({
+    canonical,
+    arState,
+    authorityEvaluation,
+    recommendation,
+    predictionAssessment,
+    predictionRequired,
+    rejectStagedAction,
+  })
 
   let state = OPERATIONAL_STATE.WATCH
   let stagedAction = null
   let execution = { mode: 'none', sideEffect: false, outcome: 'NO_ACTION' }
 
-  if (paymentConflict) {
+  if (reconciliationBlocks) {
     state = OPERATIONAL_STATE.INVESTIGATING
   } else if (predictionBlocks) {
     state = OPERATIONAL_STATE.UNCERTAIN
   } else if (!recommendation || !policyAuthorized) {
     state = questionDecision.asked ? OPERATIONAL_STATE.UNCERTAIN : OPERATIONAL_STATE.WATCH
-  } else if (actualAuthority !== 'GRANTED') {
+  } else if (actualAuthority !== 'GRANTED' || constraintPlan.requiresFounderApproval) {
     state = OPERATIONAL_STATE.APPROVAL
     stagedAction = {
       action: recommendation.action,
       tone: recommendation.tone ?? null,
       ruleId: recommendation.ruleId ?? null,
       status: 'AWAITING_APPROVAL',
+      ...buildExecutionIntent({ tenantId, invoiceId: invoice.id, canonical, recommendation }),
     }
   } else {
     stagedAction = {
@@ -407,9 +466,10 @@ export function runPhase2BWorkflow(input = {}) {
       tone: recommendation.tone ?? null,
       ruleId: recommendation.ruleId ?? null,
       status: rejectStagedAction ? 'REJECTED' : 'STAGED',
+      ...buildExecutionIntent({ tenantId, invoiceId: invoice.id, canonical, recommendation }),
     }
-    const verifier = buildVerifier({ canonical, admission, authorityEvaluation, paymentConflict, predictionAssessment: predictionRequired ? predictionAssessment : null, rejectStagedAction })
-    if (!verifier.passed) {
+    const verifier = buildVerifier({ canonical, admission, authorityEvaluation, arState, predictionAssessment: predictionRequired ? predictionAssessment : null, rejectStagedAction })
+    if (!verifier.passed || !constraintPlan.preconditionsSatisfied) {
       state = rejectStagedAction ? OPERATIONAL_STATE.BLOCKED : OPERATIONAL_STATE.WATCH
       execution = { mode: 'none', sideEffect: false, outcome: rejectStagedAction ? 'REJECTED_BEFORE_EXECUTION' : 'VERIFIER_BLOCKED' }
     } else if (sandboxTransport) {
@@ -422,9 +482,17 @@ export function runPhase2BWorkflow(input = {}) {
     }
   }
 
-  const verifier = buildVerifier({ canonical, admission, authorityEvaluation, paymentConflict, predictionAssessment: predictionRequired ? predictionAssessment : null, rejectStagedAction })
+  const verifier = buildVerifier({ canonical, admission, authorityEvaluation, arState, predictionAssessment: predictionRequired ? predictionAssessment : null, rejectStagedAction })
   const blockedEvidenceIds = new Set(tombstones.flatMap((t) => t.blockedEvidenceIds || []))
   const rederivedFromBlockedEvidence = memoryResolution.active.some((m) => (m.sourceEvidenceIds || []).some((id) => blockedEvidenceIds.has(id)))
+
+  const interpretations = claims
+    .filter((claim) => claim.role !== 'CANONICAL_RECORD')
+    .map((claim) => ({
+      type: claim.claimType,
+      sourceEvidenceId: claim.sourceEvidenceId,
+      promotedToCanonical: false,
+    }))
 
   const proof = {
     scope: { tenantId, businessId: tenantId, clientId: client.id, invoiceId: invoice.id },
@@ -434,9 +502,14 @@ export function runPhase2BWorkflow(input = {}) {
       independentStrongRoots: admission.independentStrongRoots,
       fabricatedIds: [],
     },
-    interpretations: paymentConflict ? [{ type: 'payment_claim', value: 'client_says_payment_sent', promotedToCanonical: false }] : [],
+    claims,
+    interpretations,
     predictions: predictionAssessment,
     identificationStatus,
+    analysisPlan,
+    arState,
+    reconciliation: arState.reconciliation,
+    constraints: constraintPlan,
     memory: {
       active: memoryResolution.active.map((m) => m.id),
       blocked: memoryResolution.blocked.map((m) => ({ id: m.id, reason: m.blockedReason })),
