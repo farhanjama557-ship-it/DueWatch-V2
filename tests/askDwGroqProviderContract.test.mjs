@@ -36,7 +36,7 @@ test('Groq controlled provider only allows strict-schema GPT-OSS models', () => 
 test('free-tier guardrails bound request and output size', () => {
   assert.match(source, /MAX_REQUEST_CHARS\s*=\s*12_000/)
   assert.match(source, /FREE_TIER_INPUT_LIMIT/)
-  assert.match(source, /1200/)
+  assert.match(source, /1800/)
   assert.match(source, /1600/)
 })
 

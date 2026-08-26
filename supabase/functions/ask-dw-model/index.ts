@@ -77,7 +77,7 @@ Deno.serve(async (req) => {
       }, 503)
     }
 
-    const effort = stage === ASK_DW_OPENAI_STAGE.VERIFY ? 'high' : 'medium'
+    const effort = 'medium'
 
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), PROVIDER_TIMEOUT_MS)
@@ -119,7 +119,7 @@ Deno.serve(async (req) => {
           // these bounds and this reduces free-tier token pressure.
           max_output_tokens:
             stage === ASK_DW_OPENAI_STAGE.VERIFY
-              ? 1200
+              ? 1800
               : stage === ASK_DW_OPENAI_STAGE.PLAN
                 ? 1600
                 : 1600,
