@@ -8,15 +8,27 @@ import {
   stageSchema,
 } from '../_shared/askDwOpenAiContract.js'
 
-const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses'
-const MAX_REQUEST_CHARS = 180_000
+const GROQ_RESPONSES_URL = 'https://api.groq.com/openai/v1/responses'
+
+// Free-tier guardrail: keep individual envelopes small enough that the
+// controlled SYNTHESIZE + VERIFY pair has a realistic chance to fit inside
+// Groq's current 8K-token-per-minute free limit for GPT-OSS.
+const MAX_REQUEST_CHARS = 12_000
 const PROVIDER_TIMEOUT_MS = 90_000
+
+// These are the only currently supported models we allow through this
+// strict-JSON provider. Both support reasoning + strict JSON schema on Groq.
+const ALLOWED_GROQ_MODELS = new Set([
+  'openai/gpt-oss-120b',
+  'openai/gpt-oss-20b',
+])
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405)
 
   try {
+    // Fail closed. A configured Groq key alone cannot make a paid/live call.
     if (Deno.env.get('ASK_DW_MODEL_ENABLED') !== 'true') {
       return json({ error: 'Ask DW live model execution is disabled.' }, 503)
     }
@@ -45,22 +57,33 @@ Deno.serve(async (req) => {
     }
     const serializedInput = JSON.stringify(inputEnvelope)
     if (serializedInput.length > MAX_REQUEST_CHARS) {
-      return json({ error: 'Ask DW model input is too large.' }, 413)
+      return json({
+        error: 'Ask DW model input is too large for the free-tier activation profile.',
+        code: 'FREE_TIER_INPUT_LIMIT',
+      }, 413)
     }
 
-    const apiKey = Deno.env.get('OPENAI_API_KEY')
-    if (!apiKey) return json({ error: 'OpenAI provider is not configured.' }, 503)
+    const apiKey = Deno.env.get('GROQ_API_KEY')
+    if (!apiKey) return json({ error: 'Groq provider is not configured.' }, 503)
 
-    const primaryModel = Deno.env.get('OPENAI_PRIMARY_MODEL') || 'gpt-5.6-sol'
-    const verifierModel = Deno.env.get('OPENAI_VERIFIER_MODEL') || 'gpt-5.6-sol'
+    const primaryModel = Deno.env.get('GROQ_PRIMARY_MODEL') || 'openai/gpt-oss-120b'
+    const verifierModel = Deno.env.get('GROQ_VERIFIER_MODEL') || 'openai/gpt-oss-120b'
     const model = role === ASK_DW_OPENAI_ROLE.VERIFIER ? verifierModel : primaryModel
+
+    if (!ALLOWED_GROQ_MODELS.has(model)) {
+      return json({
+        error: 'Configured Groq model is outside the controlled Ask DW allowlist.',
+        code: 'GROQ_MODEL_NOT_ALLOWED',
+      }, 503)
+    }
+
     const effort = stage === ASK_DW_OPENAI_STAGE.VERIFY ? 'high' : 'medium'
 
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), PROVIDER_TIMEOUT_MS)
     let response
     try {
-      response = await fetch(OPENAI_RESPONSES_URL, {
+      response = await fetch(GROQ_RESPONSES_URL, {
         method: 'POST',
         signal: controller.signal,
         headers: {
@@ -91,7 +114,15 @@ Deno.serve(async (req) => {
               schema: stageSchema(stage),
             },
           },
-          max_output_tokens: stage === ASK_DW_OPENAI_STAGE.VERIFY ? 8000 : stage === ASK_DW_OPENAI_STAGE.PLAN ? 6000 : 5000,
+          // Deliberately much smaller than the old paid-provider ceilings.
+          // The controlled activation schemas should fit comfortably inside
+          // these bounds and this reduces free-tier token pressure.
+          max_output_tokens:
+            stage === ASK_DW_OPENAI_STAGE.VERIFY
+              ? 1200
+              : stage === ASK_DW_OPENAI_STAGE.PLAN
+                ? 1600
+                : 1600,
         }),
       })
     } catch (error) {
@@ -107,8 +138,18 @@ Deno.serve(async (req) => {
     } catch {
       return json({ error: 'Ask DW model provider returned an unreadable response.' }, 502)
     }
+
+    if (response.status === 429) {
+      const retryAfter = response.headers.get('retry-after')
+      return json({
+        error: 'Ask DW free model quota is temporarily exhausted. Try again after the limit resets.',
+        code: 'GROQ_RATE_LIMITED',
+        retryAfterSeconds: retryAfter ? Number(retryAfter) || null : null,
+      }, 429, retryAfter ? { 'Retry-After': retryAfter } : {})
+    }
+
     if (!response.ok) {
-      console.error('Ask DW OpenAI request failed', response.status, payload?.error?.code || 'unknown')
+      console.error('Ask DW Groq request failed', response.status, payload?.error?.code || 'unknown')
       return json({ error: 'Ask DW model provider request failed.' }, 502)
     }
     if (payload?.status !== 'completed') {
@@ -127,6 +168,7 @@ Deno.serve(async (req) => {
 
     return json({
       ok: true,
+      provider: 'groq',
       role,
       stage,
       model,
@@ -163,9 +205,14 @@ function extractOutputText(payload) {
   return null
 }
 
-function json(body, status = 200) {
+function json(body, status = 200, extraHeaders = {}) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+    headers: {
+      ...corsHeaders,
+      ...extraHeaders,
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-store',
+    },
   })
 }
