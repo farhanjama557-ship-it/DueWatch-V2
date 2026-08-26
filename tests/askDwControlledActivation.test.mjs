@@ -1,5 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import { classifyAskDwIntent } from '../src/lib/dwIntelligence/askDwIntent.js'
 
 import {
   ASK_DW_CONTROLLED_ACTIVATION_PROFILE,
@@ -7,6 +9,11 @@ import {
   createAskDwControlledReadTools,
   loadAskDwControlledActivationInput,
 } from '../src/lib/dwIntelligence/askDwControlledActivation.js'
+
+const source = fs.readFileSync(
+  new URL('../src/lib/dwIntelligence/askDwControlledActivation.js', import.meta.url),
+  'utf8',
+)
 
 const TENANT = 'tenant-1'
 const CLIENT = 'client-1'
@@ -76,7 +83,7 @@ function makeQuery(table, rows, calls) {
   return builder
 }
 
-function makeSupabase({ userId = TENANT, data = dataset(), invokeImpl = null } = {}) {
+function makeSupabase({ userId = TENANT, data = dataset() } = {}) {
   const calls = []
   const allowedTables = new Set(Object.keys(data))
   return {
@@ -95,14 +102,13 @@ function makeSupabase({ userId = TENANT, data = dataset(), invokeImpl = null } =
     functions: {
       async invoke(name, options) {
         calls.push({ op: 'functions.invoke', name, body: clone(options?.body) })
-        if (!invokeImpl) return { data: { ok: false, error: 'no provider configured' }, error: null }
-        return invokeImpl(name, options)
+        throw new Error('external model/provider invocation is forbidden in deterministic Ask DW')
       },
     },
   }
 }
 
-test('controlled activation exposes only canonical_state and activity_history', () => {
+test('controlled activation is DW Intelligence only and exposes read-only tools', () => {
   const supabase = makeSupabase()
   const registry = createAskDwControlledReadTools({ supabase })
   assert.deepEqual(
@@ -111,6 +117,17 @@ test('controlled activation exposes only canonical_state and activity_history', 
   )
   assert.equal(ASK_DW_CONTROLLED_ACTIVATION_PROFILE.financialExecutionAuthorized, false)
   assert.equal(ASK_DW_CONTROLLED_ACTIVATION_PROFILE.modelPlanningEnabled, false)
+  assert.equal(ASK_DW_CONTROLLED_ACTIVATION_PROFILE.externalAiEnabled, false)
+  assert.equal(ASK_DW_CONTROLLED_ACTIVATION_PROFILE.modelDependency, false)
+  assert.equal(ASK_DW_CONTROLLED_ACTIVATION_PROFILE.allowedJobs.includes('DECIDE'), true)
+})
+
+test('controlled Ask DW active path contains no model provider dependency', () => {
+  assert.doesNotMatch(source, /createAskDwLiveModels/)
+  assert.doesNotMatch(source, /ask-dw-model/)
+  assert.doesNotMatch(source, /functions\.invoke/)
+  assert.doesNotMatch(source, /GPT-OSS|Groq/i)
+  assert.match(source, /runAskDwDeterministicCore/)
 })
 
 test('controlled loader never reads missing payment, DW, or execution-history tables', async () => {
@@ -154,77 +171,77 @@ test('controlled canonical tool treats hosted currency as unknown rather than de
   assert.equal(run.sideEffect, false)
 })
 
-test('first controlled live run performs deterministic PLAN plus real SYNTHESIZE and VERIFY only', async () => {
-  const supabase = makeSupabase({
-    invokeImpl: async (_name, options) => {
-      const { role, stage, input } = options.body
-      if (stage === 'SYNTHESIZE') {
-        assert.equal(role, 'primary')
-        assert.equal(input.activationPolicy.id, 'CANONICAL_READ_ONLY_V1')
-        return {
-          data: {
-            ok: true,
-            output: {
-              executiveConclusion: 'The invoice is open with 750.00 outstanding.',
-              evidenceBasis: ['tool-01-canonical_state'],
-              uncertaintyAndLimitations: ['Currency and payment-ledger reconciliation are unavailable in controlled activation.'],
-              recommendationOrNextStep: null,
-              competingExplanations: [],
-              citedToolRunIds: ['tool-01-canonical_state'],
-            },
-          },
-          error: null,
-        }
-      }
-      assert.equal(stage, 'VERIFY')
-      assert.equal(role, 'verifier')
-      assert.equal(input.activationPolicy.financialExecutionAuthorized, false)
-      return {
-        data: {
-          ok: true,
-          output: {
-            verdict: 'PASS',
-            issues: [],
-            checkedClaims: ['canonical balance', 'authority non-escalation'],
-          },
-        },
-        error: null,
-      }
-    },
-  })
-
+test('Ask DW answers balance + activity through DW Intelligence with zero model/provider calls', async () => {
+  const supabase = makeSupabase()
   const runtime = createAskDwControlledActivationRuntime({ supabase })
   const result = await runtime.runInvoiceQuestion({
     tenantId: TENANT,
     invoiceId: INVOICE,
     mode: 'normal',
-    text: 'What is the current balance on this invoice?',
+    text: 'What is the current balance on this invoice? Summarize its recent activity.',
     now: new Date('2026-08-26T00:00:00Z'),
   })
 
-  const providerCalls = supabase.calls.filter((call) => call.op === 'functions.invoke')
-  assert.deepEqual(providerCalls.map((call) => [call.body.role, call.body.stage]), [
-    ['primary', 'SYNTHESIZE'],
-    ['verifier', 'VERIFY'],
-  ])
+  assert.equal(supabase.calls.some((call) => call.op === 'functions.invoke'), false)
   assert.deepEqual(result.plan.toolRequests.map((request) => request.name), [
     'canonical_state',
     'activity_history',
   ])
+  assert.match(result.answer.executiveConclusion, /750\.00/)
+  assert.match(result.answer.executiveConclusion, /Invoice created on 2026-07-01/i)
   assert.equal(result.verification.verdict, 'PASS')
-  assert.equal(result.truthLock.authority.actual, 'NOT_GRANTED')
-  assert.equal(result.provider.planProviderCalls, 0)
-  assert.equal(result.provider.synthesizeProviderCalls, 1)
-  assert.equal(result.provider.verifyProviderCalls, 1)
+  assert.equal(result.verification.method, 'DETERMINISTIC_INVARIANTS_V1')
+  assert.equal(result.intelligenceReceipt.externalAi, false)
+  assert.equal(result.intelligenceReceipt.modelCalls, 0)
+  assert.equal(result.intelligenceReceipt.providerCalls, 0)
+  assert.equal(result.intelligenceReceipt.writesPerformed, false)
   assert.equal(result.safeguards.modelCanGrantAuthority, false)
 })
 
-test('controlled activation blocks ACT before any model call', async () => {
-  const supabase = makeSupabase({
-    invokeImpl: async () => {
-      throw new Error('provider must not be called')
-    },
+test('canonical paid/balance conflict is surfaced without invented causes', async () => {
+  const data = dataset()
+  data.invoices[0].paid = true
+  const supabase = makeSupabase({ data })
+  const runtime = createAskDwControlledActivationRuntime({ supabase })
+
+  const result = await runtime.runInvoiceQuestion({
+    tenantId: TENANT,
+    invoiceId: INVOICE,
+    text: 'Why is this invoice marked paid?',
+    now: new Date('2026-08-26T00:00:00Z'),
   })
+
+  assert.match(result.answer.executiveConclusion, /marked Paid/i)
+  assert.match(result.answer.executiveConclusion, /canonical data conflict/i)
+  assert.match(result.answer.executiveConclusion, /does not infer the cause/i)
+  assert.deepEqual(result.answer.competingExplanations, [])
+  assert.equal(
+    result.answer.uncertaintyAndLimitations.some((item) => /payment-ledger and reconciliation data are unavailable/i.test(item)),
+    true,
+  )
+  assert.equal(supabase.calls.some((call) => call.op === 'functions.invoke'), false)
+})
+
+test('read-only DECIDE question returns an authority limitation, not an action', async () => {
+  const supabase = makeSupabase()
+  const runtime = createAskDwControlledActivationRuntime({ supabase })
+
+  const result = await runtime.runInvoiceQuestion({
+    tenantId: TENANT,
+    invoiceId: INVOICE,
+    text: 'What should happen next?',
+    now: new Date('2026-08-26T00:00:00Z'),
+  })
+
+  assert.equal(result.intent.job, 'DECIDE')
+  assert.match(result.answer.recommendationOrNextStep, /cannot safely recommend an executable next action/i)
+  assert.equal(result.intelligenceReceipt.modelCalls, 0)
+  assert.equal(result.intelligenceReceipt.providerCalls, 0)
+  assert.equal(result.intelligenceReceipt.financialExecutionAuthorized, false)
+})
+
+test('ACT stays blocked with no provider/model call', async () => {
+  const supabase = makeSupabase()
   const runtime = createAskDwControlledActivationRuntime({ supabase })
   await assert.rejects(
     () => runtime.runInvoiceQuestion({
@@ -234,7 +251,37 @@ test('controlled activation blocks ACT before any model call', async () => {
       text: 'Send a reminder for this invoice',
       now: new Date('2026-08-26T00:00:00Z'),
     }),
-    /blocks ACT questions before any model call/,
+    /read only and cannot execute actions/i,
   )
   assert.equal(supabase.calls.some((call) => call.op === 'functions.invoke'), false)
+})
+
+test('PREDICT stays blocked because deterministic prediction data is unavailable', async () => {
+  const supabase = makeSupabase()
+  const runtime = createAskDwControlledActivationRuntime({ supabase })
+  await assert.rejects(
+    () => runtime.runInvoiceQuestion({
+      tenantId: TENANT,
+      invoiceId: INVOICE,
+      mode: 'normal',
+      text: 'When will this invoice be paid?',
+      now: new Date('2026-08-26T00:00:00Z'),
+    }),
+    /cannot forecast payment timing/i,
+  )
+  assert.equal(supabase.calls.some((call) => call.op === 'functions.invoke'), false)
+})
+
+test('marked-paid status questions are INVESTIGATE while mark-paid commands remain ACT', () => {
+  const statusQuestion = classifyAskDwIntent({
+    text: 'Why is this invoice marked paid?',
+    context: { invoiceId: INVOICE },
+  })
+  const actionCommand = classifyAskDwIntent({
+    text: 'Mark this invoice paid',
+    context: { invoiceId: INVOICE },
+  })
+
+  assert.equal(statusQuestion.job, 'INVESTIGATE')
+  assert.equal(actionCommand.job, 'ACT')
 })

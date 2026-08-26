@@ -11,7 +11,7 @@ function safeList(value) {
 }
 
 function verificationCopy(verdict) {
-  if (verdict === 'PASS') return 'Verified'
+  if (verdict === 'PASS') return 'DW verified'
   if (verdict === 'REVISE') return 'Needs revision'
   if (verdict === 'BLOCK') return 'Blocked'
   return 'Not verified'
@@ -28,8 +28,8 @@ export default function AskDwInvoiceLiveProbe({ invoiceId }) {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
-  // First production activation surface remains development-only.
-  // It deliberately disappears from production builds.
+  // Controlled development surface. The runtime itself is deterministic and
+  // contains no external AI/model-provider dependency.
   if (!import.meta.env.DEV) return null
   if (!invoiceId || !user?.id) return null
 
@@ -51,16 +51,16 @@ export default function AskDwInvoiceLiveProbe({ invoiceId }) {
       })
       setResult(response)
     } catch (err) {
-      setError(err?.message || 'Ask DW could not complete the test request.')
+      setError(err?.message || 'Ask DW could not complete the request.')
     } finally {
       setBusy(false)
     }
   }
 
-  const answer = result?.answer || result?.finalAnswer || result?.narrative || null
-  const verification = result?.verification || result?.verifier || null
+  const answer = result?.answer || null
+  const verification = result?.verification || null
   const receipt = result?.activationReceipt || null
-  const provider = result?.provider || null
+  const intelligenceReceipt = result?.intelligenceReceipt || null
   const conclusion = answer?.executiveConclusion || null
   const evidence = safeList(answer?.evidenceBasis)
   const limitations = safeList(answer?.uncertaintyAndLimitations)
@@ -71,27 +71,33 @@ export default function AskDwInvoiceLiveProbe({ invoiceId }) {
   const technicalDetails = result ? {
     citedToolRunIds: safeList(answer?.citedToolRunIds),
     activationReceipt: receipt,
-    providerReceipt: provider,
+    intelligenceReceipt,
+    dwIntelligence: {
+      executiveState: result?.dwIntelligence?.executiveState ?? null,
+      authority: result?.dwIntelligence?.authority?.actual ?? null,
+      hardSafetyOutcome: result?.dwIntelligence?.hardSafetyOutcome ?? null,
+    },
     toolRuns: safeList(result?.toolRuns).map((run) => ({
       id: run?.id ?? null,
       name: run?.output?.name ?? run?.request?.name ?? null,
       sourceClass: run?.output?.sourceClass ?? null,
       canonicalAuthority: run?.output?.canonicalAuthority ?? null,
+      sideEffect: run?.output?.sideEffect ?? null,
     })),
   } : null
 
   return (
-    <section className="ask-dw-live-probe" aria-label="Ask DW live model test">
+    <section className="ask-dw-live-probe" aria-label="Ask DW DueWatch Intelligence">
       <div className="ask-dw-live-probe__header">
         <div>
-          <span className="ask-dw-live-probe__eyebrow">DEV - controlled activation</span>
-          <h3>Ask DW - GPT-OSS 120B</h3>
+          <span className="ask-dw-live-probe__eyebrow">DEV - DW Intelligence</span>
+          <h3>Ask DW</h3>
         </div>
         <span className="ask-dw-live-probe__badge">Read only</span>
       </div>
 
       <p className="ask-dw-live-probe__copy">
-        Real Groq-backed reasoning for this invoice. Normal mode only. No financial writes or execution authority.
+        Powered by DueWatch Intelligence. Deterministic answers from canonical AR data. No external AI, model calls, financial writes, or execution authority.
       </p>
 
       <textarea
@@ -104,7 +110,7 @@ export default function AskDwInvoiceLiveProbe({ invoiceId }) {
 
       <div className="ask-dw-live-probe__actions">
         <button type="button" onClick={runAskDw} disabled={busy || !question.trim()}>
-          {busy ? 'Asking DW...' : 'Ask DW'}
+          {busy ? 'Checking DW...' : 'Ask DW'}
         </button>
       </div>
 
