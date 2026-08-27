@@ -106,22 +106,66 @@ function extractSelectAfter(source, fromEnd) {
   return match ? match[2].replace(/\s+/g, ' ').trim() : null
 }
 
+function extractUnambiguousStaticStringConstants(source = '') {
+  const candidates = new Map()
+  const pattern = /(?:^|\n)[ \t]*(?:export[ \t]+)?const[ \t]+([A-Za-z_$][A-Za-z0-9_$]*)[ \t]*=[ \t]*(['"])([^'"\r\n]*)\2[ \t]*;?/g
+
+  for (const match of source.matchAll(pattern)) {
+    const name = match[1]
+    const values = candidates.get(name) ?? []
+    values.push(match[3])
+    candidates.set(name, values)
+  }
+
+  return new Map(
+    [...candidates.entries()]
+      .filter(([, values]) => values.length === 1)
+      .map(([name, values]) => [name, values[0]]),
+  )
+}
+
+function resolveStaticCallName(match, bindings) {
+  if (match[2]) return match[2]
+  if (match[3] && bindings.has(match[3])) return bindings.get(match[3])
+  return null
+}
+
 export function extractSupabaseDependencies(source = '', sourcePath = 'unknown') {
   const dependencies = []
-  const fromPattern = /\.from\(\s*['"]([^'"]+)['"]\s*\)/g
+  const bindings = extractUnambiguousStaticStringConstants(source)
+
+  const fromPattern = /\.from\(\s*(?:(['"])([^'"]+)\1|([A-Za-z_$][A-Za-z0-9_$]*))\s*\)/g
   for (const match of source.matchAll(fromPattern)) {
+    const name = resolveStaticCallName(match, bindings)
+    if (!name) continue
     dependencies.push({
       kind: 'table',
-      name: match[1],
+      name,
       select: extractSelectAfter(source, match.index + match[0].length),
       source: sourcePath,
     })
   }
 
-  const rpcPattern = /\.rpc\(\s*['"]([^'"]+)['"]/g
+  const rpcPattern = /\.rpc\(\s*(?:(['"])([^'"]+)\1|([A-Za-z_$][A-Za-z0-9_$]*))\s*(?:,|\))/g
   for (const match of source.matchAll(rpcPattern)) {
-    dependencies.push({ kind: 'rpc', name: match[1], select: null, source: sourcePath })
+    const name = resolveStaticCallName(match, bindings)
+    if (!name) continue
+    dependencies.push({ kind: 'rpc', name, select: null, source: sourcePath })
   }
+
+  const edgeFunctionPattern = /\.functions\.invoke\(\s*(?:(['"])([^'"]+)\1|([A-Za-z_$][A-Za-z0-9_$]*))\s*(?:,|\))/g
+  for (const match of source.matchAll(edgeFunctionPattern)) {
+    const name = resolveStaticCallName(match, bindings)
+    if (!name) continue
+    dependencies.push({
+      kind: 'edge_function',
+      name,
+      select: null,
+      source: sourcePath,
+      requires_verify_jwt: true,
+    })
+  }
+
   return dependencies
 }
 
@@ -132,6 +176,7 @@ function aggregateDependencies(dependencies) {
     const existing = byKey.get(key) ?? { kind: item.kind, name: item.name, sources: [], select_shapes: [] }
     existing.sources.push(item.source)
     if (item.select) existing.select_shapes.push(item.select)
+    if (item.kind === 'edge_function') existing.requires_verify_jwt = item.requires_verify_jwt === true
     byKey.set(key, existing)
   }
 
