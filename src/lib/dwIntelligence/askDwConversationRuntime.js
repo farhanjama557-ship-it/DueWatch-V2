@@ -21,6 +21,18 @@ const SAFE_RESOLVER_EVENT_TYPES = new Set([
   ASK_DW_CASE_EVENT.SET_PRESENTATION,
 ])
 
+const SAFE_RESOLVER_OUTCOME_STATUSES = new Set([
+  'RESOLVED',
+  'RESOLVED_WITH_LIMITATION',
+  'NOOP',
+  'NEEDS_CLIENT_RESOLUTION',
+  'CLIENT_NOT_FOUND',
+  'CLIENT_HAS_NO_INVOICES',
+  'NEEDS_INVOICE_RESOLUTION',
+  'INVOICE_NOT_FOUND',
+  'NEEDS_REFERENCE_RESOLUTION',
+])
+
 const SHORTER_PHRASES = new Set([
   'make it shorter',
   'shorter',
@@ -272,6 +284,35 @@ function validateResolverEvent(event) {
   }
 }
 
+
+function validateResolverOutcome(resolved) {
+  if (resolved == null || Array.isArray(resolved)) return null
+  if (typeof resolved !== 'object') {
+    throw new Error('Ask DW resolveCaseEvents object result must be an object')
+  }
+
+  const blocked = resolved.blocked === true
+  const status = resolved.status == null
+    ? null
+    : requiredId(resolved.status, 'Ask DW resolver outcome status')
+  const reason = resolved.reason == null ? null : String(resolved.reason).trim()
+
+  if (blocked && !status) {
+    throw new Error('Ask DW blocked resolver outcome requires status')
+  }
+  if (status && status.length > 80) {
+    throw new Error('Ask DW resolver outcome status too long')
+  }
+  if (status && !SAFE_RESOLVER_OUTCOME_STATUSES.has(status)) {
+    throw new Error(`Ask DW resolver outcome status not allowed: ${status}`)
+  }
+  if (reason && reason.length > 500) {
+    throw new Error('Ask DW resolver outcome reason too long')
+  }
+
+  return freeze({ blocked, status, reason: reason || null })
+}
+
 function applyTurnEvent(state, event, { tenantId, turnId, at }) {
   return applyAskDwCaseEvent(state, {
     type: event.type,
@@ -289,6 +330,7 @@ function noReadResult({
   control,
   appliedEvents,
   reason,
+  resolverOutcome = null,
 }) {
   return freeze({
     status,
@@ -296,6 +338,7 @@ function noReadResult({
     caseContext: buildAskDwCaseContext(state),
     appliedEvents: clone(appliedEvents),
     control,
+    resolver: resolverOutcome ? clone(resolverOutcome) : null,
     askDw: null,
     executionBoundary: null,
     reason,
@@ -364,6 +407,7 @@ export function createAskDwCaseAwareRuntime({
       assertConversationTtl(caseState, at)
       let next = caseState
       const appliedEvents = []
+      let resolverOutcome = null
 
       let resolverEvents = Array.isArray(proposedResolverEvents)
         ? [...proposedResolverEvents]
@@ -376,6 +420,9 @@ export function createAskDwCaseAwareRuntime({
           text: String(text || ''),
           caseContext: buildAskDwCaseContext(next),
         }))
+        if (!Array.isArray(resolved)) {
+          resolverOutcome = validateResolverOutcome(resolved)
+        }
         const emitted = Array.isArray(resolved) ? resolved : (resolved?.events || [])
         if (!Array.isArray(emitted)) {
           throw new Error('Ask DW resolveCaseEvents must return an event array')
@@ -390,6 +437,20 @@ export function createAskDwCaseAwareRuntime({
       }
 
       const control = resolveAskDwDeterministicCaseControl({ state: next, text })
+
+      // A resolver may fail closed on identity ambiguity or a missing reference,
+      // but it cannot override exact deterministic founder-control phrases.
+      if (resolverOutcome?.blocked && control.classification === 'NONE') {
+        return noReadResult({
+          status: resolverOutcome.status,
+          state: next,
+          control,
+          appliedEvents,
+          reason: resolverOutcome.reason || 'Ask DW entity resolution requires explicit selection.',
+          resolverOutcome,
+        })
+      }
+
       if (control.blocked) {
         return noReadResult({
           status: control.status,
@@ -461,6 +522,7 @@ export function createAskDwCaseAwareRuntime({
         caseContext,
         appliedEvents: clone(appliedEvents),
         control,
+        resolver: resolverOutcome ? clone(resolverOutcome) : null,
         askDw,
         executionBoundary,
         reason: null,
