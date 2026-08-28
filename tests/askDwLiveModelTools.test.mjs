@@ -9,7 +9,7 @@ import {
   assertAskDwOpenAiRequest,
   stageInstructions,
 } from '../supabase/functions/_shared/askDwOpenAiContract.js'
-import { createAskDwLiveModels } from '../src/lib/dwIntelligence/askDwLiveModelProvider.js'
+import { ASK_DW_MODEL_EDGE_FUNCTION, createAskDwLiveModels } from '../src/lib/dwIntelligence/askDwLiveModelProvider.js'
 import { createAskDwSupabaseReadTools } from '../src/lib/dwIntelligence/askDwSupabaseReadTools.js'
 import { loadAskDwLiveInvoiceInput } from '../src/lib/dwIntelligence/askDwLiveDataLoader.js'
 import { createAskDwLiveRuntime } from '../src/lib/dwIntelligence/askDwLiveRuntime.js'
@@ -148,6 +148,17 @@ test('live browser model adapter routes PLAN/SYNTHESIZE and VERIFY to authentica
     ['primary', 'SYNTHESIZE'],
     ['verifier', 'VERIFY'],
   ])
+})
+
+test('live model transport is closed-world to the Ask DW Edge Function', () => {
+  const supabase = makeSupabase()
+  const live = createAskDwLiveModels({ supabase })
+  assert.equal(live.functionName, ASK_DW_MODEL_EDGE_FUNCTION)
+  assert.equal(ASK_DW_MODEL_EDGE_FUNCTION, 'ask-dw-model')
+  assert.throws(
+    () => createAskDwLiveModels({ supabase, functionName: 'some-other-function' }),
+    /fixed by the controlled provider contract/,
+  )
 })
 
 test('tenant mismatch blocks live read tools before any table read', async () => {

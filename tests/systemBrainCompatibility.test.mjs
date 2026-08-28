@@ -32,6 +32,13 @@ const code = {
       sources: ['src/example.js'],
       select_shapes: [],
     },
+    {
+      kind: 'edge_function',
+      name: 'ask-dw-model',
+      sources: ['src/example.js'],
+      select_shapes: [],
+      requires_verify_jwt: true,
+    },
   ],
 }
 
@@ -50,6 +57,7 @@ const deployment = {
     },
   ],
   database_functions: ['other_rpc()->void:plpgsql:security_definer=false'],
+  edge_functions: [],
 }
 
 test('select column extraction ignores nested Supabase relationship syntax', () => {
@@ -67,6 +75,7 @@ test('compatibility report distinguishes missing table, missing RPC and column d
   assert.deepEqual(byKey.get('table:invoices').missing_columns, ['currency'])
   assert.equal(byKey.get('table:payments').status, 'MISSING_TABLE')
   assert.equal(byKey.get('rpc:record_invoice_payment').status, 'MISSING_RPC')
+  assert.equal(byKey.get('edge_function:ask-dw-model').status, 'MISSING_EDGE_FUNCTION')
   assert.equal(report.compatible, false)
 })
 
@@ -99,6 +108,13 @@ test('a declared matching dependency is allowed structurally without granting bu
     database_functions: [
       'record_invoice_payment()->void:plpgsql:security_definer=false',
     ],
+    edge_functions: [{
+      slug: 'ask-dw-model',
+      status: 'ACTIVE',
+      version: 1,
+      verify_jwt: true,
+      sha256: 'abc',
+    }],
   }
 
   const report = buildCompatibilityReport(code, aligned)
@@ -106,6 +122,33 @@ test('a declared matching dependency is allowed structurally without granting bu
   assert.equal(assertDependencyAvailable(report, { name: 'invoices', columns: ['currency'] }), true)
   assert.equal(report.boundaries.business_authority_inferred, false)
   assert.equal(report.boundaries.structural_match_does_not_grant_execution_authority, true)
+})
+
+test('edge function compatibility fails closed for inactive or JWT-disabled deployments', () => {
+  const base = {
+    ...deployment,
+    tables: [
+      { name: 'invoices', signature: '1:id:uuid:NO:|2:amount:numeric:NO:0|3:currency:text:NO:USD', rls_enabled: true, rls_forced: false },
+      { name: 'payments', signature: '1:id:uuid:NO:|2:amount:numeric:NO:0', rls_enabled: true, rls_forced: false },
+    ],
+    database_functions: ['record_invoice_payment()->void:plpgsql:security_definer=false'],
+  }
+
+  const inactive = buildCompatibilityReport(code, {
+    ...base,
+    edge_functions: [{ slug: 'ask-dw-model', status: 'INACTIVE', version: 1, verify_jwt: true, sha256: 'abc' }],
+  })
+  assert.equal(inactive.findings.find((x) => x.kind === 'edge_function').status, 'EDGE_FUNCTION_INACTIVE')
+
+  const jwtOff = buildCompatibilityReport(code, {
+    ...base,
+    edge_functions: [{ slug: 'ask-dw-model', status: 'ACTIVE', version: 1, verify_jwt: false, sha256: 'abc' }],
+  })
+  assert.equal(jwtOff.findings.find((x) => x.kind === 'edge_function').status, 'EDGE_FUNCTION_JWT_DISABLED')
+  assert.throws(
+    () => assertDependencyAvailable(jwtOff, { kind: 'edge_function', name: 'ask-dw-model' }),
+    /blocked unavailable dependency/,
+  )
 })
 
 test('compatibility hash is deterministic apart from generated_at', () => {

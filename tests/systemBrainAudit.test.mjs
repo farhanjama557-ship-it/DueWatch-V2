@@ -50,7 +50,14 @@ test('System Brain code audit exposes code-level data dependencies without query
     'payment_allocations',
     'dw_evidence_items',
     'dw_memory_claims',
+    'ask_dw_conversations',
   ]) assert.ok(tables.has(table), `expected code dependency ${table}`)
+
+  const rpcs = new Set(manifest.data_dependencies.filter((item) => item.kind === 'rpc').map((item) => item.name))
+  assert.ok(rpcs.has('persist_ask_dw_conversation_state'))
+
+  const edgeFunctions = new Set(manifest.data_dependencies.filter((item) => item.kind === 'edge_function').map((item) => item.name))
+  assert.ok(edgeFunctions.has('ask-dw-model'))
 
   assert.equal(manifest.meta.tenant_row_data_read, false)
   assert.equal(manifest.boundaries.live_tenant_state_included, false)
@@ -72,13 +79,33 @@ test('route and database extraction are structural rather than prose-driven', ()
   )
 
   const deps = extractSupabaseDependencies(
-    "const q = supabase.from('invoices').select('id,amount'); await supabase.rpc('rebuild_x')",
+    `const TABLE = 'invoices'
+     const RPC = 'rebuild_x'
+     const EDGE = 'ask-dw-model'
+     const q = supabase.from(TABLE).select('id,amount')
+     await supabase.rpc(RPC)
+     await supabase.functions.invoke(EDGE, { body: {} })`,
     'fixture.js',
   )
   assert.deepEqual(deps, [
     { kind: 'table', name: 'invoices', select: 'id,amount', source: 'fixture.js' },
     { kind: 'rpc', name: 'rebuild_x', select: null, source: 'fixture.js' },
+    { kind: 'edge_function', name: 'ask-dw-model', select: null, source: 'fixture.js', requires_verify_jwt: true },
   ])
+})
+
+test('System Brain ignores dynamic or ambiguous Supabase dependency identifiers', () => {
+  const deps = extractSupabaseDependencies(`
+    const TABLE = 'invoices'
+    {
+      const TABLE = 'clients'
+      supabase.from(TABLE)
+    }
+    const runtimeRpc = chooseRpc()
+    supabase.rpc(runtimeRpc)
+    supabase.functions.invoke(runtimeFunction)
+  `, 'fixture.js')
+  assert.deepEqual(deps, [])
 })
 
 test('Supabase select attribution stays attached to the immediate from() chain', () => {

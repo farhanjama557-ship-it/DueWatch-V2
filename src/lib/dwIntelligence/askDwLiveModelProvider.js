@@ -1,5 +1,7 @@
 import { createAskDwModelAdapter } from './askDwModelAdapter.js'
 
+export const ASK_DW_MODEL_EDGE_FUNCTION = 'ask-dw-model'
+
 function freeze(value) {
   if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value
   Object.freeze(value)
@@ -48,10 +50,10 @@ async function throwEdgeFunctionError(error, role) {
   throw invocationError
 }
 
-function createEdgeInvoke({ supabase, functionName, role }) {
+function createEdgeInvoke({ supabase, role }) {
   assertSupabase(supabase)
   return async (request) => {
-    const { data, error } = await supabase.functions.invoke(functionName, {
+    const { data, error } = await supabase.functions.invoke(ASK_DW_MODEL_EDGE_FUNCTION, {
       body: {
         role,
         stage: request.stage,
@@ -73,28 +75,31 @@ function createEdgeInvoke({ supabase, functionName, role }) {
  */
 export function createAskDwLiveModels({
   supabase,
-  functionName = 'ask-dw-model',
+  functionName = ASK_DW_MODEL_EDGE_FUNCTION,
   maxToolRequests = 12,
 } = {}) {
   assertSupabase(supabase)
+  if (functionName !== ASK_DW_MODEL_EDGE_FUNCTION) {
+    throw new Error('Ask DW live model Edge Function is fixed by the controlled provider contract')
+  }
 
   const primaryModel = createAskDwModelAdapter({
     name: 'ask-dw-live-primary',
     maxToolRequests,
-    invoke: createEdgeInvoke({ supabase, functionName, role: 'primary' }),
+    invoke: createEdgeInvoke({ supabase, role: 'primary' }),
   })
 
   const verifierModel = createAskDwModelAdapter({
     name: 'ask-dw-live-verifier',
     maxToolRequests: 0,
-    invoke: createEdgeInvoke({ supabase, functionName, role: 'verifier' }),
+    invoke: createEdgeInvoke({ supabase, role: 'verifier' }),
   })
 
   return freeze({
     primaryModel,
     verifierModel,
     transport: 'supabase_edge_function',
-    functionName,
+    functionName: ASK_DW_MODEL_EDGE_FUNCTION,
     browserHoldsProviderSecret: false,
   })
 }

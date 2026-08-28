@@ -10,3 +10,7 @@ dist-ssr
 .vite
 
 .system-brain/
+
+# Local Supabase CLI link/cache state
+supabase/.temp/
+supabase/.branches/

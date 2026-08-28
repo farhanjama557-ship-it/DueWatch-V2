@@ -97,6 +97,12 @@ function deploymentRpcNames(deployment) {
   return names
 }
 
+function deploymentEdgeFunctions(deployment) {
+  return new Map(
+    (deployment?.edge_functions || []).map((fn) => [String(fn?.slug || ''), fn]),
+  )
+}
+
 function findingForTable(dep, deployedTables) {
   const deployed = deployedTables.get(dep.name)
   if (!deployed) {
@@ -153,6 +159,26 @@ function findingForRpc(dep, rpcNames) {
   }
 }
 
+function findingForEdgeFunction(dep, edgeFunctions) {
+  const deployed = edgeFunctions.get(dep.name)
+  let status = 'MATCH'
+  if (!deployed) status = 'MISSING_EDGE_FUNCTION'
+  else if (String(deployed.status || '') !== 'ACTIVE') status = 'EDGE_FUNCTION_INACTIVE'
+  else if (dep.requires_verify_jwt === true && deployed.verify_jwt !== true) status = 'EDGE_FUNCTION_JWT_DISABLED'
+
+  return {
+    kind: 'edge_function',
+    name: dep.name,
+    status,
+    runtime_policy: status === 'MATCH' ? 'ALLOW_STRUCTURALLY' : 'BLOCK_DEPENDENT_PATH',
+    sources: dep.sources || [],
+    select_shapes: dep.select_shapes || [],
+    required_columns: [],
+    missing_columns: [],
+    requires_verify_jwt: dep.requires_verify_jwt === true,
+  }
+}
+
 export function buildCompatibilityReport(codeManifest, deploymentFingerprint, {
   generatedAt = new Date().toISOString(),
 } = {}) {
@@ -169,11 +195,14 @@ export function buildCompatibilityReport(codeManifest, deploymentFingerprint, {
 
   const tables = normalizeDeploymentTables(deploymentFingerprint)
   const rpcNames = deploymentRpcNames(deploymentFingerprint)
+  const edgeFunctions = deploymentEdgeFunctions(deploymentFingerprint)
 
   const findings = (codeManifest.data_dependencies || [])
-    .map((dep) => dep.kind === 'rpc'
-      ? findingForRpc(dep, rpcNames)
-      : findingForTable(dep, tables))
+    .map((dep) => {
+      if (dep.kind === 'rpc') return findingForRpc(dep, rpcNames)
+      if (dep.kind === 'edge_function') return findingForEdgeFunction(dep, edgeFunctions)
+      return findingForTable(dep, tables)
+    })
     .sort((a, b) => `${a.kind}:${a.name}`.localeCompare(`${b.kind}:${b.name}`))
 
   const counts = {
@@ -181,6 +210,9 @@ export function buildCompatibilityReport(codeManifest, deploymentFingerprint, {
     match: findings.filter((x) => x.status === 'MATCH').length,
     missing_tables: findings.filter((x) => x.status === 'MISSING_TABLE').length,
     missing_rpcs: findings.filter((x) => x.status === 'MISSING_RPC').length,
+    missing_edge_functions: findings.filter((x) => x.status === 'MISSING_EDGE_FUNCTION').length,
+    inactive_edge_functions: findings.filter((x) => x.status === 'EDGE_FUNCTION_INACTIVE').length,
+    jwt_disabled_edge_functions: findings.filter((x) => x.status === 'EDGE_FUNCTION_JWT_DISABLED').length,
     column_drift: findings.filter((x) => x.status === 'COLUMN_DRIFT').length,
   }
 
@@ -237,7 +269,7 @@ export function assertDependencyAvailable(report, {
   if (!finding) {
     throw new Error(`System Brain dependency is not declared by code: ${kind}:${name}`)
   }
-  if (finding.status === 'MISSING_TABLE' || finding.status === 'MISSING_RPC') {
+  if (['MISSING_TABLE', 'MISSING_RPC', 'MISSING_EDGE_FUNCTION', 'EDGE_FUNCTION_INACTIVE', 'EDGE_FUNCTION_JWT_DISABLED'].includes(finding.status)) {
     throw new Error(`System Brain blocked unavailable dependency: ${kind}:${name}`)
   }
 

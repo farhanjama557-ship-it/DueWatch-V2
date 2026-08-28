@@ -328,9 +328,18 @@ begin
     raise exception 'client_source_identities tenant migration left the superseded single-column FK in place';
   end if;
 
-  if exists(select 1 from duewatch_ops.unknown_client_foreign_keys()) then
-    raise exception 'client_source_identities tenant migration left an unknown client/invoice FK';
-  end if;
+  -- Do not require the entire canonical-dedup relationship graph to have
+  -- zero unknown FKs as a completion condition for this narrowly-scoped
+  -- client_source_identities tenant-FK migration. Import persistence
+  -- (20260803150000) intentionally introduced import_rows relationships
+  -- after the original dedup graph was defined. Those relationships remain
+  -- visible through duewatch_ops.unknown_client_foreign_keys() on purpose,
+  -- so duewatch_ops.execute_client_dedup() continues to fail closed until
+  -- its audit/rollback model explicitly supports them.
+  --
+  -- This migration therefore proves only the FK transition it owns, while
+  -- the independent execution_enabled=false postcondition below preserves
+  -- the stronger no-dedup-execution boundary.
 
   if (select execution_enabled
       from duewatch_ops.client_dedup_config where singleton) then

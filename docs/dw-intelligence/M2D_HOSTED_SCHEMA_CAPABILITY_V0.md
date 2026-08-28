@@ -1,0 +1,149 @@
+# Ask DW M2D — Hosted Schema / Capability Catch-up v0
+
+Status: implementation candidate for M2D.
+
+## Goal
+
+Make hosted DueWatch structure match the capabilities the repository actually declares,
+then prove that match from schema-only deployment evidence.
+
+M2D does not infer business authority from deployment structure and does not read tenant
+financial rows to build its proof.
+
+## Proof-system hardening
+
+M2D makes the System Brain dependency audit recognize literal Supabase dependencies,
+unambiguous file-local constant aliases used by table/RPC calls, and authenticated
+Supabase Edge Function calls. Dynamic or ambiguous identifiers are deliberately not
+guessed.
+
+Ask DW's browser model transport is closed-world to `ask-dw-model`; callers cannot
+redirect it to an arbitrary Edge Function.
+
+Compatibility treats a required Edge Function as structurally unavailable when it is
+missing, not ACTIVE, or deployed without JWT verification when the code contract
+requires it. A structural match never grants business or execution authority.
+
+## Hosted migration rule
+
+Do not blindly replay repository migrations against production merely because hosted
+migration history is absent or incomplete. First fingerprint the live schema, then
+reconcile exact missing structures and apply reviewed migrations in dependency order.
+
+Production verification is catalog/schema only. No tenant invoice, client, payment,
+email, evidence, or conversation rows are selected for M2D proof.
+
+## M2C persistence acceptance
+
+The hosted project must eventually prove `public.ask_dw_conversations`, owner-scoped
+RLS, read-only direct browser table access, the guarded authenticated persistence RPC,
+optimistic stale-write rejection, immutable TTL/creation anchors, and the durable
+no-financial/no-execution-authority boundary.
+
+## Model capability acceptance
+
+The hosted project must prove `ask-dw-model` is present, ACTIVE, and JWT-verified before
+founder-facing live model activation can claim the capability exists. Provider secrets
+and account allowlists remain server-side and fail closed.
+
+## Completion gate
+
+M2D is complete only after proof-system regressions pass, pre-catch-up compatibility
+truthfully exposes hosted drift, the native migration dry-run is reviewed, reviewed
+hosted changes are applied with repository/remote migration history aligned, a
+post-catch-up schema-only fingerprint is captured, required Ask DW dependencies are
+MATCH, the full test suite/build/diff gates pass, and the PR is merged with post-merge
+`main` verified.
+
+## Hosted catch-up execution plan (candidate)
+
+Production currently has a legacy hosted baseline that predates the repository's
+canonical-client/import/payment/DW Intelligence/M2C structures. Historical replay is
+therefore preceded by `20260725000000_m2d_hosted_baseline_reconciliation.sql`.
+
+That reconciliation is deliberately non-semantic: it adds nullable client compatibility
+fields without guessing values, removes the legacy same-name uniqueness constraint,
+makes `invoices.client_id` and `invoices.due_date` nullable to match current runtime
+semantics, and widens legacy `last_reminder` DATE values to midnight-UTC timestamps.
+
+The active hosted project currently has an empty Supabase migration history. M2D
+therefore does not perform an untracked manual SQL replay. The baseline migration is
+timestamped immediately before the first historical repository migration, and the
+reviewed cloud-safe migration set is deployed through native Supabase migration
+tracking.
+
+The repository deliberately keeps `[db.migrations] enabled = false` at rest for its
+local ephemeral verification workflow, so hosted deployment must not permanently flip
+that setting. `scripts/system-brain/m2d-hosted-migration-cli.mjs` is the guarded
+deployment boundary: it verifies the linked production ref and exact 14-file
+cloud-safe migration set, temporarily enables migrations, runs the native dry-run or
+push, and restores `supabase/config.toml` byte-for-byte in a `finally` path. Real apply
+also requires an explicit `DUEWATCH_M2D_APPLY=YES_I_REVIEWED_THE_DRY_RUN` gate.
+
+This preserves the repository migration timestamps in
+`supabase_migrations.schema_migrations`, so later `db push` operations do not try to
+replay successful M2D migrations. The guarded helper accepts remote history only when
+it is an exact contiguous prefix of the reviewed 14-version migration set. That permits
+a reviewed resume after a migration fails without marking the failed version applied or
+replaying successful versions. Any gap, unknown version, or reordered history stops
+the deployment instead of guessing.
+
+### Partial-apply recovery
+
+The first production catch-up attempt successfully recorded the reviewed prefix through
+`20260810000000_client_source_identities_rls.sql` and then stopped at
+`20260811000000_client_source_identities_tenant_fk.sql`. Its target composite
+`client_source_identities` FK was already structurally correct, but the migration's
+final postcondition also required the older canonical-dedup unknown-FK scanner to return
+zero rows globally. `20260803150000_import_persistence_core.sql` had intentionally
+introduced `import_rows` relationships to clients/invoices that the dedup executor does
+not yet model, so that unrelated global assertion failed closed.
+
+Recovery does not hide or allowlist those `import_rows` relationships. They remain
+visible to `duewatch_ops.unknown_client_foreign_keys()`, and canonical dedup execution
+remains disabled and still checks that function at execution time. The repaired
+`20260811000000` completion gate is scoped to the tenant FK it owns plus the independent
+`execution_enabled = false` invariant. Because the failed version was not recorded in
+remote migration history, a guarded resume will retry it while Supabase skips the
+already-recorded prefix.
+
+`20260825003000_dw_intelligence_live_transitions_phase2b.sql` is moved out of
+`supabase/migrations` into `supabase/local-proof-migrations`: its own header identifies
+it as a local proof artifact and says not to apply it to a paid/cloud environment.
+Keeping such a file inside the real migration directory would make a future native
+`db push` capable of deploying a migration that explicitly forbids cloud deployment.
+
+The Ask DW Edge Function deployment is separately closed-world to `ask-dw-model`, with
+JWT verification required. Presence/ACTIVE/JWT are structural capability only; model
+enablement, account allowlisting, provider configuration, and founder activation remain
+fail-closed and are not inferred from deployment structure.
+
+### Production legacy-overpayment preservation gate
+
+The production preflight for `20260816120000_payments_foundation.sql`
+found two historical invoices with `amount_paid > amount`. These values are
+not normalized, capped, deleted, or treated as permission to create new
+overpayments.
+
+Repository history proved that the pre-ledger DueWatch Record Payment UI
+accepted any positive payment amount, stored `newPaid = amount_paid + amount`,
+and marked the invoice paid when `newPaid >= invoice.amount`. Aggregate-only
+production evidence then established both relevant legacy shapes:
+
+- one overpaid invoice has amount-bearing `payment_recorded` events whose
+  supported values sum exactly to its stored `amount_paid`;
+- one overpaid invoice has two `payment_recorded` events from before the
+  2026-07-24 introduction of `events.evidence.amount`, so its aggregate is
+  preserved as one `legacy_carry_forward` remainder rather than inventing
+  per-payment amounts.
+
+Payments Foundation therefore permits positive overpayment only for
+`origin='legacy_carry_forward'` migration preservation. The runtime
+`founder_manual` allocation guard remains unchanged and still refuses any
+new payment that would overpay an invoice. Negative invoice/payment
+aggregates remain a hard migration stop.
+
+The migration audit treats historical `paid=true` as consistent when
+`amount_paid >= amount`, matching the actual pre-ledger DueWatch behavior.
+Postflight still requires the final payment-allocation total to equal each
+preserved original `amount_paid` exactly.
