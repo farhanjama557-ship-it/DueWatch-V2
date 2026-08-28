@@ -15,41 +15,13 @@
 # TARGETED PAYMENTS VERIFICATION pass silently stand in for that broader
 # claim. This script is the broader claim, proved honestly.
 #
-# CODIFIED FACT -- one migration is not chronologically replay-safe:
-# 20260811000000_client_source_identities_tenant_fk.sql ends with a
-# postflight check (duewatch_ops.unknown_client_foreign_keys()) that scans
-# every real foreign key referencing clients/invoices against a fixed
-# allowlist and raises if it finds one the allowlist doesn't know about.
-# Replayed straight from a fresh database through
-# 20260803150000_import_persistence_core.sql (which creates import_rows
-# with FKs to clients/invoices), that scan finds import_rows' FKs -- which
-# are NOT in the 20260811000000 allowlist -- and the migration raises:
-#   "client_source_identities tenant migration left an unknown
-#    client/invoice FK"
-# This was independently reproduced against a clean, empty local Postgres
-# 16 instance (no hosted data, no drift) -- so this is a genuine ordering
-# inconsistency between how these two migrations exist in the repo today,
-# not an artifact of production data drift. Per repo policy, historical
-# migrations are not edited to make old history replay after the fact
-# (see this repo's existing client_source_identities tenant-FK fix-forward
-# work), so this script does not attempt to "fix" 20260811000000 -- it
-# documents the failure and skips exactly that one migration.
-#
-# WHY SKIPPING IT IS SAFE FOR THIS PROOF:
-# Payments Foundation (20260816120000) never references client_source_identities
-# or import_rows. Independently verified: every migration chronologically
-# AFTER 20260811000000 (phase15b_import_table_privilege_baseline,
-# process_import_batch_hosted_compatibility, autopilot_execution_claims,
-# awaiting_signature_pending_only_uniqueness,
-# autopilot_execution_claims_canonical_receipt) applies cleanly with
-# 20260811000000 skipped -- none of them has a structural dependency on
-# it (one has an unrelated code COMMENT that happens to name the table;
-# grepped and confirmed, not a real dependency).
-#
-# This script therefore applies: schema.sql, then every migration in
-# chronological order EXCEPT 20260811000000 (explicitly logged, never
-# silent), then Payments Foundation itself, then re-applies Payments
-# Foundation to prove idempotency against this fuller schema too.
+# M2D RECOVERY UPDATE:
+# 20260811000000_client_source_identities_tenant_fk.sql previously ended with
+# a global unknown-FK postcondition that made chronological replay fail after
+# import_rows existed. M2D narrowed that migration's completion check to the
+# tenant FK it actually owns while deliberately leaving the canonical-dedup
+# unknown-FK scanner itself fail-closed. The historical skip below is therefore
+# no longer justified: this verifier must now exercise every real migration.
 #
 # CONTRACT:
 # - Runs against a fresh `supabase start` local stack (same disposable
@@ -163,21 +135,16 @@ if ! psql "$CURRENT_SCHEMA_DB_URL" -X -v ON_ERROR_STOP=1 -f supabase/schema.sql 
 fi
 log "schema.sql applied."
 
-log "Step 2: Applying every migration in chronological order, EXCEPT the documented non-replay-safe one..."
-NON_REPLAY_SAFE="20260811000000_client_source_identities_tenant_fk.sql"
+log "Step 2: Applying every migration in chronological order..."
 for mig_path in supabase/migrations/*.sql; do
   mig=$(basename "$mig_path")
-  if [ "$mig" = "$NON_REPLAY_SAFE" ]; then
-    log "  SKIPPING $mig -- codified non-replay-safe (see this script's header comment: import_rows FK drift vs. its unknown-FK allowlist). Not a silent skip; logged explicitly."
-    continue
-  fi
   log "  Applying $mig..."
   if ! psql "$CURRENT_SCHEMA_DB_URL" -X -v ON_ERROR_STOP=1 -f "$mig_path" > "$ARTIFACT_DIR/current_schema_mig_${mig%.sql}.log" 2>&1; then
     cat "$ARTIFACT_DIR/current_schema_mig_${mig%.sql}.log"
     fail "Migration $mig failed against the current-schema database"
   fi
 done
-log "All non-skipped historical migrations applied."
+log "All historical migrations applied."
 
 log "Step 3: Applying Payments Foundation migration (20260816120000) against this fuller schema..."
 if ! psql "$CURRENT_SCHEMA_DB_URL" -X -v ON_ERROR_STOP=1 -f supabase/migrations/20260816120000_payments_foundation.sql > "$ARTIFACT_DIR/current_schema_payments_apply.log" 2>&1; then

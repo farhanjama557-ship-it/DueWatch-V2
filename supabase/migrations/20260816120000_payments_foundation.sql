@@ -181,6 +181,10 @@ begin
   if v_other_allocated + new.amount > v_payment.total_amount then
     raise exception 'Allocation total exceeds payment total';
   end if;
+  -- New founder-entered payments may never create an overpayment. Historical
+  -- origin='legacy_carry_forward' rows are intentionally exempt so migration
+  -- can preserve pre-ledger DueWatch aggregates exactly, including positive
+  -- overpayments that the old UI itself allowed.
   if v_payment.origin = 'founder_manual'
      and v_invoice.amount_paid + new.amount > v_invoice.amount then
     raise exception 'Allocation would overpay invoice';
@@ -625,16 +629,27 @@ grant execute on function public.record_payment(date, numeric, text, jsonb, text
 revoke all on function public.reverse_payment(uuid, text) from public, anon;
 grant execute on function public.reverse_payment(uuid, text) to authenticated;
 
--- Reject impossible legacy aggregates rather than losing or normalizing them.
+-- Reject genuinely impossible negative legacy aggregates rather than losing
+-- or normalizing them. Positive amount_paid > amount is NOT rejected here:
+-- the pre-ledger DueWatch Record Payment UI historically accepted any
+-- positive payment amount, stored `newPaid = amount_paid + payment`, and
+-- marked the invoice paid when `newPaid >= amount`. Production therefore
+-- contains truthful legacy overpayment states created by DueWatch itself.
+--
+-- The migration preserves those exact aggregates as
+-- origin='legacy_carry_forward'. Runtime founder_manual payments remain
+-- unable to overpay because validate_payment_allocation() below enforces
+-- invoice.amount_paid + allocation <= invoice.amount for founder_manual
+-- rows. This is a legacy-preservation exception, not new payment authority.
 do $preflight$
 declare
   v_invalid bigint;
 begin
   select count(*) into v_invalid
   from public.invoices
-  where amount_paid < 0 or amount_paid > amount;
+  where amount < 0 or amount_paid < 0;
   if v_invalid > 0 then
-    raise exception 'Payments migration blocked: % invoice aggregates are negative or overpaid', v_invalid;
+    raise exception 'Payments migration blocked: % invoice aggregates contain a negative invoice amount or amount_paid', v_invalid;
   end if;
 end
 $preflight$;
@@ -759,7 +774,7 @@ select
     ), 0)
   ),
   count(*) filter (
-    where s.original_paid is distinct from (s.original_amount > 0 and s.original_amount_paid = s.original_amount)
+    where s.original_paid is distinct from (s.original_amount > 0 and s.original_amount_paid >= s.original_amount)
   ),
   count(distinct p.id) filter (where p.payment_date is null),
   count(distinct p.id) filter (where p.currency is null)

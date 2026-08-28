@@ -22,7 +22,7 @@ export const M2D_AUTHORITATIVE_MIGRATIONS = Object.freeze([
   ['supabase/migrations/20260813161329_autopilot_execution_claims.sql', 'fe5155caa242b61922e260b4ad6b4b67964effea'],
   ['supabase/migrations/20260814090000_awaiting_signature_pending_only_uniqueness.sql', 'df28ce250383e03a344f5edb8590b4f997845402'],
   ['supabase/migrations/20260814100000_autopilot_execution_claims_canonical_receipt.sql', 'cffad874db25bec8f06c2c76b1c3c05e025e0cde'],
-  ['supabase/migrations/20260816120000_payments_foundation.sql', '4c53f36a6f5629f5695565a3c3c2d1c016da2626'],
+  ['supabase/migrations/20260816120000_payments_foundation.sql', '2d82ec37676d59ce9488f01f9ccc16f6c3f90b3b'],
   ['supabase/migrations/20260824234500_dw_intelligence_phase2b_proof.sql', '2ce1896d665c71d1eedf12c96aa5e446dbcd30f1'],
   ['supabase/migrations/20260827173500_ask_dw_conversation_persistence.sql', '824441ba581772fa000b565d6d14305999f2b94c'],
 ])

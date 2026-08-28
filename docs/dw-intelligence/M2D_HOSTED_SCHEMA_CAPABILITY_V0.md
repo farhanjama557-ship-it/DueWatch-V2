@@ -117,3 +117,33 @@ The Ask DW Edge Function deployment is separately closed-world to `ask-dw-model`
 JWT verification required. Presence/ACTIVE/JWT are structural capability only; model
 enablement, account allowlisting, provider configuration, and founder activation remain
 fail-closed and are not inferred from deployment structure.
+
+### Production legacy-overpayment preservation gate
+
+The production preflight for `20260816120000_payments_foundation.sql`
+found two historical invoices with `amount_paid > amount`. These values are
+not normalized, capped, deleted, or treated as permission to create new
+overpayments.
+
+Repository history proved that the pre-ledger DueWatch Record Payment UI
+accepted any positive payment amount, stored `newPaid = amount_paid + amount`,
+and marked the invoice paid when `newPaid >= invoice.amount`. Aggregate-only
+production evidence then established both relevant legacy shapes:
+
+- one overpaid invoice has amount-bearing `payment_recorded` events whose
+  supported values sum exactly to its stored `amount_paid`;
+- one overpaid invoice has two `payment_recorded` events from before the
+  2026-07-24 introduction of `events.evidence.amount`, so its aggregate is
+  preserved as one `legacy_carry_forward` remainder rather than inventing
+  per-payment amounts.
+
+Payments Foundation therefore permits positive overpayment only for
+`origin='legacy_carry_forward'` migration preservation. The runtime
+`founder_manual` allocation guard remains unchanged and still refuses any
+new payment that would overpay an invoice. Negative invoice/payment
+aggregates remain a hard migration stop.
+
+The migration audit treats historical `paid=true` as consistent when
+`amount_paid >= amount`, matching the actual pre-ledger DueWatch behavior.
+Postflight still requires the final payment-allocation total to equal each
+preserved original `amount_paid` exactly.

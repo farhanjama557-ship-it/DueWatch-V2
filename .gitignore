@@ -13,3 +13,4 @@ dist-ssr
 
 # Local Supabase CLI link/cache state
 supabase/.temp/
+supabase/.branches/

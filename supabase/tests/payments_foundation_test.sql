@@ -9,11 +9,11 @@ declare
   v_amount numeric;
 begin
   select * into v_audit from duewatch_ops.payment_migration_audit where id = 1;
-  if v_audit.invoices_with_preexisting_amount_paid <> 5
-     or v_audit.reconstructed_invoices <> 1
-     or v_audit.reconstructed_payment_rows <> 1
-     or v_audit.carry_forward_invoices <> 5
-     or v_audit.carry_forward_payment_rows <> 5
+  if v_audit.invoices_with_preexisting_amount_paid <> 7
+     or v_audit.reconstructed_invoices <> 2
+     or v_audit.reconstructed_payment_rows <> 3
+     or v_audit.carry_forward_invoices <> 6
+     or v_audit.carry_forward_payment_rows <> 6
      or v_audit.amount_paid_mismatches <> 0
      or v_audit.inconsistent_paid_flags <> 1 then
     raise exception 'Unexpected payment migration audit: %', row_to_json(v_audit);
@@ -48,13 +48,58 @@ begin
   ) then raise exception 'Legacy aggregate or paid flag changed'; end if;
 
   if exists (
+    select 1
+    from (
+      values
+        ('a2200000-0000-4000-8000-000000000006'::uuid, 125::numeric),
+        ('a2200000-0000-4000-8000-000000000007'::uuid, 110::numeric)
+    ) expected(invoice_id, amount_paid)
+    join public.invoices i on i.id = expected.invoice_id
+    left join (
+      select invoice_id, sum(amount)::numeric as allocated
+      from public.payment_allocations
+      group by invoice_id
+    ) a on a.invoice_id = expected.invoice_id
+    where i.amount_paid <> expected.amount_paid
+       or coalesce(a.allocated, 0) <> expected.amount_paid
+       or i.amount_paid <= i.amount
+  ) then raise exception 'Legacy overpayment aggregate was not preserved losslessly'; end if;
+
+  if (select count(*)
+      from public.payments
+      where source_event_id in (
+        'a2300000-0000-4000-8000-000000000004',
+        'a2300000-0000-4000-8000-000000000005'
+      )) <> 2 then
+    raise exception 'Amount-supported legacy overpayment events were not reconstructed exactly';
+  end if;
+
+  if exists (
+    select 1 from public.payments
+    where source_event_id in (
+      'a2300000-0000-4000-8000-000000000006',
+      'a2300000-0000-4000-8000-000000000007'
+    )
+  ) then
+    raise exception 'Pre-evidence legacy overpayment invented per-payment amounts';
+  end if;
+
+  if (select total_amount
+      from public.payments
+      where legacy_invoice_id = 'a2200000-0000-4000-8000-000000000007') <> 110 then
+    raise exception 'Pre-evidence legacy overpayment carry-forward did not preserve the exact aggregate';
+  end if;
+
+  if exists (
     with expected(invoice_id, original_amount_paid, reconstructed_amount, carry_forward_amount, reconstruction) as (
       values
         ('a2200000-0000-4000-8000-000000000001'::uuid, 100::numeric, 40::numeric, 60::numeric, 'partial'),
         ('a2200000-0000-4000-8000-000000000002'::uuid,  50::numeric,  0::numeric, 50::numeric, 'none'),
         ('a2200000-0000-4000-8000-000000000003'::uuid,  80::numeric,  0::numeric, 80::numeric, 'none'),
-        ('a2200000-0000-4000-8000-000000000004'::uuid,  25::numeric,  0::numeric, 25::numeric, 'none'),
-        ('b2200000-0000-4000-8000-000000000005'::uuid,  50::numeric,  0::numeric, 50::numeric, 'none')
+        ('a2200000-0000-4000-8000-000000000004'::uuid,  25::numeric,   0::numeric,  25::numeric, 'none'),
+        ('b2200000-0000-4000-8000-000000000005'::uuid,  50::numeric,   0::numeric,  50::numeric, 'none'),
+        ('a2200000-0000-4000-8000-000000000006'::uuid, 125::numeric, 125::numeric,   0::numeric, 'full'),
+        ('a2200000-0000-4000-8000-000000000007'::uuid, 110::numeric,   0::numeric, 110::numeric, 'none')
     ), actual as (
       select
         s.invoice_id,
