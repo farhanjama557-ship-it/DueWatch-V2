@@ -6,10 +6,10 @@ import { fileURLToPath } from 'node:url'
 const here = path.dirname(fileURLToPath(import.meta.url))
 const repoRoot = path.resolve(here, '../..')
 
-export const M2D_CATCHUP_PLAN_VERSION = 'ASK_DW_M2D_HOSTED_CATCHUP_V0'
+export const M2D_CATCHUP_PLAN_VERSION = 'ASK_DW_M2D_HOSTED_CATCHUP_V1'
 
 export const M2D_BASELINE_RECONCILIATION =
-  'supabase/migrations/20260827191000_m2d_hosted_baseline_reconciliation.sql'
+  'supabase/migrations/20260725000000_m2d_hosted_baseline_reconciliation.sql'
 
 export const M2D_AUTHORITATIVE_MIGRATIONS = Object.freeze([
   ['supabase/migrations/20260726000000_canonical_clients.sql', '5acb4f08041ec958e8c45066209861b19242f624'],
@@ -27,8 +27,8 @@ export const M2D_AUTHORITATIVE_MIGRATIONS = Object.freeze([
   ['supabase/migrations/20260827173500_ask_dw_conversation_persistence.sql', '824441ba581772fa000b565d6d14305999f2b94c'],
 ])
 
-export const M2D_EXCLUDED_MIGRATIONS = Object.freeze([
-  'supabase/migrations/20260825003000_dw_intelligence_live_transitions_phase2b.sql',
+export const M2D_LOCAL_ONLY_ARTIFACTS = Object.freeze([
+  'supabase/local-proof-migrations/20260825003000_dw_intelligence_live_transitions_phase2b.sql',
 ])
 
 export const M2D_EDGE_FUNCTION_FILES = Object.freeze([
@@ -37,6 +37,17 @@ export const M2D_EDGE_FUNCTION_FILES = Object.freeze([
   ['supabase/functions/_shared/askDwOpenAiContract.js', 'e3870f6ffc62fea71118a9202d79af00cdf70477'],
 ])
 
+export const M2D_NATIVE_MIGRATION_DEPLOYMENT = Object.freeze({
+  mode: 'GUARDED_SUPABASE_DB_PUSH_INCLUDE_ALL',
+  remoteHistoryPrecondition: 'EMPTY_OR_STOP_AND_REAUDIT',
+  configPolicy: 'TEMPORARILY_ENABLE_AND_RESTORE_BYTE_FOR_BYTE',
+  linkedProjectRef: 'llviufxoujmsnrlyptxg',
+  migrationCount: 14,
+  dryRunCommand: 'node scripts/system-brain/m2d-hosted-migration-cli.mjs --dry-run',
+  applyCommand: 'DUEWATCH_M2D_APPLY=YES_I_REVIEWED_THE_DRY_RUN node scripts/system-brain/m2d-hosted-migration-cli.mjs --apply',
+  verifyCommand: 'supabase migration list --linked',
+})
+
 function gitBlobSha(file) {
   return execFileSync('git', ['hash-object', file], {
     cwd: repoRoot,
@@ -44,9 +55,23 @@ function gitBlobSha(file) {
   }).trim()
 }
 
+function migrationVersion(relative) {
+  const match = /^supabase\/migrations\/(\d{14})_/.exec(relative)
+  if (!match) throw new Error(`M2D invalid migration path/version: ${relative}`)
+  return match[1]
+}
+
 export async function verifyM2dHostedCatchupPlan() {
   const baselinePath = path.join(repoRoot, M2D_BASELINE_RECONCILIATION)
   await fs.access(baselinePath)
+
+  const baselineVersion = migrationVersion(M2D_BASELINE_RECONCILIATION)
+  const firstAuthoritativeVersion = migrationVersion(M2D_AUTHORITATIVE_MIGRATIONS[0][0])
+  if (baselineVersion >= firstAuthoritativeVersion) {
+    throw new Error(
+      `M2D baseline must sort before first authoritative migration: ${baselineVersion} >= ${firstAuthoritativeVersion}`,
+    )
+  }
 
   const verified = []
   for (const [relative, expectedBlobSha] of [
@@ -60,18 +85,42 @@ export async function verifyM2dHostedCatchupPlan() {
     verified.push({ path: relative, git_blob_sha: actual })
   }
 
-  for (const relative of M2D_EXCLUDED_MIGRATIONS) {
+  for (const relative of M2D_LOCAL_ONLY_ARTIFACTS) {
+    if (relative.startsWith('supabase/migrations/')) {
+      throw new Error(`M2D local-only artifact is still cloud-push eligible: ${relative}`)
+    }
     const text = await fs.readFile(path.join(repoRoot, relative), 'utf8')
     if (!/do not apply to a paid\/cloud environment/i.test(text)) {
-      throw new Error(`M2D excluded migration lost its cloud-exclusion warning: ${relative}`)
+      throw new Error(`M2D local-only artifact lost its cloud-exclusion warning: ${relative}`)
+    }
+  }
+
+  // Fail closed if any future file is accidentally placed in the real
+  // migration directory while declaring itself local/cloud-prohibited.
+  const migrationDir = path.join(repoRoot, 'supabase/migrations')
+  for (const name of await fs.readdir(migrationDir)) {
+    if (!name.endsWith('.sql')) continue
+    const relative = `supabase/migrations/${name}`
+    const text = await fs.readFile(path.join(migrationDir, name), 'utf8')
+    if (/LOCAL PROOF ARTIFACT/i.test(text) || /do not apply to a paid\/cloud environment/i.test(text)) {
+      throw new Error(`M2D cloud migration directory contains a local-only artifact: ${relative}`)
     }
   }
 
   return {
     plan_version: M2D_CATCHUP_PLAN_VERSION,
-    baseline_reconciliation: M2D_BASELINE_RECONCILIATION,
-    authoritative_migrations: M2D_AUTHORITATIVE_MIGRATIONS.map(([p]) => p),
-    excluded_migrations: [...M2D_EXCLUDED_MIGRATIONS],
+    baseline_reconciliation: {
+      path: M2D_BASELINE_RECONCILIATION,
+      version: baselineVersion,
+      git_blob_sha: gitBlobSha(M2D_BASELINE_RECONCILIATION),
+      sorts_before_first_authoritative: true,
+    },
+    authoritative_migrations: M2D_AUTHORITATIVE_MIGRATIONS.map(([p]) => ({
+      path: p,
+      version: migrationVersion(p),
+    })),
+    local_only_artifacts: [...M2D_LOCAL_ONLY_ARTIFACTS],
+    migration_deployment: M2D_NATIVE_MIGRATION_DEPLOYMENT,
     edge_function: {
       slug: 'ask-dw-model',
       verify_jwt_required: true,

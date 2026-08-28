@@ -49,29 +49,47 @@ and account allowlists remain server-side and fail closed.
 ## Completion gate
 
 M2D is complete only after proof-system regressions pass, pre-catch-up compatibility
-truthfully exposes hosted drift, reviewed hosted changes are applied through a trusted
-administrative channel, a post-catch-up schema-only fingerprint is captured, required
-Ask DW dependencies are MATCH, the full test suite/build/diff gates pass, and the PR is
-merged with post-merge `main` verified.
+truthfully exposes hosted drift, the native migration dry-run is reviewed, reviewed
+hosted changes are applied with repository/remote migration history aligned, a
+post-catch-up schema-only fingerprint is captured, required Ask DW dependencies are
+MATCH, the full test suite/build/diff gates pass, and the PR is merged with post-merge
+`main` verified.
 
 ## Hosted catch-up execution plan (candidate)
 
 Production currently has a legacy hosted baseline that predates the repository's
 canonical-client/import/payment/DW Intelligence/M2C structures. Historical replay is
-therefore preceded by `20260827191000_m2d_hosted_baseline_reconciliation.sql`.
+therefore preceded by `20260725000000_m2d_hosted_baseline_reconciliation.sql`.
 
 That reconciliation is deliberately non-semantic: it adds nullable client compatibility
 fields without guessing values, removes the legacy same-name uniqueness constraint,
 makes `invoices.client_id` and `invoices.due_date` nullable to match current runtime
 semantics, and widens legacy `last_reminder` DATE values to midnight-UTC timestamps.
 
-After that precondition is proven, M2D may replay only the hash-locked authoritative
-migration list exposed by `scripts/system-brain/m2d-hosted-catchup-plan.mjs`, in that
-exact order.
+The active hosted project currently has an empty Supabase migration history. M2D
+therefore does not perform an untracked manual SQL replay. The baseline migration is
+timestamped immediately before the first historical repository migration, and the
+reviewed cloud-safe migration set is deployed through native Supabase migration
+tracking.
 
-`20260825003000_dw_intelligence_live_transitions_phase2b.sql` is explicitly excluded:
-its own header identifies it as a local proof artifact and says not to apply it to a
-paid/cloud environment.
+The repository deliberately keeps `[db.migrations] enabled = false` at rest for its
+local ephemeral verification workflow, so hosted deployment must not permanently flip
+that setting. `scripts/system-brain/m2d-hosted-migration-cli.mjs` is the guarded
+deployment boundary: it verifies the linked production ref and exact 14-file
+cloud-safe migration set, temporarily enables migrations, runs the native dry-run or
+push, and restores `supabase/config.toml` byte-for-byte in a `finally` path. Real apply
+also requires an explicit `DUEWATCH_M2D_APPLY=YES_I_REVIEWED_THE_DRY_RUN` gate.
+
+This preserves the repository migration timestamps in
+`supabase_migrations.schema_migrations`, so later `db push` operations do not try to
+replay M2D's historical catch-up again. If the remote history is no longer empty at
+deployment time, M2D stops and re-audits rather than guessing.
+
+`20260825003000_dw_intelligence_live_transitions_phase2b.sql` is moved out of
+`supabase/migrations` into `supabase/local-proof-migrations`: its own header identifies
+it as a local proof artifact and says not to apply it to a paid/cloud environment.
+Keeping such a file inside the real migration directory would make a future native
+`db push` capable of deploying a migration that explicitly forbids cloud deployment.
 
 The Ask DW Edge Function deployment is separately closed-world to `ask-dw-model`, with
 JWT verification required. Presence/ACTIVE/JWT are structural capability only; model

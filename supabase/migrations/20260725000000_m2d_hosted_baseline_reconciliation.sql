@@ -1,4 +1,11 @@
 -- Ask DW M2D — hosted baseline reconciliation before reviewed catch-up.
+-- MIGRATION-LEDGER BOOTSTRAP ORDER:
+-- The active hosted database predates this repository's migration ledger.
+-- This file intentionally carries a timestamp immediately BEFORE the first
+-- tracked historical migration (20260726000000) so native Supabase
+-- `db push --include-all` applies this verified-baseline shim first and then
+-- records every real migration under its repository timestamp.
+--
 --
 -- This migration is intentionally narrow. It does NOT install the later
 -- canonical-client/import/payment/DW-Intelligence/M2C capabilities itself.
