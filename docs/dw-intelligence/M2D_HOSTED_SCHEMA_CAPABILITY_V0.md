@@ -82,8 +82,30 @@ also requires an explicit `DUEWATCH_M2D_APPLY=YES_I_REVIEWED_THE_DRY_RUN` gate.
 
 This preserves the repository migration timestamps in
 `supabase_migrations.schema_migrations`, so later `db push` operations do not try to
-replay M2D's historical catch-up again. If the remote history is no longer empty at
-deployment time, M2D stops and re-audits rather than guessing.
+replay successful M2D migrations. The guarded helper accepts remote history only when
+it is an exact contiguous prefix of the reviewed 14-version migration set. That permits
+a reviewed resume after a migration fails without marking the failed version applied or
+replaying successful versions. Any gap, unknown version, or reordered history stops
+the deployment instead of guessing.
+
+### Partial-apply recovery
+
+The first production catch-up attempt successfully recorded the reviewed prefix through
+`20260810000000_client_source_identities_rls.sql` and then stopped at
+`20260811000000_client_source_identities_tenant_fk.sql`. Its target composite
+`client_source_identities` FK was already structurally correct, but the migration's
+final postcondition also required the older canonical-dedup unknown-FK scanner to return
+zero rows globally. `20260803150000_import_persistence_core.sql` had intentionally
+introduced `import_rows` relationships to clients/invoices that the dedup executor does
+not yet model, so that unrelated global assertion failed closed.
+
+Recovery does not hide or allowlist those `import_rows` relationships. They remain
+visible to `duewatch_ops.unknown_client_foreign_keys()`, and canonical dedup execution
+remains disabled and still checks that function at execution time. The repaired
+`20260811000000` completion gate is scoped to the tenant FK it owns plus the independent
+`execution_enabled = false` invariant. Because the failed version was not recorded in
+remote migration history, a guarded resume will retry it while Supabase skips the
+already-recorded prefix.
 
 `20260825003000_dw_intelligence_live_transitions_phase2b.sql` is moved out of
 `supabase/migrations` into `supabase/local-proof-migrations`: its own header identifies

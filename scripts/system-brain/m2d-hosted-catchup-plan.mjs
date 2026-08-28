@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 const here = path.dirname(fileURLToPath(import.meta.url))
 const repoRoot = path.resolve(here, '../..')
 
-export const M2D_CATCHUP_PLAN_VERSION = 'ASK_DW_M2D_HOSTED_CATCHUP_V1'
+export const M2D_CATCHUP_PLAN_VERSION = 'ASK_DW_M2D_HOSTED_CATCHUP_V2'
 
 export const M2D_BASELINE_RECONCILIATION =
   'supabase/migrations/20260725000000_m2d_hosted_baseline_reconciliation.sql'
@@ -16,7 +16,7 @@ export const M2D_AUTHORITATIVE_MIGRATIONS = Object.freeze([
   ['supabase/migrations/20260803021842_enforce_invoice_client_tenant_ownership.sql', '80e6388e762380ac6a30fd8cf89c9137145117f9'],
   ['supabase/migrations/20260803150000_import_persistence_core.sql', '0d3177c13b865bd811637f30f0deb318958612a8'],
   ['supabase/migrations/20260810000000_client_source_identities_rls.sql', 'cf6ae3f47628980d8bf9ab90806a19cfbdb15747'],
-  ['supabase/migrations/20260811000000_client_source_identities_tenant_fk.sql', '360235c678234556541696816b3a52adfb303ef4'],
+  ['supabase/migrations/20260811000000_client_source_identities_tenant_fk.sql', '3fe0fe73e038e80c2c171a8aef504cce535ce8d7'],
   ['supabase/migrations/20260811083005_phase15b_import_table_privilege_baseline.sql', 'a41b058d5ce2a4e04e7c1c1ed4c3fee41b856c13'],
   ['supabase/migrations/20260811092928_process_import_batch_hosted_compatibility.sql', '0d4e07ad66e4b89299c3794bc597924d2d7f1617'],
   ['supabase/migrations/20260813161329_autopilot_execution_claims.sql', 'fe5155caa242b61922e260b4ad6b4b67964effea'],
@@ -39,7 +39,8 @@ export const M2D_EDGE_FUNCTION_FILES = Object.freeze([
 
 export const M2D_NATIVE_MIGRATION_DEPLOYMENT = Object.freeze({
   mode: 'GUARDED_SUPABASE_DB_PUSH_INCLUDE_ALL',
-  remoteHistoryPrecondition: 'EMPTY_OR_STOP_AND_REAUDIT',
+  remoteHistoryPrecondition: 'EXACT_CONTIGUOUS_PREFIX_OR_STOP_AND_REAUDIT',
+  resumePolicy: 'ONLY_REVIEWED_PREFIX_MAY_RESUME',
   configPolicy: 'TEMPORARILY_ENABLE_AND_RESTORE_BYTE_FOR_BYTE',
   linkedProjectRef: 'llviufxoujmsnrlyptxg',
   migrationCount: 14,
@@ -127,7 +128,8 @@ export async function verifyM2dHostedCatchupPlan() {
       files: M2D_EDGE_FUNCTION_FILES.map(([p]) => p),
     },
     verified_sources: verified,
-    hosted_write_performed: false,
+    verifier_performs_hosted_write: false,
+    hosted_deployment_state: 'NOT_INFERRED_BY_STATIC_PLAN',
   }
 }
 

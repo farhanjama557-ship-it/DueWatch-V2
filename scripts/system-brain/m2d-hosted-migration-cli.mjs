@@ -3,6 +3,8 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { verifyM2dHostedCatchupPlan } from './m2d-hosted-catchup-plan.mjs'
+
 const here = path.dirname(fileURLToPath(import.meta.url))
 const repoRoot = path.resolve(here, '../..')
 
@@ -25,6 +27,10 @@ const EXPECTED_MIGRATIONS = Object.freeze([
   '20260824234500_dw_intelligence_phase2b_proof.sql',
   '20260827173500_ask_dw_conversation_persistence.sql',
 ])
+
+const EXPECTED_VERSIONS = Object.freeze(
+  EXPECTED_MIGRATIONS.map((name) => name.slice(0, 14)),
+)
 
 const LOCAL_ONLY = '20260825003000_dw_intelligence_live_transitions_phase2b.sql'
 
@@ -69,6 +75,98 @@ async function assertMigrationSet() {
   }
 }
 
+function stripAnsi(value = '') {
+  return String(value).replace(/\u001b\[[0-9;]*m/g, '')
+}
+
+export function parseMigrationListRemoteVersions(output = '') {
+  const remote = []
+  let parsedRows = 0
+  const versionPattern = /(?<!\d)(\d{14})(?!\d)/
+
+  for (const rawLine of stripAnsi(output).split(/\r?\n/)) {
+    // Supabase CLI versions have appeared both as bare values and as
+    // decorated/backticked cell values. Parse by table columns first, then
+    // extract the 14-digit version from each cell instead of requiring the
+    // version to sit immediately next to the column separator.
+    const cells = rawLine.split(/[│|]/)
+    if (cells.length < 3) continue
+
+    const localVersion = cells[0].match(versionPattern)?.[1] ?? null
+    const remoteVersion = cells[1].match(versionPattern)?.[1] ?? null
+    if (!localVersion && !remoteVersion) continue
+
+    parsedRows += 1
+    if (remoteVersion) remote.push(remoteVersion)
+  }
+
+  if (parsedRows === 0) {
+    fail('could not parse any migration rows from `supabase migration list --linked`')
+  }
+
+  return remote
+}
+
+export function assertRemoteMigrationPrefix(remoteVersions = []) {
+  if (!Array.isArray(remoteVersions)) {
+    fail('remote migration history must be an array')
+  }
+
+  if (remoteVersions.length > EXPECTED_VERSIONS.length) {
+    fail(
+      `remote history has ${remoteVersions.length} versions; expected at most ${EXPECTED_VERSIONS.length}`,
+    )
+  }
+
+  for (let i = 0; i < remoteVersions.length; i += 1) {
+    if (remoteVersions[i] !== EXPECTED_VERSIONS[i]) {
+      fail(
+        `remote migration history is not the exact reviewed contiguous prefix at index ${i}: `
+        + `expected ${EXPECTED_VERSIONS[i]}, got ${remoteVersions[i]}`,
+      )
+    }
+  }
+
+  return remoteVersions.length
+}
+
+function runSupabaseCapture(args) {
+  const result = spawnSync('supabase', args, {
+    cwd: repoRoot,
+    env: process.env,
+    encoding: 'utf8',
+  })
+
+  if (result.error) throw result.error
+
+  if (result.stdout) process.stdout.write(result.stdout)
+  if (result.stderr) process.stderr.write(result.stderr)
+
+  if (result.status !== 0) {
+    fail(`supabase ${args.join(' ')} exited with status ${result.status}`)
+  }
+
+  return `${result.stdout || ''}\n${result.stderr || ''}`
+}
+
+function runSupabaseInteractive(args) {
+  const result = spawnSync('supabase', args, {
+    cwd: repoRoot,
+    env: process.env,
+    stdio: 'inherit',
+  })
+  if (result.error) throw result.error
+  if (result.status !== 0) {
+    fail(`supabase ${args.join(' ')} exited with status ${result.status}`)
+  }
+}
+
+async function assertRemoteHistoryIsExpectedPrefix() {
+  const output = runSupabaseCapture(['migration', 'list', '--linked'])
+  const remoteVersions = parseMigrationListRemoteVersions(output)
+  return assertRemoteMigrationPrefix(remoteVersions)
+}
+
 function enableMigrationsTemporarily(configText) {
   const oldBlock = `[db.migrations]
 enabled = false
@@ -86,18 +184,6 @@ schema_paths = []
   return configText.replace(oldBlock, newBlock)
 }
 
-function runSupabase(args) {
-  const result = spawnSync('supabase', args, {
-    cwd: repoRoot,
-    env: process.env,
-    stdio: 'inherit',
-  })
-  if (result.error) throw result.error
-  if (result.status !== 0) {
-    fail(`supabase ${args.join(' ')} exited with status ${result.status}`)
-  }
-}
-
 export async function runM2dHostedMigrationCli(mode) {
   if (!['dry-run', 'apply'].includes(mode)) {
     fail('mode must be dry-run or apply')
@@ -111,6 +197,9 @@ export async function runM2dHostedMigrationCli(mode) {
 
   await assertLinkedProject()
   await assertMigrationSet()
+  await verifyM2dHostedCatchupPlan()
+
+  const remoteAppliedCountBefore = await assertRemoteHistoryIsExpectedPrefix()
 
   const configPath = path.join(repoRoot, 'supabase/config.toml')
   const original = await fs.readFile(configPath, 'utf8')
@@ -118,10 +207,22 @@ export async function runM2dHostedMigrationCli(mode) {
 
   await fs.writeFile(configPath, enabled)
 
+  let remoteAppliedCountAfter = remoteAppliedCountBefore
+
   try {
     const args = ['db', 'push', '--include-all']
     if (mode === 'dry-run') args.push('--dry-run')
-    runSupabase(args)
+    runSupabaseInteractive(args)
+
+    if (mode === 'apply') {
+      remoteAppliedCountAfter = await assertRemoteHistoryIsExpectedPrefix()
+      if (remoteAppliedCountAfter !== EXPECTED_MIGRATIONS.length) {
+        fail(
+          `apply returned success but remote history contains ${remoteAppliedCountAfter}/`
+          + `${EXPECTED_MIGRATIONS.length} reviewed migrations`,
+        )
+      }
+    }
   } finally {
     await fs.writeFile(configPath, original)
     const restored = await fs.readFile(configPath, 'utf8')
@@ -134,6 +235,8 @@ export async function runM2dHostedMigrationCli(mode) {
     mode,
     project_ref: EXPECTED_PROJECT_REF,
     expected_migration_count: EXPECTED_MIGRATIONS.length,
+    remote_applied_count_before: remoteAppliedCountBefore,
+    remote_applied_count_after: remoteAppliedCountAfter,
     config_restored: true,
   }
 }

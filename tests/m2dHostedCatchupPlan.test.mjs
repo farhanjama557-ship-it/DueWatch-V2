@@ -12,13 +12,18 @@ import {
   M2D_NATIVE_MIGRATION_DEPLOYMENT,
   verifyM2dHostedCatchupPlan,
 } from '../scripts/system-brain/m2d-hosted-catchup-plan.mjs'
+import {
+  assertRemoteMigrationPrefix,
+  parseMigrationListRemoteVersions,
+} from '../scripts/system-brain/m2d-hosted-migration-cli.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const repoRoot = path.resolve(here, '..')
 
 test('M2D catch-up plan hash-locks every authoritative replay source', async () => {
   const verified = await verifyM2dHostedCatchupPlan()
-  assert.equal(verified.hosted_write_performed, false)
+  assert.equal(verified.verifier_performs_hosted_write, false)
+  assert.equal(verified.hosted_deployment_state, 'NOT_INFERRED_BY_STATIC_PLAN')
   assert.equal(
     verified.verified_sources.length,
     M2D_AUTHORITATIVE_MIGRATIONS.length + M2D_EDGE_FUNCTION_FILES.length,
@@ -55,7 +60,8 @@ test('M2D keeps cloud-prohibited proof SQL outside the Supabase migration direct
 test('M2D uses guarded native Supabase migration history instead of untracked manual SQL replay', () => {
   assert.deepEqual(M2D_NATIVE_MIGRATION_DEPLOYMENT, {
     mode: 'GUARDED_SUPABASE_DB_PUSH_INCLUDE_ALL',
-    remoteHistoryPrecondition: 'EMPTY_OR_STOP_AND_REAUDIT',
+    remoteHistoryPrecondition: 'EXACT_CONTIGUOUS_PREFIX_OR_STOP_AND_REAUDIT',
+    resumePolicy: 'ONLY_REVIEWED_PREFIX_MAY_RESUME',
     configPolicy: 'TEMPORARILY_ENABLE_AND_RESTORE_BYTE_FOR_BYTE',
     linkedProjectRef: 'llviufxoujmsnrlyptxg',
     migrationCount: 14,
@@ -83,6 +89,101 @@ test('M2D guarded migration helper keeps local CI migration config disabled at r
   assert.match(helper, /EXPECTED_MIGRATIONS/)
   assert.match(helper, /SUPABASE_DB_PASSWORD/)
   assert.doesNotMatch(helper, /--password/)
+})
+
+test('M2D guarded helper accepts only an exact contiguous remote migration prefix', () => {
+  const output = `
+   Local          | Remote         | Time (UTC)
+  ----------------|----------------|---------------------
+   20260725000000 | 20260725000000 | 2026-07-25 00:00:00
+   20260726000000 | 20260726000000 | 2026-07-26 00:00:00
+   20260803021842 | 20260803021842 | 2026-08-03 02:18:42
+   20260803150000 | 20260803150000 | 2026-08-03 15:00:00
+   20260810000000 | 20260810000000 | 2026-08-10 00:00:00
+   20260811000000 |                | 2026-08-11 00:00:00
+  `
+  const remote = parseMigrationListRemoteVersions(output)
+  assert.deepEqual(remote, [
+    '20260725000000',
+    '20260726000000',
+    '20260803021842',
+    '20260803150000',
+    '20260810000000',
+  ])
+  assert.equal(assertRemoteMigrationPrefix(remote), 5)
+
+  assert.throws(
+    () => assertRemoteMigrationPrefix([
+      '20260725000000',
+      '20260803021842',
+    ]),
+    /not the exact reviewed contiguous prefix/,
+  )
+  assert.throws(
+    () => assertRemoteMigrationPrefix([
+      '20260725000000',
+      '99999999999999',
+    ]),
+    /not the exact reviewed contiguous prefix/,
+  )
+})
+
+test('M2D migration-list parser accepts decorated cells and preserves remote-only drift', () => {
+  const decorated = `
+   Local            | Remote           | Time (UTC)
+  ------------------|------------------|-----------------------
+   \`20260725000000\` | \`20260725000000\` | \`2026-07-25 00:00:00\`
+   \`20260726000000\` | \`20260726000000\` | \`2026-07-26 00:00:00\`
+   \`20260803021842\` | \` \`              | \`2026-08-03 02:18:42\`
+  `
+  assert.deepEqual(parseMigrationListRemoteVersions(decorated), [
+    '20260725000000',
+    '20260726000000',
+  ])
+
+  const remoteOnlyDrift = `
+   Local            | Remote           | Time (UTC)
+  ------------------|------------------|-----------------------
+   \`20260725000000\` | \`20260725000000\` | \`2026-07-25 00:00:00\`
+   \` \`              | \`99999999999999\` | \`2026-08-28 00:00:00\`
+  `
+  const remote = parseMigrationListRemoteVersions(remoteOnlyDrift)
+  assert.deepEqual(remote, ['20260725000000', '99999999999999'])
+  assert.throws(
+    () => assertRemoteMigrationPrefix(remote),
+    /not the exact reviewed contiguous prefix/,
+  )
+})
+
+test('M2D client-source tenant migration scopes completion to its own FK while dedup stays fail-closed', () => {
+  const tenantFkSql = fs.readFileSync(
+    path.join(repoRoot, 'supabase/migrations/20260811000000_client_source_identities_tenant_fk.sql'),
+    'utf8',
+  )
+  const canonicalSql = fs.readFileSync(
+    path.join(repoRoot, 'supabase/migrations/20260726000000_canonical_clients.sql'),
+    'utf8',
+  )
+
+  assert.match(
+    tenantFkSql,
+    /client_source_identities tenant constraint does not match the required definition/,
+  )
+  assert.match(
+    tenantFkSql,
+    /client_source_identities tenant migration left the superseded single-column FK in place/,
+  )
+  assert.doesNotMatch(
+    tenantFkSql,
+    /client_source_identities tenant migration left an unknown client\/invoice FK/,
+  )
+  assert.match(tenantFkSql, /unknown_client_foreign_keys/)
+  assert.match(tenantFkSql, /Canonical dedup execution must remain disabled/)
+
+  assert.match(
+    canonicalSql,
+    /Unknown client\/invoice foreign keys exist; execution blocked/,
+  )
 })
 
 test('M2D baseline reconciliation does not invent financial truth or perform tenant DML', () => {
