@@ -1,0 +1,3 @@
+rule,scope,value,effective_note
+late_fee,company,10%,old policy retained for history only
+reminder_cadence,company,10/20/30 days,old workflow retained for history only

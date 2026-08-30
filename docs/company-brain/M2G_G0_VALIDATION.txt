@@ -1,0 +1,33 @@
+DueWatch M2G-G0 validation
+Date: 2026-08-30
+Branch: m2g/company-brain-bootstrap-g0
+Base SHA: dad3d1a30d211f856f158164fada4bd5ef0332d4
+
+PRE-MODIFICATION BASELINE
+- npm test: FAIL — 969 pass, 1 fail, 970 total.
+- Existing failure: tests/m2dHostedCatchupPlan.test.mjs assumed LF-only config text on a Windows CRLF checkout.
+- npm run build: PASS outside the restricted filesystem sandbox; existing chunk-size warning only.
+
+FINAL VALIDATION
+- npm run test:company-brain-g0: PASS — 27 pass, 0 fail.
+- npm test: PASS — 997 pass, 0 fail.
+- npm run build: PASS — 1998 modules transformed; existing chunk-size warning only.
+- git diff --check: PASS — no whitespace errors (Git emitted only local LF-to-CRLF conversion notices).
+
+SAFETY / SCOPE
+- Production Supabase/provider mutations: NONE.
+- Supabase migrations added or changed: NONE.
+- Product UI changes: NONE.
+- External execution/action path added: NONE.
+- Canonical financial mutation capability added: NONE.
+- M2H work started: NO.
+- Frozen R0 contract amendment required: NO.
+
+G0 EXIT GATE: PASS
+
+The deterministic suite proves ingestion, classification, typed extraction,
+root provenance, semantic scope, conflict preservation, roles/delegation,
+operating-model and authority proposals, explicit founder decision, snapshot
+update, safe Ask DW answers, typed DW Intelligence context, revocation
+invalidation, anti-escalation after 20 approvals, and unchanged canonical
+financial truth.

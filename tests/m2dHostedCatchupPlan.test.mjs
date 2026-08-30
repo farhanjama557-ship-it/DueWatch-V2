@@ -78,8 +78,9 @@ test('M2D guarded migration helper keeps local CI migration config disabled at r
   )
   const config = fs.readFileSync(path.join(repoRoot, 'supabase/config.toml'), 'utf8')
 
-  assert.ok(
-    config.includes('[db.migrations]\nenabled = false\nschema_paths = []'),
+  assert.match(
+    config,
+    /\[db\.migrations\]\r?\nenabled = false\r?\nschema_paths = \[\]/,
   )
   assert.match(helper, /enableMigrationsTemporarily/)
   assert.match(helper, /finally/)
