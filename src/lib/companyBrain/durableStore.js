@@ -22,6 +22,20 @@ function hash(value) {
   return crypto.createHash('sha256').update(value).digest('hex')
 }
 
+// Gap 1: deterministic fingerprint over every material decision field.
+// Identical payload ⟹ identical fingerprint; any field change ⟹ different fingerprint.
+function decisionFingerprint({ targetId, expectedRevision, decisionType, oldState, newState, evidenceClaimIds, reason }) {
+  return hash(JSON.stringify({
+    targetId: targetId ?? null,
+    expectedRevision: expectedRevision ?? null,
+    decisionType: decisionType ?? null,
+    oldState: oldState ?? null,
+    newState: newState ?? null,
+    evidenceClaimIds: [...(evidenceClaimIds || [])].sort(),
+    reason: reason ?? null,
+  }))
+}
+
 function normalizeContent(content) {
   return content.replace(/\r\n/g, '\n').replace(/[ \t]+$/gm, '').trim()
 }
@@ -232,6 +246,10 @@ export class CompanyBrainDurableStore {
       for (const rootId of claim.provenanceRootIds) {
         const root = this.sourceVersions.find((row) => row.id === rootId && row.tenantId === tenantId)
         if (!root) throw new Error(`root provenance unknown: ${rootId}`)
+        // Gap 4: active claims must not reference revoked or invalidated source versions.
+        if (root.status === 'REVOKED' || root.status === 'INVALIDATED') {
+          throw new Error(`root provenance revoked or invalidated: ${rootId}`)
+        }
       }
     }
     const clone = (rows) => structuredClone(rows)
@@ -268,23 +286,51 @@ export class CompanyBrainDurableStore {
   recordFounderDecision({ actor, tenantId, idempotencyKey, targetId, expectedRevision, decisionType, oldState, newState, evidenceClaimIds, reason } = {}) {
     assertActor(actor, tenantId)
     if (actor.role !== 'FOUNDER') throw new Error('founder role required')
+
+    // Gap 1: fingerprint-bound idempotency.
+    // Same key + same payload → safe replay. Same key + different payload → explicit rejection.
+    const fingerprint = decisionFingerprint({ targetId, expectedRevision, decisionType, oldState, newState, evidenceClaimIds, reason })
     const prior = this.decisions.find((row) => row.tenantId === tenantId && row.idempotencyKey === idempotencyKey)
-    if (prior) return prior
-    const target = this.conflicts.find((row) => row.tenantId === tenantId && row.id === targetId)
-    if (!target) throw new Error('decision target missing or revoked')
+    if (prior) {
+      if (prior.requestFingerprint && prior.requestFingerprint !== fingerprint) {
+        throw new Error('idempotency key reused with different decision payload')
+      }
+      return prior
+    }
+
+    const targetIdx = this.conflicts.findIndex((row) => row.tenantId === tenantId && row.id === targetId)
+    if (targetIdx < 0) throw new Error('decision target missing or revoked')
+    const target = this.conflicts[targetIdx]
     const key = `${tenantId}:${targetId}`
     const actualRevision = this.targetRevisions.get(key) || 0
+
+    // Gap 2: server-authoritative revision check first (preserves existing stale-rejection behavior).
     if (expectedRevision !== actualRevision) {
       this.decisionAttempts.push({ tenantId, actorId: actor.id, targetId, expectedRevision, actualRevision, outcome: 'REJECTED_STALE', attemptedAt: this.clock() })
       throw new Error('stale founder decision')
     }
+
+    // Gap 2: validate caller-supplied prior state against server-derived state.
+    // A fabricated or stale oldState is rejected, not silently accepted.
+    if (oldState?.status !== undefined && oldState.status !== target.status) {
+      throw new Error('prior state mismatch: claimed prior state does not match server state')
+    }
+
+    // Gap 2 + Gap 4: evidence claim references must exist, belong to this tenant, and be active.
+    // Dangling, cross-tenant, and revoked claim IDs all fail closed.
+    for (const claimId of evidenceClaimIds || []) {
+      const claim = this.claims.find((row) => row.tenantId === tenantId && row.id === claimId)
+      if (!claim) throw new Error(`evidence claim missing or cross-tenant: ${claimId}`)
+      if (!claim.active) throw new Error(`evidence claim inactive or revoked: ${claimId}`)
+    }
+
     const decision = createFounderDecision({ id: id('decision', `${tenantId}:${idempotencyKey}`), tenantId, actorId: actor.id, actorRole: 'FOUNDER', decidedAt: this.clock(), decisionType, target: target.topic, oldState, newState, evidenceClaimIds, reason, revocable: true })
-    const persisted = Object.freeze({ ...decision, idempotencyKey, targetId, targetRevision: actualRevision + 1, supersedesDecisionId: this.tenantRows(this.decisions, tenantId).filter((row) => row.targetId === targetId).at(-1)?.id || null })
+    const persisted = Object.freeze({ ...decision, idempotencyKey, targetId, targetRevision: actualRevision + 1, requestFingerprint: fingerprint, supersedesDecisionId: this.tenantRows(this.decisions, tenantId).filter((row) => row.targetId === targetId).at(-1)?.id || null })
     this.decisions.push(persisted)
     this.targetRevisions.set(key, actualRevision + 1)
-    target.status = 'RESOLVED'
-    target.resolutionDecisionId = persisted.id
-    target.revision = actualRevision + 1
+    // Replace the conflict row by index to avoid mutating the original object reference
+    // (callers may hold references to the old object; in-place mutation would corrupt fingerprints on replay).
+    this.conflicts[targetIdx] = { ...target, status: 'RESOLVED', resolutionDecisionId: persisted.id, revision: actualRevision + 1 }
     this.bump(tenantId)
     return persisted
   }
@@ -292,6 +338,12 @@ export class CompanyBrainDurableStore {
   persistAuthorityProposal({ actor, tenantId, proposal }) {
     assertActor(actor, tenantId)
     if (proposal.tenantId !== tenantId) throw new Error('authority proposal tenant mismatch')
+    // Gap 4: evidence claim references must exist, belong to this tenant, and be active.
+    for (const claimId of proposal.evidenceClaimIds || []) {
+      const claim = this.claims.find((row) => row.tenantId === tenantId && row.id === claimId)
+      if (!claim) throw new Error(`authority proposal evidence claim missing or cross-tenant: ${claimId}`)
+      if (!claim.active) throw new Error(`authority proposal evidence claim inactive or revoked: ${claimId}`)
+    }
     if (this.authorityProposals.some((row) => row.tenantId === tenantId && row.id === proposal.id)) return this.authorityProposals.find((row) => row.tenantId === tenantId && row.id === proposal.id)
     this.authorityProposals.push(proposal)
     this.bump(tenantId)
@@ -346,12 +398,20 @@ export class CompanyBrainDurableStore {
   }
 
   askDw({ actor, tenantId, question }) {
-    const row = this.latestSnapshot({ actor, tenantId }) || this.createSnapshot({ actor, tenantId })
+    // Gap 3: refuse stale snapshots — always verify knowledge version before use.
+    const latest = this.latestSnapshot({ actor, tenantId })
+    const row = (latest && latest.knowledgeVersion === this.version(tenantId))
+      ? latest
+      : this.createSnapshot({ actor, tenantId })
     return answerAskDwFromCompanyBrain({ snapshot: row.domain, question })
   }
 
   dwIntelligenceContext({ actor, tenantId, clientId }) {
-    const row = this.latestSnapshot({ actor, tenantId }) || this.createSnapshot({ actor, tenantId })
+    // Gap 3: same staleness guard as askDw — revocation must take effect immediately.
+    const latest = this.latestSnapshot({ actor, tenantId })
+    const row = (latest && latest.knowledgeVersion === this.version(tenantId))
+      ? latest
+      : this.createSnapshot({ actor, tenantId })
     return Object.freeze({ ...toDwIntelligenceCompanyContext({ snapshot: row.domain, clientId }), durableSnapshotId: row.id, durableSnapshotVersion: row.version })
   }
 }
