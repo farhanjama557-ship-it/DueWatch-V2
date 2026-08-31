@@ -363,6 +363,12 @@ export function validateClientIdentity(graph, { actor, tenantId, clientId }) {
  *   - decision.target === topic (topic string, e.g. 'late_fee_policy')
  *   - status === 'RECORDED'
  *   - all evidenceClaimIds are still active in brain (R6: revoked evidence invalidates decision)
+ *   - decision scope matches the requested scope (R4/R9):
+ *       COMPANY-scope query: only COMPANY-scoped decisions apply
+ *       CLIENT-scope query: only decisions scoped to this specific client apply
+ *       A company-wide decision does NOT automatically resolve a client-specific conflict
+ *       (the client's exception remains a separate unresolved question).
+ *       A client-specific decision does NOT resolve company-wide policy.
  *
  * Returns the most recent valid decision's winner candidate if one exists.
  *
@@ -370,16 +376,31 @@ export function validateClientIdentity(graph, { actor, tenantId, clientId }) {
  *   R9: authorityGrantable always false — a policy decision ≠ DW execution authority
  *   R6: decisions backed by revoked evidence cannot be applied
  */
-export function applyFounderDecisions(candidates, { brain, tenantId, topic }) {
-  const relevantDecisions = (brain.decisions ?? []).filter(
-    (d) =>
-      d.tenantId === tenantId &&
-      d.target === topic &&
-      d.status === 'RECORDED' &&
-      (d.evidenceClaimIds ?? []).every((cid) =>
-        brain.claims.some((c) => c.id === cid && c.active && c.tenantId === tenantId),
-      ),
-  )
+export function applyFounderDecisions(candidates, { brain, tenantId, topic, scope = null }) {
+  // Default scope: COMPANY when none provided
+  const requestedScope = scope ?? { level: SEMANTIC_SCOPE.COMPANY }
+
+  const relevantDecisions = (brain.decisions ?? []).filter((d) => {
+    if (d.tenantId !== tenantId) return false
+    if (d.target !== topic) return false
+    if (d.status !== 'RECORDED') return false
+    if (!(d.evidenceClaimIds ?? []).every((cid) =>
+      brain.claims.some((c) => c.id === cid && c.active && c.tenantId === tenantId),
+    )) return false
+
+    // Scope matching — must be consistent with requested scope (R4 direction, R9)
+    // A decision with no scope field is treated as COMPANY-scope (the default)
+    const decisionScope = d.scope ?? { level: SEMANTIC_SCOPE.COMPANY }
+    if (requestedScope.level === SEMANTIC_SCOPE.CLIENT) {
+      // CLIENT query: only accept CLIENT-scoped decisions for this exact client
+      if (decisionScope.level !== SEMANTIC_SCOPE.CLIENT) return false
+      if (decisionScope.clientId !== requestedScope.clientId) return false
+    } else {
+      // COMPANY query: only accept COMPANY-scoped decisions
+      if (decisionScope.level === SEMANTIC_SCOPE.CLIENT) return false
+    }
+    return true
+  })
 
   if (relevantDecisions.length === 0) {
     return { applied: false, decisions: [], winner: null, authorityGrantable: false }
@@ -642,7 +663,19 @@ export function resolvePolicy(graph, brain, {
     }
   }
 
-  const allCandidates = buildPolicyCandidates(graph, brain, { actor, tenantId, scope, queryDate })
+  // For CLIENT scope: compose the full effective stack (COMPANY + CLIENT candidates) so
+  // classifyConflicts can reason over the complete evidence set (Issue 1 — R4 preserved: each
+  // candidate retains its original scopeLevel; SCOPE_ESCALATION only fires for COMPANY requests).
+  let allCandidates
+  if (scope?.level === SEMANTIC_SCOPE.CLIENT && scope.clientId) {
+    const effective = buildEffectivePolicyCandidates(graph, brain, {
+      actor, tenantId, clientId: scope.clientId, queryDate,
+    })
+    allCandidates = effective.allCandidates
+  } else {
+    allCandidates = buildPolicyCandidates(graph, brain, { actor, tenantId, scope, queryDate })
+  }
+
   const topicCandidates = topic ? allCandidates.filter((c) => c.topic === topic) : allCandidates
 
   // (D) Collect freshness-validated SUPERSEDES edges for these candidates
@@ -663,27 +696,39 @@ export function resolvePolicy(graph, brain, {
       : c,
   )
 
-  // (E) CONTRACT_VS_COMPANY_POLICY: if client has an active contract and company has active
-  // policy candidates for this topic, flag the potential contradiction for founder review (R8).
-  // Conservative: any contract negotiated for a client may carry terms differing from the
-  // default company policy — we cannot automatically reconcile without the founder's review.
+  // (E) CONTRACT_VS_COMPANY_POLICY: fires only when BOTH sides have active topic-specific
+  // evidence — the contract's existence alone is not sufficient (false-positive guard).
+  // Requires: active contract + active CLIENT-scoped candidates for the topic (evidence that
+  // the contract carries terms about this topic) + active COMPANY-scoped candidates for the topic.
+  // Negative case: a contract with only payment-term dates (no late-fee term) does NOT fire.
   const extraConflicts = []
   if (scope?.level === SEMANTIC_SCOPE.CLIENT && scope.clientId) {
     const contracts = graph.getContractsForClient({ actor, tenantId, clientId: scope.clientId })
     if (contracts.length > 0) {
-      const companyActive = buildPolicyCandidates(graph, brain, {
-        actor, tenantId, scope: { level: SEMANTIC_SCOPE.COMPANY }, queryDate,
-      }).filter(
+      const companyActiveForTopic = resolved.filter(
         (c) =>
           c.candidateStatus === CANDIDATE_STATUS.ACTIVE &&
+          c.temporalState !== TEMPORAL_STATE.FUTURE &&
+          c.scopeLevel === SEMANTIC_SCOPE.COMPANY &&
           (!topic || c.topic === topic),
       )
-      if (companyActive.length > 0) {
+      const clientActiveForTopic = resolved.filter(
+        (c) =>
+          c.candidateStatus === CANDIDATE_STATUS.ACTIVE &&
+          c.temporalState !== TEMPORAL_STATE.FUTURE &&
+          c.scopeLevel === SEMANTIC_SCOPE.CLIENT &&
+          (!topic || c.topic === topic),
+      )
+      // Fire only when the client has its own topic-specific evidence contradicting company policy
+      if (companyActiveForTopic.length > 0 && clientActiveForTopic.length > 0) {
         extraConflicts.push({
           conflictClass: CONFLICT_CLASS.CONTRACT_VS_COMPANY_POLICY,
-          candidateKeys: companyActive.map((c) => c.graphNodeKey),
+          candidateKeys: [
+            ...companyActiveForTopic.map((c) => c.graphNodeKey),
+            ...clientActiveForTopic.map((c) => c.graphNodeKey),
+          ],
           contractKeys: contracts.map((c) => c.stableKey),
-          reason: `Client ${scope.clientId} has ${contracts.length} active contract(s) carrying negotiated terms that may contradict company policy — explicit founder reconciliation required (R8)`,
+          reason: `Client ${scope.clientId} has active contract(s) and client-specific policy evidence for topic '${topic ?? 'any'}' contradicting company policy — explicit founder reconciliation required (R8)`,
         })
       }
     }
@@ -712,9 +757,9 @@ export function resolvePolicy(graph, brain, {
     (c) => !NON_BLOCKING_CONFLICT_CLASSES.has(c.conflictClass),
   )
 
-  // (C) Founder decisions: read brain.decisions for this topic
+  // (C) Founder decisions: read brain.decisions for this topic, scope-validated (Issue 3)
   const decisionResult = topic
-    ? applyFounderDecisions(active, { brain, tenantId, topic })
+    ? applyFounderDecisions(active, { brain, tenantId, topic, scope })
     : { applied: false, decisions: [], winner: null, authorityGrantable: false }
 
   let status
@@ -744,6 +789,26 @@ export function resolvePolicy(graph, brain, {
     status = G3_RESOLUTION_STATUS.CONFLICTED
   }
 
+  // Typed conflict separation (Issue 4):
+  //   detectedConflicts = full audit trail of every classified conflict (for provenance/review)
+  //   unresolvedConflicts = blocking conflicts not resolved by a valid founder decision
+  //   resolvedConflictEvidence = decisions that resolved blocking conflicts
+  const resolvedByFounderDecision =
+    status === G3_RESOLUTION_STATUS.RESOLVED &&
+    decisionResult.applied &&
+    decisionResult.winner !== null
+
+  const unresolvedConflicts = resolvedByFounderDecision ? [] : blockingConflicts
+  const resolvedConflictEvidence = resolvedByFounderDecision ? decisionResult.decisions : []
+
+  // policyPrecedenceResolved invariant: true iff RESOLVED and the resolution is backed by
+  // explicit evidence (founder decision, explicit supersession, or single uncontested active).
+  const policyPrecedenceResolved =
+    status === G3_RESOLUTION_STATUS.RESOLVED &&
+    (resolvedByFounderDecision ||
+      supersessionEvidence.length > 0 ||
+      blockingConflicts.length === 0)
+
   return {
     kind: 'G3_POLICY_RESOLUTION_V0',
     tenantId,
@@ -753,7 +818,11 @@ export function resolvePolicy(graph, brain, {
     status,
     winner,
     candidates: resolved,
+    // conflicts = full audit trail (backward compatible)
     conflicts,
+    detectedConflicts: conflicts,
+    unresolvedConflicts,
+    resolvedConflictEvidence,
     supersessionEvidence,
     founderDecisions: decisionResult.decisions,
     hasUnknownTemporal,
@@ -761,7 +830,7 @@ export function resolvePolicy(graph, brain, {
     canActAutomatically: false,
     canonicalMoneyWritable: false,
     authorityGrantable: false,
-    policyPrecedenceResolved: status === G3_RESOLUTION_STATUS.RESOLVED && blockingConflicts.length === 0,
+    policyPrecedenceResolved,
     graphVersion,
     provenance: {
       rootSourceVersionIds: [
@@ -846,10 +915,19 @@ export function askDwPolicy(graph, brain, {
     (c) => c.candidateStatus !== CANDIDATE_STATUS.ACTIVE,
   )
 
-  // Founder decisions for this topic across both scopes
-  const founderDecisions = (brain.decisions ?? []).filter(
-    (d) => d.tenantId === tenantId && (!topic || d.target === topic) && d.status === 'RECORDED',
-  )
+  // Founder decisions: use the same validity/freshness evaluation as applyFounderDecisions (Issue 6).
+  // Invalidated decisions (backing evidence revoked) are NOT reported as governing.
+  // We check both COMPANY scope and (if clientId) CLIENT scope.
+  const founderDecisions = (brain.decisions ?? []).filter((d) => {
+    if (d.tenantId !== tenantId) return false
+    if (topic && d.target !== topic) return false
+    if (d.status !== 'RECORDED') return false
+    // R6: invalidated if any evidence claim is revoked
+    if (!(d.evidenceClaimIds ?? []).every((cid) =>
+      brain.claims.some((c) => c.id === cid && c.active && c.tenantId === tenantId),
+    )) return false
+    return true
+  })
 
   const hasUnknownTemporal = applicablePolicyCandidates.some(
     (c) => c.temporalState === TEMPORAL_STATE.UNKNOWN,
@@ -1018,10 +1096,40 @@ export function buildG3DwIntelligenceContext(graph, brain, {
   const hasUnknownTemporal = applicablePolicyCandidates.some(
     (c) => c.temporalState === TEMPORAL_STATE.UNKNOWN,
   )
-  const unresolvedConflicts = brain.conflicts.filter(
+
+  // G2 brain conflicts (raw, cross-topic, from durableStore.rebuildConflicts)
+  const brainConflicts = brain.conflicts.filter(
     (c) => c.tenantId === tenantId && c.status === 'CONFLICTED',
   )
-  const hasConflicts = unresolvedConflicts.length > 0
+
+  // G3 policy conflicts: derived from G3 reasoning on candidates (Issue 5).
+  // These capture G3-specific classes (MISSING_PRECEDENCE, CONFIDENCE_DISAGREEMENT, etc.)
+  // that the G2 brain cannot classify on its own.
+  const policyConflicts = classifyConflicts(allCandidates, {})
+
+  // Valid founder decisions (freshness-checked): topic = null means all topics
+  const validFounderDecisions = (brain.decisions ?? []).filter(
+    (d) =>
+      d.tenantId === tenantId &&
+      d.status === 'RECORDED' &&
+      (d.evidenceClaimIds ?? []).every((cid) =>
+        brain.claims.some((c) => c.id === cid && c.active && c.tenantId === tenantId),
+      ),
+  )
+  const resolvedTargets = new Set(validFounderDecisions.map((d) => d.target))
+
+  // Unresolved policy conflicts: blocking G3 conflicts whose topic is not covered by a valid decision
+  const unresolvedPolicyConflicts = policyConflicts.filter((pc) => {
+    if (NON_BLOCKING_CONFLICT_CLASSES.has(pc.conflictClass)) return false
+    const conflictTopics = pc.candidateKeys
+      .map((k) => allCandidates.find((ca) => ca.graphNodeKey === k)?.topic)
+      .filter(Boolean)
+    return conflictTopics.length === 0 || conflictTopics.some((t) => !resolvedTargets.has(t))
+  })
+
+  // unresolvedConflicts kept as the G2 brain conflicts for backward compatibility
+  const unresolvedConflicts = brainConflicts
+  const hasConflicts = brainConflicts.length > 0 || unresolvedPolicyConflicts.length > 0
   const danglingProvenances = detectDanglingProvenance(brain, { tenantId })
 
   // Founder decisions for this tenant
@@ -1079,9 +1187,16 @@ export function buildG3DwIntelligenceContext(graph, brain, {
     danglingProvenance: danglingProvenances,
     conflictSummary: {
       hasUnresolvedConflicts: hasConflicts,
-      conflictCount: unresolvedConflicts.length,
-      conflictTopics: [...new Set(unresolvedConflicts.map((c) => c.topic))],
+      conflictCount: brainConflicts.length + unresolvedPolicyConflicts.length,
+      conflictTopics: [...new Set(brainConflicts.map((c) => c.topic))],
     },
+    // G2 brain-level conflicts (raw, cross-topic)
+    brainConflicts,
+    // G3 policy conflicts — G3-classified from candidate reasoning
+    policyConflicts,
+    // Unresolved G3 policy conflicts (blocking, not covered by a valid founder decision)
+    unresolvedPolicyConflicts,
+    // Backward-compat alias
     unresolvedConflicts,
     uncertainty: {
       hasUnknownTemporal,

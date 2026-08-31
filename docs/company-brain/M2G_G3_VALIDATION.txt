@@ -1,6 +1,7 @@
-M2G G3 Validation Report — G3 Hardening
+M2G G3 Validation Report — G3 Hardening + Exit-Gate Closure
 Branch: m2g/company-brain-bootstrap-g3
 Date: 2026-08-31
+Starting SHA (exit-gate work): f2a533dc902d00b2106c1dd8ef770f8fdca01fbd
 
 == Test Results ==
 
@@ -8,10 +9,10 @@ npm run test:company-brain-g2 (G0+G1+G2 suite):
   tests 179 | pass 179 | fail 0 | todo 0
 
 npm run test:company-brain-g3 (G0+G1+G2+G3 suite):
-  tests 201 | pass 201 | fail 0 | todo 0
+  tests 211 | pass 211 | fail 0 | todo 0
 
 npm test (full suite):
-  tests 1171 | pass 1171 | fail 0 | todo 0
+  tests 1181 | pass 1181 | fail 0 | todo 0
 
 npm run build:
   ✓ built in ~10s — no errors, no new warnings
@@ -19,7 +20,7 @@ npm run build:
 git diff --check:
   (no output — no whitespace errors)
 
-== G3-Specific Tests (22 total: 10 from G3 runtime + 12 from hardening) ==
+== G3-Specific Tests (32 total: 10 from G3 runtime + 12 from hardening + 11 from exit-gate closure) ==
 
   ok 180 - G3-temporal: classify UNKNOWN/CURRENT/EXPIRED/FUTURE from effectiveTime and queryDate
   ok 181 - G3-temporal: UNKNOWN temporal state prevents automatic resolution — canActAutomatically:false
@@ -43,6 +44,16 @@ git diff --check:
   ok 199 - G3-hardening-E: CONTRACT_VS_COMPANY_POLICY detected when client has active contract and company has active policy
   ok 200 - G3-hardening-F: askDwPolicy handles 9 deterministic question types
   ok 201 - G3-hardening-G: buildG3DwIntelligenceContext exposes all required typed fields
+  ok 202 - G3-final-1-state1: resolvePolicy CLIENT scope exposes full effective stack (COMPANY + CLIENT candidates)
+  ok 203 - G3-final-1-state2: resolvePolicy CLIENT scope RESOLVED with policyPrecedenceResolved:true after scoped founder decision
+  ok 204 - G3-final-1-state3: revoking decision backing evidence restores conflict; Ask DW and DW Intelligence reflect same state
+  ok 205 - G3-final-1-state4: atlas decision does not change COMPANY resolution or another client resolution (scope isolation)
+  ok 206 - G3-final-2: CONTRACT_VS_COMPANY_POLICY does NOT fire for contract with no late-fee terms
+  ok 207 - G3-final-3a: company-wide founder decision does NOT resolve CLIENT-scope atlas conflict
+  ok 208 - G3-final-3b: atlas-scoped decision does NOT apply to another client (acme-us)
+  ok 209 - G3-final-4: detectedConflicts preserved for audit after resolution; unresolvedConflicts empty
+  ok 210 - G3-final-5: buildG3DwIntelligenceContext exposes G3 policy conflicts distinct from brain conflicts
+  ok 211 - G3-final-6: askDwPolicy reports governing decision when valid; stops after evidence revoked
 
 == Hardening Fixes Applied (G3 Hardening) ==
 
@@ -55,6 +66,59 @@ git diff --check:
             → not returned by getPoliciesApplicable(COMPANY). New test ingests an explicitly expired
             policy_candidate (effective_to in past, no scope:HISTORICAL) that gets APPLIES_TO_COMPANY
             edge and candidateStatus=HISTORICAL → CURRENT_VS_HISTORICAL fires correctly.
+
+== Exit-Gate Fixes Applied (Issues 1–6) ==
+
+  Issue 1 — resolvePolicy CLIENT scope composition:
+    CLIENT-scope query now uses buildEffectivePolicyCandidates() to compose the full COMPANY+CLIENT stack.
+    Each candidate retains its original scopeLevel (no R4 widening).
+    Tests 202 (state1), 203 (state2) prove end-to-end resolvePolicy CLIENT scope with both candidate types.
+
+  Issue 2 — CONTRACT_VS_COMPANY_POLICY evidence-specificity:
+    Was: fires on contract existence alone.
+    Fix: requires both companyActiveForTopic AND clientActiveForTopic (non-empty) for the queried topic.
+    Test 206 (state: Net30 contract + company late-fee policy, no client late-fee → NO fire).
+
+  Issue 3 — applyFounderDecisions scope validation:
+    Added scope matching: CLIENT queries reject COMPANY-scoped decisions; require exact clientId match.
+    COMPANY queries reject CLIENT-scoped decisions.
+    Decisions without scope field default to COMPANY-scope.
+    Tests 205, 207, 208 prove scope isolation across COMPANY/CLIENT/cross-client.
+
+  Issue 4 — policyPrecedenceResolved invariant:
+    Was: policyPrecedenceResolved=false even when status=RESOLVED via founder decision (blockingConflicts non-empty).
+    Fix: policyPrecedenceResolved = status===RESOLVED && (resolvedByFounderDecision || supersession || blockingConflicts===0).
+    Typed separation: detectedConflicts (full audit), unresolvedConflicts (empty when resolved), resolvedConflictEvidence.
+    Tests 203 (policyPrecedenceResolved:true after decision), 209 (detectedConflicts preserved; unresolvedConflicts empty).
+
+  Issue 5 — buildG3DwIntelligenceContext G3 policy conflicts:
+    Was: unresolvedConflicts sourced only from G2 brain.conflicts.
+    Fix: derives G3 policy conflicts via classifyConflicts() on candidates.
+    Exposes: brainConflicts (G2 raw), policyConflicts (G3 classified), unresolvedPolicyConflicts (blocking + uncovered by decision).
+    Test 210 proves all three arrays present and distinct.
+
+  Issue 6 — askDwPolicy freshness validation:
+    Was: listed all RECORDED decisions without checking evidence validity.
+    Fix: applies same R6 evidence-validity check as applyFounderDecisions().
+    Test 211: valid decision → founderDecisions.length===1; revoke backing claim → founderDecisions.length===0.
+
+== Atlas States Proof (controlled end-to-end) ==
+
+  State 1 (test 202): resolvePolicy({scope:CLIENT,clientId:'atlas'}) with competing COMPANY+CLIENT candidates
+    → status===CONFLICTED, winner===null, COMPANY candidates present with scopeLevel===COMPANY,
+      CLIENT candidates present with scopeLevel===CLIENT, no R4 widening.
+
+  State 2 (test 203): After scoped decision {scope:{level:CLIENT,clientId:'atlas'}} recorded
+    → status===RESOLVED, policyPrecedenceResolved===true, winner.claimId matches chosen candidate,
+      resolvedConflictEvidence.length>0, unresolvedConflicts.length===0.
+
+  State 3 (test 204): Backing evidence claim revoked
+    → status===CONFLICTED restored, policyPrecedenceResolved===false,
+      askDwPolicy founderDecisions.length===0, unresolvedPolicyConflicts.length>0.
+
+  State 4 (test 205): Atlas decision does not affect COMPANY scope or another client (acme-us)
+    → COMPANY resolvePolicy still CONFLICTED (winner===null);
+      acme-us resolvePolicy still CONFLICTED (winner===null).
 
 == Security Scans ==
 
@@ -70,13 +134,17 @@ Provider/live-integration scan (fetch(, https://, localhost, DATABASE_URL, proce
 G4/M2H scope scan (G4, M2H, scheduled action, pulse redesign, fake learn):
   0 findings
 
+Tenant isolation scan (tenantId checks):
+  All tenantId references in policyIntelligence.js are used in comparisons or passed as args;
+  no function accepts data without filtering by tenantId.
+
 == G3 Exit Gate Checklist ==
 
 [x] 1. All adversarial scenarios in M2G_G3_ADVERSARIAL_PLAN.md have passing tests.
 [x] 2. No G3 path resolves a CONFLICTED policy by confidence, recency, or behavioral frequency.
         (CONFIDENCE_DISAGREEMENT test 184: classifyConflicts surfaces the disagreement, never resolves it)
 [x] 3. R0-R9 invariants each have at least one dedicated regression test.
-        (K1-K9 in companyBrainG3Policy.test.mjs, plus G3-specific tests 180-201)
+        (K1-K9 in companyBrainG3Policy.test.mjs, plus G3-specific tests 180-211)
 [x] 4. canonicalMoneyWritable: false is structurally enforced on every G3 output path.
         (resolvePolicy, buildG3DwIntelligenceContext, askDwPolicy all return canonicalMoneyWritable: false;
          no write path exists in policyIntelligence.js)
@@ -102,10 +170,20 @@ G4/M2H scope scan (G4, M2H, scheduled action, pulse redesign, fake learn):
 [x] G. buildG3DwIntelligenceContext all required typed fields present (test 201)
 [x] H. Tests 182, 186, 188 tightened: OR assertions removed, RESOLVED+winner asserted on test 188
 
-== Files Changed (G3 Hardening, relative to G3 runtime) ==
+== Exit-Gate Invariants Verified (Issues 1–6) ==
 
-  src/lib/companyBrain/policyIntelligence.js  (hardening additions A–H)
-  tests/companyBrainG3Policy.test.mjs         (12 new hardening tests; 3 prior tests tightened; imports expanded)
+[x] Issue 1. resolvePolicy CLIENT scope uses buildEffectivePolicyCandidates; no R4 widening (tests 202-205)
+[x] Issue 2. CONTRACT_VS_COMPANY_POLICY only fires when client-specific topic evidence exists (test 206)
+[x] Issue 3. applyFounderDecisions scope-validates decisions; cross-client and cross-scope isolation (tests 205,207,208)
+[x] Issue 4. policyPrecedenceResolved===true iff status===RESOLVED with decision/supersession/no-blockings (tests 203,209)
+[x] Issue 5. buildG3DwIntelligenceContext derives G3 policyConflicts from classifyConflicts, not G2 only (test 210)
+[x] Issue 6. askDwPolicy applies R6 freshness to founder decisions; revoked evidence → not reported (test 211)
+
+== Files Changed ==
+
+  G3 Hardening + Exit-Gate Closure (relative to G3 runtime at f2a533d):
+  src/lib/companyBrain/policyIntelligence.js  (hardening A–H + exit-gate fixes 1–6)
+  tests/companyBrainG3Policy.test.mjs         (12 hardening tests + 11 exit-gate tests; 3 prior tightened)
   docs/company-brain/M2G_G3_VALIDATION.txt    (this file, updated)
 
 == Boundary Conditions Confirmed ==
@@ -116,3 +194,4 @@ G4/M2H scope scan (G4, M2H, scheduled action, pulse redesign, fake learn):
   - No G4 or M2H work begun
   - All changes isolated to m2g/company-brain-bootstrap-g3
   - G2 contracts unmodified; hardening reads G2 APIs without changing them
+  - Stayed on m2g/company-brain-bootstrap-g3; no rebase onto another lineage

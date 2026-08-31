@@ -1396,3 +1396,519 @@ test('G3-hardening-G: buildG3DwIntelligenceContext exposes all required typed fi
   assert.equal(ctx.boundaries.observedDelegationIsAuthority, false, 'R7')
   assert.equal(ctx.boundaries.behaviorCreatesPolicy, false, 'R2, R3')
 })
+
+// ── G3-final: 1 — Atlas end-to-end effective stack (Issue 1) ─────────────────
+
+test('G3-final-1-state1: resolvePolicy CLIENT scope exposes full effective stack (COMPANY + CLIENT candidates)', () => {
+  // State 1: before any founder decision — CLIENT query for atlas/late_fee_policy must expose
+  // the complete policy stack with each candidate's original scope preserved.
+  const { graph, brain } = seeded()
+
+  const result = resolvePolicy(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    scope: { level: SEMANTIC_SCOPE.CLIENT, clientId: 'atlas' },
+    topic: 'late_fee_policy',
+    queryDate: '2026-08-31',
+  })
+
+  // Must include COMPANY-scoped candidates (5% SOP, founder instruction)
+  const companyInResult = result.candidates.filter((c) => c.scopeLevel === SEMANTIC_SCOPE.COMPANY)
+  assert.ok(companyInResult.length > 0, 'company candidates must appear in CLIENT scope resolution')
+  assert.ok(
+    companyInResult.some((c) => c.claimClass === CLAIM_CLASS.COMPANY_POLICY),
+    'expected COMPANY_POLICY in CLIENT scope resolution',
+  )
+
+  // Must include CLIENT-scoped candidates (atlas 2% exception)
+  const clientInResult = result.candidates.filter((c) => c.scopeLevel === SEMANTIC_SCOPE.CLIENT)
+  assert.ok(clientInResult.length > 0, 'client candidates must appear in CLIENT scope resolution')
+  assert.ok(
+    clientInResult.some((c) => c.claimClass === CLAIM_CLASS.CLIENT_EXCEPTION),
+    'expected CLIENT_EXCEPTION in CLIENT scope resolution',
+  )
+
+  // COMPANY candidates must NOT have been widened to CLIENT scope (R4)
+  const leaked = companyInResult.filter((c) => c.scopeLevel !== SEMANTIC_SCOPE.COMPANY)
+  assert.equal(leaked.length, 0, 'R4: company candidates must retain COMPANY scopeLevel')
+
+  // No fabricated precedence — status CONFLICTED because no founder decision exists
+  assert.equal(result.status, G3_RESOLUTION_STATUS.CONFLICTED, 'expected CONFLICTED before any decision')
+  assert.equal(result.winner, null, 'no winner before founder decision')
+  assert.equal(result.policyPrecedenceResolved, false, 'no precedence before decision')
+  assert.equal(result.canActAutomatically, false, 'R9')
+  assert.equal(result.canonicalMoneyWritable, false, 'R0')
+})
+
+test('G3-final-1-state2: resolvePolicy CLIENT scope RESOLVED with policyPrecedenceResolved:true after scoped founder decision', () => {
+  // State 2: explicit founder decision scoped to atlas CLIENT → resolves CLIENT conflict,
+  // policyPrecedenceResolved must be true (Issue 4 invariant).
+  const { graph, brain } = seeded()
+
+  // Get atlas CLIENT candidates to find the atlas exception claim
+  const clientCandidates = buildPolicyCandidates(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    scope: { level: SEMANTIC_SCOPE.CLIENT, clientId: 'atlas' },
+    queryDate: '2026-08-31',
+  }).filter((c) => c.topic === 'late_fee_policy' && c.candidateStatus === CANDIDATE_STATUS.ACTIVE)
+
+  const chosenCandidate = clientCandidates.find((c) => c.claimClass === CLAIM_CLASS.CLIENT_EXCEPTION)
+  assert.ok(chosenCandidate, 'expected CLIENT_EXCEPTION candidate for atlas')
+
+  // Push a founder decision scoped to atlas CLIENT (not company-wide)
+  brain.decisions.push({
+    id: 'decision-final-state2',
+    tenantId: tenantA,
+    actorId: founderA.id,
+    actorRole: 'FOUNDER',
+    decidedAt: '2026-08-31T12:00:00Z',
+    decisionType: 'RESOLVE_CONFLICT',
+    target: 'late_fee_policy',
+    targetId: `conflict:${tenantA}:late_fee_policy:atlas`,
+    scope: { level: SEMANTIC_SCOPE.CLIENT, clientId: 'atlas' },
+    oldState: { status: 'CONFLICTED' },
+    newState: { governingClaimId: chosenCandidate.claimId },
+    evidenceClaimIds: [chosenCandidate.claimId],
+    reason: 'atlas gets 2% per exception agreement',
+    revocable: true,
+    idempotencyKey: 'idem-final-state2',
+    requestFingerprint: 'test',
+    supersedesDecisionId: null,
+    status: 'RECORDED',
+  })
+
+  const result = resolvePolicy(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    scope: { level: SEMANTIC_SCOPE.CLIENT, clientId: 'atlas' },
+    topic: 'late_fee_policy',
+    queryDate: '2026-08-31',
+  })
+
+  assert.equal(result.status, G3_RESOLUTION_STATUS.RESOLVED,
+    `expected RESOLVED, got ${result.status}: ${JSON.stringify(result.conflicts.map((c) => c.conflictClass))}`)
+  assert.ok(result.winner, 'winner must be set')
+  assert.equal(result.winner.claimId, chosenCandidate.claimId, 'winner must be the atlas exception')
+  assert.equal(result.policyPrecedenceResolved, true, 'policyPrecedenceResolved must be true when decision resolves (Issue 4)')
+  assert.equal(result.canActAutomatically, false, 'R9: canActAutomatically always false')
+  assert.equal(result.canonicalMoneyWritable, false, 'R0')
+  assert.equal(result.authorityGrantable, false, 'R9: policy decision ≠ DW authority')
+  // resolvedConflictEvidence must contain the decision
+  assert.ok(result.resolvedConflictEvidence.length > 0, 'resolvedConflictEvidence must be set')
+  assert.equal(result.unresolvedConflicts.length, 0, 'no unresolved conflicts when decision applies')
+})
+
+test('G3-final-1-state3: revoking decision backing evidence restores conflict; Ask DW and DW Intelligence reflect same state', () => {
+  // State 3: after revoking the backing evidence for the State 2 decision,
+  // resolution must revert to CONFLICTED; Ask DW must not report the invalidated decision.
+  const { graph, brain } = seeded()
+
+  const clientCandidates = buildPolicyCandidates(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    scope: { level: SEMANTIC_SCOPE.CLIENT, clientId: 'atlas' },
+    queryDate: '2026-08-31',
+  }).filter((c) => c.topic === 'late_fee_policy' && c.candidateStatus === CANDIDATE_STATUS.ACTIVE)
+
+  const chosenCandidate = clientCandidates.find((c) => c.claimClass === CLAIM_CLASS.CLIENT_EXCEPTION)
+  assert.ok(chosenCandidate)
+
+  brain.decisions.push({
+    id: 'decision-final-state3',
+    tenantId: tenantA,
+    actorId: founderA.id,
+    actorRole: 'FOUNDER',
+    decidedAt: '2026-08-31T12:00:00Z',
+    decisionType: 'RESOLVE_CONFLICT',
+    target: 'late_fee_policy',
+    targetId: `conflict:${tenantA}:late_fee_policy:atlas`,
+    scope: { level: SEMANTIC_SCOPE.CLIENT, clientId: 'atlas' },
+    oldState: { status: 'CONFLICTED' },
+    newState: { governingClaimId: chosenCandidate.claimId },
+    evidenceClaimIds: [chosenCandidate.claimId],
+    reason: 'atlas gets 2%',
+    revocable: true,
+    idempotencyKey: 'idem-final-state3',
+    requestFingerprint: 'test',
+    supersedesDecisionId: null,
+    status: 'RECORDED',
+  })
+
+  // Confirm RESOLVED before revocation
+  const beforeResult = resolvePolicy(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    scope: { level: SEMANTIC_SCOPE.CLIENT, clientId: 'atlas' },
+    topic: 'late_fee_policy', queryDate: '2026-08-31',
+  })
+  assert.equal(beforeResult.status, G3_RESOLUTION_STATUS.RESOLVED, 'expected RESOLVED before revoke')
+  assert.equal(beforeResult.policyPrecedenceResolved, true)
+
+  // Revoke the backing claim
+  const backingClaim = brain.claims.find((c) => c.id === chosenCandidate.claimId)
+  assert.ok(backingClaim)
+  backingClaim.active = false
+
+  // After revocation: decision is invalidated → resolution reverts to CONFLICTED
+  const afterResult = resolvePolicy(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    scope: { level: SEMANTIC_SCOPE.CLIENT, clientId: 'atlas' },
+    topic: 'late_fee_policy', queryDate: '2026-08-31',
+  })
+  assert.equal(afterResult.status, G3_RESOLUTION_STATUS.CONFLICTED, 'expected CONFLICTED after revocation (R6)')
+  assert.equal(afterResult.winner, null, 'no winner after evidence revoked')
+  assert.equal(afterResult.policyPrecedenceResolved, false, 'policyPrecedenceResolved must be false')
+
+  // Ask DW must not report the invalidated decision as governing
+  const dwAnswer = askDwPolicy(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    question: 'What did the founder decide about late fees?', clientId: 'atlas', queryDate: '2026-08-31',
+  })
+  assert.equal(dwAnswer.founderDecisions.length, 0, 'invalidated decision must not appear in Ask DW (Issue 6)')
+
+  // DW Intelligence context must reflect same state
+  const ctx = buildG3DwIntelligenceContext(graph, brain, {
+    actor: founderA, tenantId: tenantA, clientId: 'atlas', queryDate: '2026-08-31',
+  })
+  assert.ok(ctx.unresolvedPolicyConflicts.length > 0, 'DW Intelligence must show unresolved policy conflicts')
+  assert.equal(ctx.authorityBoundary.canActAutomatically, false, 'R9')
+})
+
+test('G3-final-1-state4: atlas decision does not change COMPANY resolution or another client resolution (scope isolation)', () => {
+  // State 4: an atlas-scoped decision must not bleed into COMPANY scope resolution,
+  // and must not affect another client's (acme-us) resolution.
+  const { graph, brain } = seeded()
+
+  const clientCandidates = buildPolicyCandidates(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    scope: { level: SEMANTIC_SCOPE.CLIENT, clientId: 'atlas' },
+    queryDate: '2026-08-31',
+  }).filter((c) => c.topic === 'late_fee_policy' && c.candidateStatus === CANDIDATE_STATUS.ACTIVE)
+
+  const chosenCandidate = clientCandidates.find((c) => c.claimClass === CLAIM_CLASS.CLIENT_EXCEPTION)
+  assert.ok(chosenCandidate)
+
+  brain.decisions.push({
+    id: 'decision-final-state4',
+    tenantId: tenantA,
+    actorId: founderA.id,
+    actorRole: 'FOUNDER',
+    decidedAt: '2026-08-31T12:00:00Z',
+    decisionType: 'RESOLVE_CONFLICT',
+    target: 'late_fee_policy',
+    scope: { level: SEMANTIC_SCOPE.CLIENT, clientId: 'atlas' },
+    oldState: { status: 'CONFLICTED' },
+    newState: { governingClaimId: chosenCandidate.claimId },
+    evidenceClaimIds: [chosenCandidate.claimId],
+    reason: 'atlas scoped decision',
+    revocable: true,
+    idempotencyKey: 'idem-final-state4',
+    requestFingerprint: 'test',
+    supersedesDecisionId: null,
+    status: 'RECORDED',
+  })
+
+  // COMPANY scope resolution must NOT be affected by the atlas-scoped decision
+  const companyResult = resolvePolicy(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    scope: { level: SEMANTIC_SCOPE.COMPANY },
+    topic: 'late_fee_policy', queryDate: '2026-08-31',
+  })
+  assert.equal(companyResult.status, G3_RESOLUTION_STATUS.CONFLICTED,
+    'atlas decision must not resolve company-wide conflict')
+  assert.equal(companyResult.winner, null, 'no company winner from atlas-scoped decision')
+
+  // acme-us CLIENT scope must NOT be affected either
+  const acmeResult = resolvePolicy(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    scope: { level: SEMANTIC_SCOPE.CLIENT, clientId: 'acme-us' },
+    topic: 'late_fee_policy', queryDate: '2026-08-31',
+  })
+  // acme-us has no CLIENT_EXCEPTION → no CONTRACT_VS_COMPANY_POLICY either → inherits company conflict
+  assert.equal(acmeResult.status, G3_RESOLUTION_STATUS.CONFLICTED,
+    'atlas decision must not affect acme-us resolution')
+  assert.equal(acmeResult.winner, null)
+})
+
+// ── G3-final: 2 — CONTRACT_VS_COMPANY_POLICY negative regression (Issue 2) ─────
+
+test('G3-final-2: CONTRACT_VS_COMPANY_POLICY does NOT fire for contract with no late-fee terms', () => {
+  // A contract with only Net 30 payment terms (no late-fee clause) + company 5% late-fee policy
+  // must NOT produce CONTRACT_VS_COMPANY_POLICY for the late_fee_policy topic.
+  const brain = new CompanyBrainDurableStore({ clock: clocks() })
+
+  // Company-wide 5% late fee (produces COMPANY_POLICY / late_fee_policy)
+  ingestContent(brain, workerA, 'sop.md', 'Charge a 5% late fee on all overdue invoices.', 'sop')
+
+  // Contract with only Net-30 terms — no late fee clause
+  const contractContent = `---\ndocument_type: contract\ncontract_id: net30-contract\nclient_id: smallco\nscope: CLIENT\neffective_from: 2026-01-01\n---\nPayment terms: Net 30. No late fee clause negotiated.`
+  ingestContent(brain, workerA, 'net30-contract.md', contractContent, 'net30-contract')
+
+  // Entity registry so smallco is resolvable
+  ingestContent(brain, workerA, 'reg.csv', 'entity_type,entity_id,name\nCLIENT,smallco,SmallCo', 'reg')
+
+  const graph = new CompanyGraphStore({ brainStore: brain, clock: clocks() })
+  graph.build({ actor: founderA, tenantId: tenantA })
+
+  const result = resolvePolicy(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    scope: { level: SEMANTIC_SCOPE.CLIENT, clientId: 'smallco' },
+    topic: 'late_fee_policy',
+    queryDate: '2026-08-31',
+  })
+
+  const classes = result.conflicts.map((c) => c.conflictClass)
+  assert.ok(
+    !classes.includes(CONFLICT_CLASS.CONTRACT_VS_COMPANY_POLICY),
+    `must NOT emit CONTRACT_VS_COMPANY_POLICY when contract has no late-fee terms, got: ${JSON.stringify(classes)}`,
+  )
+  assert.equal(result.canonicalMoneyWritable, false, 'R0')
+})
+
+// ── G3-final: 3 — Scope-bound founder decisions (Issue 3) ────────────────────
+
+test('G3-final-3a: company-wide founder decision does NOT resolve CLIENT-scope atlas conflict', () => {
+  // A company-wide decision (no scope or scope:COMPANY) must not resolve the CLIENT-scope
+  // conflict for atlas — the atlas exception remains a separate unresolved question.
+  const { graph, brain } = seeded()
+
+  const companyCandidates = buildPolicyCandidates(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    scope: { level: SEMANTIC_SCOPE.COMPANY }, queryDate: '2026-08-31',
+  }).filter((c) => c.topic === 'late_fee_policy' && c.candidateStatus === CANDIDATE_STATUS.ACTIVE)
+
+  const companyPolicy = companyCandidates.find((c) => c.claimClass === CLAIM_CLASS.COMPANY_POLICY)
+  assert.ok(companyPolicy)
+
+  // Company-wide decision: no scope field (defaults to COMPANY)
+  brain.decisions.push({
+    id: 'decision-scope-test-a',
+    tenantId: tenantA,
+    actorId: founderA.id,
+    actorRole: 'FOUNDER',
+    decidedAt: '2026-08-31T12:00:00Z',
+    decisionType: 'RESOLVE_CONFLICT',
+    target: 'late_fee_policy',
+    // No scope field → defaults to COMPANY scope
+    oldState: { status: 'CONFLICTED' },
+    newState: { governingClaimId: companyPolicy.claimId },
+    evidenceClaimIds: [companyPolicy.claimId],
+    reason: 'company-wide: 5% is the standard',
+    revocable: true,
+    idempotencyKey: 'idem-scope-a',
+    requestFingerprint: 'test',
+    supersedesDecisionId: null,
+    status: 'RECORDED',
+  })
+
+  // COMPANY scope: the decision applies → resolved
+  const companyResult = resolvePolicy(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    scope: { level: SEMANTIC_SCOPE.COMPANY },
+    topic: 'late_fee_policy', queryDate: '2026-08-31',
+  })
+  assert.equal(companyResult.status, G3_RESOLUTION_STATUS.RESOLVED, 'company-wide decision should resolve COMPANY scope')
+
+  // CLIENT/atlas scope: the company-wide decision must NOT resolve the CLIENT conflict
+  const atlasResult = resolvePolicy(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    scope: { level: SEMANTIC_SCOPE.CLIENT, clientId: 'atlas' },
+    topic: 'late_fee_policy', queryDate: '2026-08-31',
+  })
+  assert.equal(atlasResult.status, G3_RESOLUTION_STATUS.CONFLICTED,
+    'company-wide decision must not resolve CLIENT-scope atlas conflict')
+  assert.equal(atlasResult.winner, null, 'R4: CLIENT conflict not silently resolved by company-wide decision')
+})
+
+test('G3-final-3b: atlas-scoped decision does NOT apply to another client (acme-us)', () => {
+  // An atlas-specific decision must not affect acme-us or any other client's resolution.
+  const { graph, brain } = seeded()
+
+  const clientCandidates = buildPolicyCandidates(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    scope: { level: SEMANTIC_SCOPE.CLIENT, clientId: 'atlas' },
+    queryDate: '2026-08-31',
+  }).filter((c) => c.topic === 'late_fee_policy' && c.candidateStatus === CANDIDATE_STATUS.ACTIVE)
+
+  const chosenCandidate = clientCandidates.find((c) => c.claimClass === CLAIM_CLASS.CLIENT_EXCEPTION)
+  assert.ok(chosenCandidate)
+
+  brain.decisions.push({
+    id: 'decision-scope-test-b',
+    tenantId: tenantA,
+    actorId: founderA.id,
+    actorRole: 'FOUNDER',
+    decidedAt: '2026-08-31T12:00:00Z',
+    decisionType: 'RESOLVE_CONFLICT',
+    target: 'late_fee_policy',
+    scope: { level: SEMANTIC_SCOPE.CLIENT, clientId: 'atlas' },
+    oldState: { status: 'CONFLICTED' },
+    newState: { governingClaimId: chosenCandidate.claimId },
+    evidenceClaimIds: [chosenCandidate.claimId],
+    reason: 'atlas only',
+    revocable: true,
+    idempotencyKey: 'idem-scope-b',
+    requestFingerprint: 'test',
+    supersedesDecisionId: null,
+    status: 'RECORDED',
+  })
+
+  // Verify atlas gets resolved
+  const atlasResult = resolvePolicy(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    scope: { level: SEMANTIC_SCOPE.CLIENT, clientId: 'atlas' },
+    topic: 'late_fee_policy', queryDate: '2026-08-31',
+  })
+  assert.equal(atlasResult.status, G3_RESOLUTION_STATUS.RESOLVED, 'atlas should resolve with its decision')
+
+  // acme-us must be unaffected
+  const acmeResult = resolvePolicy(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    scope: { level: SEMANTIC_SCOPE.CLIENT, clientId: 'acme-us' },
+    topic: 'late_fee_policy', queryDate: '2026-08-31',
+  })
+  assert.notEqual(acmeResult.status, G3_RESOLUTION_STATUS.RESOLVED,
+    'atlas decision must not resolve acme-us policy')
+  assert.equal(acmeResult.winner, null, 'no winner for acme-us from atlas decision')
+})
+
+// ── G3-final: 4 — policyPrecedenceResolved invariant (Issue 4) ───────────────
+
+test('G3-final-4: detectedConflicts preserved for audit after resolution; unresolvedConflicts empty', () => {
+  // When a founder decision resolves a conflict:
+  //   detectedConflicts = full audit trail (non-empty, preserving history)
+  //   unresolvedConflicts = empty (decision resolved all blocking conflicts)
+  //   resolvedConflictEvidence = the decisions that resolved
+  //   policyPrecedenceResolved = true
+  const { graph, brain } = seeded()
+
+  const companyCandidates = buildPolicyCandidates(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    scope: { level: SEMANTIC_SCOPE.COMPANY }, queryDate: '2026-08-31',
+  }).filter((c) => c.topic === 'late_fee_policy' && c.candidateStatus === CANDIDATE_STATUS.ACTIVE)
+
+  const chosenCandidate = companyCandidates.find((c) => c.claimClass === CLAIM_CLASS.COMPANY_POLICY)
+  assert.ok(chosenCandidate)
+
+  brain.decisions.push({
+    id: 'decision-final-4',
+    tenantId: tenantA,
+    actorId: founderA.id,
+    actorRole: 'FOUNDER',
+    decidedAt: '2026-08-31T12:00:00Z',
+    decisionType: 'RESOLVE_CONFLICT',
+    target: 'late_fee_policy',
+    // No scope → COMPANY-wide default
+    oldState: { status: 'CONFLICTED' },
+    newState: { governingClaimId: chosenCandidate.claimId },
+    evidenceClaimIds: [chosenCandidate.claimId],
+    reason: '5% is correct',
+    revocable: true,
+    idempotencyKey: 'idem-final-4',
+    requestFingerprint: 'test',
+    supersedesDecisionId: null,
+    status: 'RECORDED',
+  })
+
+  const result = resolvePolicy(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    scope: { level: SEMANTIC_SCOPE.COMPANY },
+    topic: 'late_fee_policy', queryDate: '2026-08-31',
+  })
+
+  assert.equal(result.status, G3_RESOLUTION_STATUS.RESOLVED)
+  assert.equal(result.policyPrecedenceResolved, true, 'must be true when founder decision resolves')
+  // Audit trail preserved
+  assert.ok(result.detectedConflicts.length > 0, 'detectedConflicts must preserve pre-resolution history')
+  // No unresolved blocking conflicts
+  assert.equal(result.unresolvedConflicts.length, 0, 'unresolvedConflicts must be empty when resolved')
+  // Evidence of resolution
+  assert.ok(result.resolvedConflictEvidence.length > 0, 'resolvedConflictEvidence must contain the decision')
+  assert.equal(result.resolvedConflictEvidence[0].id, 'decision-final-4')
+})
+
+// ── G3-final: 5 — G3 DW Intelligence policy conflicts (Issue 5) ──────────────
+
+test('G3-final-5: buildG3DwIntelligenceContext exposes G3 policy conflicts distinct from brain conflicts', () => {
+  // The DW Intelligence context must expose G3-classified policy conflicts that the G2 brain
+  // cannot surface (e.g. MISSING_PRECEDENCE, CONFIDENCE_DISAGREEMENT, FOUNDER_INSTRUCTION_VS_PRIOR_POLICY).
+  const { graph, brain } = seeded()
+
+  const ctx = buildG3DwIntelligenceContext(graph, brain, {
+    actor: founderA, tenantId: tenantA, clientId: 'atlas', queryDate: '2026-08-31',
+  })
+
+  // New typed fields must be present
+  assert.ok(Array.isArray(ctx.brainConflicts), 'brainConflicts must be array')
+  assert.ok(Array.isArray(ctx.policyConflicts), 'policyConflicts must be array')
+  assert.ok(Array.isArray(ctx.unresolvedPolicyConflicts), 'unresolvedPolicyConflicts must be array')
+
+  // G3 policy conflicts must surface G3-specific classes
+  const g3Classes = ctx.policyConflicts.map((c) => c.conflictClass)
+  // seeded() has COMPANY_POLICY vs FOUNDER_INSTRUCTION → FOUNDER_INSTRUCTION_VS_PRIOR_POLICY
+  assert.ok(
+    g3Classes.includes(CONFLICT_CLASS.FOUNDER_INSTRUCTION_VS_PRIOR_POLICY),
+    `expected FOUNDER_INSTRUCTION_VS_PRIOR_POLICY in policyConflicts, got: ${JSON.stringify(g3Classes)}`,
+  )
+
+  // unresolvedPolicyConflicts must not claim "no conflicts" when G3 evidence shows conflicts
+  assert.ok(
+    ctx.unresolvedPolicyConflicts.length > 0,
+    'unresolvedPolicyConflicts must be non-empty when G3 candidates are in conflict',
+  )
+
+  // Structural invariants preserved
+  assert.equal(ctx.authorityBoundary.canActAutomatically, false, 'R9')
+  assert.equal(ctx.boundaries.canonicalMoneyWritable, false, 'R0')
+})
+
+// ── G3-final: 6 — Ask DW canonical founder-decision view (Issue 6) ───────────
+
+test('G3-final-6: askDwPolicy reports governing decision when valid; stops after evidence revoked', () => {
+  const { graph, brain } = seeded()
+
+  const candidates = buildPolicyCandidates(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    scope: { level: SEMANTIC_SCOPE.COMPANY }, queryDate: '2026-08-31',
+  }).filter((c) => c.topic === 'late_fee_policy' && c.candidateStatus === CANDIDATE_STATUS.ACTIVE)
+
+  const chosenCandidate = candidates.find((c) => c.claimClass === CLAIM_CLASS.COMPANY_POLICY)
+  assert.ok(chosenCandidate)
+
+  brain.decisions.push({
+    id: 'decision-final-6',
+    tenantId: tenantA,
+    actorId: founderA.id,
+    actorRole: 'FOUNDER',
+    decidedAt: '2026-08-31T12:00:00Z',
+    decisionType: 'RESOLVE_CONFLICT',
+    target: 'late_fee_policy',
+    oldState: { status: 'CONFLICTED' },
+    newState: { governingClaimId: chosenCandidate.claimId },
+    evidenceClaimIds: [chosenCandidate.claimId],
+    reason: '5% confirmed',
+    revocable: true,
+    idempotencyKey: 'idem-final-6',
+    requestFingerprint: 'test',
+    supersedesDecisionId: null,
+    status: 'RECORDED',
+  })
+
+  // Before revocation: Ask DW reports the governing decision
+  const beforeAnswer = askDwPolicy(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    question: 'What did the founder decide about late fees?', queryDate: '2026-08-31',
+  })
+  assert.equal(beforeAnswer.founderDecisions.length, 1, 'valid decision must appear in Ask DW')
+
+  // Revoke the backing evidence
+  const backingClaim = brain.claims.find((c) => c.id === chosenCandidate.claimId)
+  assert.ok(backingClaim)
+  backingClaim.active = false
+
+  // After revocation: Ask DW must not report invalidated decision as governing
+  const afterAnswer = askDwPolicy(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    question: 'What did the founder decide about late fees?', queryDate: '2026-08-31',
+  })
+  assert.equal(afterAnswer.founderDecisions.length, 0,
+    'invalidated decision must not appear in Ask DW after evidence revoked (Issue 6, R6)')
+  assert.equal(afterAnswer.authorityBoundary.canActAutomatically, false, 'R9')
+  assert.equal(afterAnswer.canonicalMoneyWritable, false, 'R0')
+})
