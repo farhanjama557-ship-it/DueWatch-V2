@@ -1,0 +1,50 @@
+M2G-G1 VALIDATION
+Date: 2026-08-30
+Branch: m2g/company-brain-bootstrap-g1
+G0 checkpoint commit: e6e454b07abcb283651d34c701f2b0f6426ae2a9
+G1 base SHA: e6e454b07abcb283651d34c701f2b0f6426ae2a9
+
+PRE-G1 CHECKPOINT
+PASS complete G0 diff review
+PASS CRLF-neutral M2D test edit confirmed behavior-preserving
+PASS G0 focused tests: 27/27
+PASS pre-G1 full repository tests: 997/997
+PASS pre-G1 production build
+PASS clean G0 checkpoint commit
+
+G1 COMMANDS
+npm run test:company-brain-g1
+PASS 66/66 (27 G0 + 29 G1 durable behavior + 10 G1 migration/security)
+
+npm test
+PASS 1036/1036
+
+npm run build
+PASS vite production build; 1998 modules transformed
+NOTE existing chunk-size warnings only; no build failure
+
+git diff --check
+PASS
+
+SCOPE/CREDENTIAL SCANS
+PASS no secret/key/token literals introduced
+PASS no production/provider mutation path introduced
+PASS no R0 financial-table mutation in G1 migration or implementation
+PASS no G2, M2H, cloud connector, OCR, vector authority, or product UI work
+
+MIGRATION
+supabase/migrations/20260830055532_company_brain_durable_ingestion_g1.sql
+PASS static schema/RLS/grant/RPC/financial-boundary checks
+NOT RUN against a database: isolated local Supabase/Postgres runtime unavailable
+
+EXIT GATE
+PASS deterministic durable loop in repository scope
+PASS canonical financial truth remains untouched
+PASS no locked R0 or DW Intelligence contract amendment required
+
+KNOWN UNKNOWNS / DEFERRALS
+- Apply and exercise migration against isolated local/test Supabase before deployment.
+- Wire a server-side ingestion worker under the documented tenant contract.
+- PDF parser deferred; no safe parser existed.
+- Multi-member founder-role model deferred until the repo has an authoritative membership table.
+- G2+ graph/precedence/UI work and all M2H live connectors remain deferred.

@@ -406,15 +406,15 @@ export function answerAskDwFromCompanyBrain({ snapshot, question } = {}) {
     return deepFreeze({ status: 'APPROVED', answer: 'Late fees are disabled globally. Atlas retains a 2% contract exception only when applicable. DW has no automatic authority to add or waive late fees.', evidence: evidence(snapshot.approvedPolicies.flatMap((item) => item.evidenceClaimIds)), canonicalFinancialTruthUsed: false })
   }
   if (normalized.includes('waive 20%') && normalized.includes('atlas')) {
-    const email = snapshot.activeClaims.find((claim) => claim.id === 'claim-atlas-discount-email')
+    const email = snapshot.activeClaims.find((claim) => claim.id === 'claim-atlas-discount-email' || claim.claimType === 'settlement_discount_statement')
     return deepFreeze({ status: 'REQUIRE_APPROVAL', answer: 'No. The account-manager email is contextual evidence, not settlement authority. Founder approval is required.', evidence: email ? evidence([email.id]) : [], canonicalFinancialTruthUsed: false })
   }
   if (normalized.includes('invoice 104') && normalized.includes('paid')) {
-    const contextual = snapshot.activeClaims.find((claim) => claim.id === 'claim-invoice-104-paid-context')
+    const contextual = snapshot.activeClaims.find((claim) => claim.id === 'claim-invoice-104-paid-context' || (claim.claimType === 'contextual_payment_statement' && claim.subjectScope?.invoiceId === '104'))
     return deepFreeze({ status: 'AUTHORITATIVE_FINANCIAL_REFETCH_REQUIRED', answer: 'Company Brain cannot establish current payment truth. Ask DW must use the authoritative R0 financial path for invoice 104.', evidence: contextual ? evidence([contextual.id]) : [], canonicalFinancialTruthUsed: false, route: 'R0_AUTHORITATIVE_FINANCIAL_READ' })
   }
   if (normalized.includes('why') && normalized.includes('atlas') && normalized.includes('different terms')) {
-    const contract = snapshot.activeClaims.filter((claim) => claim.provenanceRootIds.includes('source-customer-contract-atlas'))
+    const contract = snapshot.activeClaims.filter((claim) => claim.provenanceRootIds.includes('source-customer-contract-atlas') || (claim.subjectScope?.clientId === 'atlas' && ['payment_terms', 'late_fee_policy'].includes(claim.claimType)))
     return deepFreeze({ status: 'OBSERVED', answer: 'Atlas has client-specific Net 45 terms and a 2% late-fee exception in its contract.', evidence: evidence(contract.map((claim) => claim.id)), canonicalFinancialTruthUsed: false })
   }
   return deepFreeze({ status: 'UNKNOWN', answer: 'Company Brain does not have enough scoped evidence to answer.', evidence: [], canonicalFinancialTruthUsed: false })

@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "test": "node --test",
     "test:company-brain-g0": "node --test tests/companyBrainG0.test.mjs",
+    "test:company-brain-g1": "node --test tests/companyBrainG0.test.mjs tests/companyBrainG1DurableStore.test.mjs tests/companyBrainG1Migration.test.mjs",
     "clients:dedupe": "node scripts/client-dedupe.mjs",
     "system-brain:audit": "node scripts/system-brain-audit.mjs",
     "system-brain:deployment": "node scripts/system-brain-deployment-fingerprint.mjs",
