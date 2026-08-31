@@ -34,6 +34,8 @@ import {
   TEMPORAL_STATE, CONFLICT_CLASS, CANDIDATE_STATUS, G3_RESOLUTION_STATUS,
   classifyTemporalState, detectDanglingProvenance, buildPolicyCandidates,
   classifyConflicts, resolvePolicy, buildG3DwIntelligenceContext,
+  buildEffectivePolicyCandidates, validateClientIdentity,
+  applyFounderDecisions, askDwPolicy,
 } from '../src/lib/companyBrain/policyIntelligence.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -692,7 +694,7 @@ test('G3-temporal: UNKNOWN temporal state prevents automatic resolution — canA
   })
   assert.equal(ctx.kind, 'G3_DW_INTELLIGENCE_CONTEXT_V0')
   assert.equal(ctx.authorityBoundary.canActAutomatically, false)
-  assert.ok(ctx.temporalSummary.hasUnknownTemporal, 'expected UNKNOWN temporal on g1-realistic candidates')
+  assert.ok(ctx.temporalApplicability.hasUnknownTemporal, 'expected UNKNOWN temporal on g1-realistic candidates')
 })
 
 // ── G3: Conflict classification ───────────────────────────────────────────────
@@ -711,10 +713,16 @@ test('G3-conflict-class: FOUNDER_INSTRUCTION_VS_PRIOR_POLICY classified when bot
 
   assert.equal(result.status, G3_RESOLUTION_STATUS.CONFLICTED)
   const classes = result.conflicts.map((c) => c.conflictClass)
+  // Deterministic: the pair (COMPANY_POLICY, FOUNDER_INSTRUCTION) with UNKNOWN temporal
+  // must be classified as FOUNDER_INSTRUCTION_VS_PRIOR_POLICY (check 5 in pairwise loop).
+  // OVERLAPPING_EFFECTIVE_PERIODS would only appear if both were the same claim class.
   assert.ok(
-    classes.includes(CONFLICT_CLASS.FOUNDER_INSTRUCTION_VS_PRIOR_POLICY) ||
-    classes.includes(CONFLICT_CLASS.OVERLAPPING_EFFECTIVE_PERIODS),
-    `expected FOUNDER_INSTRUCTION_VS_PRIOR_POLICY or OVERLAPPING_EFFECTIVE_PERIODS, got: ${JSON.stringify(classes)}`,
+    classes.includes(CONFLICT_CLASS.FOUNDER_INSTRUCTION_VS_PRIOR_POLICY),
+    `expected FOUNDER_INSTRUCTION_VS_PRIOR_POLICY in ${JSON.stringify(classes)}`,
+  )
+  assert.ok(
+    !classes.includes(CONFLICT_CLASS.OVERLAPPING_EFFECTIVE_PERIODS),
+    `must not emit OVERLAPPING_EFFECTIVE_PERIODS for a FOUNDER_INSTRUCTION/COMPANY_POLICY pair, got: ${JSON.stringify(classes)}`,
   )
   assert.equal(result.canActAutomatically, false)
   assert.equal(result.canonicalMoneyWritable, false)
@@ -816,10 +824,16 @@ test('G3-conflict-class: MISSING_PRECEDENCE when two candidates have no superses
 
   assert.equal(result.status, G3_RESOLUTION_STATUS.CONFLICTED)
   const classes = result.conflicts.map((c) => c.conflictClass)
+  // Deterministic: both candidates have explicit effective_from → temporalState CURRENT.
+  // Two CURRENT COMPANY_POLICY candidates with no supersession → MISSING_PRECEDENCE (R8).
+  // OVERLAPPING_EFFECTIVE_PERIODS only fires when both candidates have UNKNOWN temporal.
   assert.ok(
-    classes.includes(CONFLICT_CLASS.MISSING_PRECEDENCE) ||
-    classes.includes(CONFLICT_CLASS.OVERLAPPING_EFFECTIVE_PERIODS),
-    `expected MISSING_PRECEDENCE or OVERLAPPING_EFFECTIVE_PERIODS, got: ${JSON.stringify(classes)}`,
+    classes.includes(CONFLICT_CLASS.MISSING_PRECEDENCE),
+    `expected MISSING_PRECEDENCE in ${JSON.stringify(classes)}`,
+  )
+  assert.ok(
+    !classes.includes(CONFLICT_CLASS.OVERLAPPING_EFFECTIVE_PERIODS),
+    `must not emit OVERLAPPING_EFFECTIVE_PERIODS for CURRENT candidates, got: ${JSON.stringify(classes)}`,
   )
   assert.equal(result.canActAutomatically, false)
 })
@@ -859,36 +873,47 @@ test('G3-provenance: DANGLING_PROVENANCE conflict class when artifact chain is b
 // ── G3: Supersession ──────────────────────────────────────────────────────────
 
 test('G3-supersession: SUPERSEDES edge resolves conflict without recordFounderDecision when explicit', () => {
-  // seeded() has entity-registry (COMPANY node) + 5% COMPANY_POLICY + FOUNDER_INSTRUCTION, both late_fee_policy.
-  // We add a 3% COMPANY_POLICY and an explicit SUPERSEDES edge (3% supersedes 5%), then verify RESOLVED.
-  // The FOUNDER_INSTRUCTION will still conflict unless also superseded — so we scope the test to the
-  // pair we control by checking that a SUPERSEDES edge exists and the 3% node is not SUPERSEDED.
+  // Use topic 'policy_candidate_record' to avoid the FOUNDER_INSTRUCTION competing
+  // in 'late_fee_policy'. Two CURRENT policy_candidate docs: one supersedes the other.
+  // After the SUPERSEDES edge, exactly one ACTIVE candidate → resolvePolicy must return RESOLVED.
   const { brain, graph } = seeded()
-  ingestContent(brain, workerA, 'policy-winner.md', 'We charge a 3% late fee on overdue invoices.', 'policy-winner')
+
+  const p1 = `---\ndocument_type: policy_candidate\neffective_from: 2024-01-01\n---\nWe charge a 5% late fee on all invoices.`
+  const p2 = `---\ndocument_type: policy_candidate\neffective_from: 2025-01-01\n---\nWe charge a 3% late fee on overdue invoices.`
+  ingestContent(brain, workerA, 'pc-ss-old.md', p1, 'pc-ss-old')
+  ingestContent(brain, workerA, 'pc-ss-new.md', p2, 'pc-ss-new')
   graph.build({ actor: founderA, tenantId: tenantA })
 
-  // Find all late_fee_policy POLICY_CANDIDATE nodes
+  // Find non-HISTORICAL policy_candidate_record nodes from the two newly ingested docs
   const policyNodes = graph.nodes.filter(
     (n) => n.tenantId === tenantA && n.type === GRAPH_NODE_TYPE.POLICY_CANDIDATE && n.active,
   ).filter((n) => {
-    const claim = brain.claims.find((c) => c.id === n.data?.claimId)
-    return claim?.claimType === 'late_fee_policy'
+    const c = brain.claims.find((c) => c.id === n.data?.claimId)
+    return c?.claimType === 'policy_candidate_record' && c?.semanticScope?.temporality !== 'HISTORICAL'
   })
-  assert.ok(policyNodes.length >= 2, `expected at least 2 late_fee_policy POLICY_CANDIDATE nodes, got ${policyNodes.length}`)
 
-  // Identify the 3% node (winner) and the 5% node (to be superseded)
-  const newNode = policyNodes.find((n) => {
-    const claim = brain.claims.find((c) => c.id === n.data?.claimId)
-    return claim?.value?.ratePercent === 3
-  })
   const oldNode = policyNodes.find((n) => {
-    const claim = brain.claims.find((c) => c.id === n.data?.claimId)
-    return claim?.value?.ratePercent === 5
+    const c = brain.claims.find((c) => c.id === n.data?.claimId)
+    return c?.effectiveTime?.from === '2024-01-01'
   })
-  assert.ok(newNode, 'could not find 3% policy node')
-  assert.ok(oldNode, 'could not find 5% policy node')
+  const newNode = policyNodes.find((n) => {
+    const c = brain.claims.find((c) => c.id === n.data?.claimId)
+    return c?.effectiveTime?.from === '2025-01-01'
+  })
+  assert.ok(oldNode, 'could not find 2024 policy_candidate_record node')
+  assert.ok(newNode, 'could not find 2025 policy_candidate_record node')
 
-  // Persist explicit SUPERSEDES edge: 3% supersedes 5% (provenance from the new node)
+  // Before supersession: two CURRENT candidates → CONFLICTED (MISSING_PRECEDENCE)
+  const beforeResult = resolvePolicy(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    scope: { level: SEMANTIC_SCOPE.COMPANY },
+    topic: 'policy_candidate_record',
+    queryDate: '2026-08-31',
+  })
+  assert.equal(beforeResult.status, G3_RESOLUTION_STATUS.CONFLICTED,
+    `expected CONFLICTED before supersession, got: ${beforeResult.status}`)
+
+  // Persist explicit SUPERSEDES edge: newNode supersedes oldNode
   graph.persistEdge({
     actor: founderA,
     tenantId: tenantA,
@@ -904,34 +929,19 @@ test('G3-supersession: SUPERSEDES edge resolves conflict without recordFounderDe
     }),
   })
 
-  // After supersession the 5% node must be SUPERSEDED and the 3% node must remain ACTIVE.
-  // The FOUNDER_INSTRUCTION is still present; we filter by topic.
-  const candidates = buildPolicyCandidates(graph, brain, {
+  // After supersession: oldNode SUPERSEDED, newNode ACTIVE → exactly one active candidate
+  const afterResult = resolvePolicy(graph, brain, {
     actor: founderA, tenantId: tenantA,
     scope: { level: SEMANTIC_SCOPE.COMPANY },
-    queryDate: '2026-08-31',
-  }).filter((c) => c.topic === 'late_fee_policy')
-
-  const fivePctCandidate = candidates.find((c) => c.graphNodeKey === oldNode.stableKey)
-  const threePctCandidate = candidates.find((c) => c.graphNodeKey === newNode.stableKey)
-  assert.ok(fivePctCandidate, 'expected 5% candidate in list')
-  assert.ok(threePctCandidate, 'expected 3% candidate in list')
-  assert.equal(fivePctCandidate.candidateStatus, CANDIDATE_STATUS.SUPERSEDED, '5% must be SUPERSEDED after explicit edge')
-  assert.equal(threePctCandidate.candidateStatus, CANDIDATE_STATUS.ACTIVE, '3% must remain ACTIVE as the winner')
-
-  // Structural invariants always hold (R0, R9)
-  const resolution = resolvePolicy(graph, brain, {
-    actor: founderA, tenantId: tenantA,
-    scope: { level: SEMANTIC_SCOPE.COMPANY },
-    topic: 'late_fee_policy',
+    topic: 'policy_candidate_record',
     queryDate: '2026-08-31',
   })
-  assert.equal(resolution.canActAutomatically, false, 'R9: canActAutomatically always false')
-  assert.equal(resolution.canonicalMoneyWritable, false, 'R0: canonicalMoneyWritable always false')
-  // FOUNDER_INSTRUCTION still present → status may be CONFLICTED; that's fine.
-  // Key guarantee: 5% SUPERSEDED, 3% ACTIVE → no ABSTAIN or NO_POLICY.
-  assert.notEqual(resolution.status, G3_RESOLUTION_STATUS.NO_POLICY)
-  assert.notEqual(resolution.status, G3_RESOLUTION_STATUS.ABSTAIN)
+  assert.equal(afterResult.status, G3_RESOLUTION_STATUS.RESOLVED,
+    `expected RESOLVED after supersession, got ${afterResult.status}: ${JSON.stringify(afterResult.conflicts)}`)
+  assert.equal(afterResult.winner.graphNodeKey, newNode.stableKey,
+    'winner must be the newer 2025 policy_candidate_record node')
+  assert.equal(afterResult.canActAutomatically, false, 'R9: canActAutomatically always false')
+  assert.equal(afterResult.canonicalMoneyWritable, false, 'R0: canonicalMoneyWritable always false')
 })
 
 // ── G3: DW Intelligence context ───────────────────────────────────────────────
@@ -952,4 +962,437 @@ test('G3-dw-intelligence: G3DwIntelligenceContext.authorityBoundary.canActAutoma
   assert.equal(ctx.boundaries.canonicalMoneyWritable, false, 'R0')
   assert.equal(ctx.boundaries.observedDelegationIsAuthority, false, 'R7')
   assert.equal(ctx.boundaries.policyConflictsResolvableByConfidence, false, 'R1')
+})
+
+// ── G3-hardening: A — Client-scope policy composition ─────────────────────────
+
+test('G3-hardening-A: buildEffectivePolicyCandidates returns company and client candidates separately tagged', () => {
+  const { graph, brain } = seeded()
+  const result = buildEffectivePolicyCandidates(graph, brain, {
+    actor: founderA, tenantId: tenantA, clientId: 'atlas', queryDate: '2026-08-31',
+  })
+
+  // Company candidates: 5% COMPANY_POLICY + FOUNDER_INSTRUCTION + historical
+  assert.ok(result.companyCandidates.length > 0, 'expected at least one company candidate')
+  assert.ok(
+    result.companyCandidates.every((c) => c.inheritedFromCompany === true),
+    'all company candidates must be tagged inheritedFromCompany: true',
+  )
+
+  // Client candidates: atlas CLIENT_EXCEPTION (2% from atlas-terms.csv / atlas-exception.md)
+  assert.ok(result.clientCandidates.length > 0, 'expected at least one client candidate for atlas')
+  assert.ok(
+    result.clientCandidates.every((c) => c.inheritedFromCompany === false),
+    'all client candidates must be tagged inheritedFromCompany: false',
+  )
+
+  // R4: no CLIENT candidate appears in companyCandidates
+  const clientKeys = new Set(result.clientCandidates.map((c) => c.graphNodeKey))
+  const leaked = result.companyCandidates.filter((c) => clientKeys.has(c.graphNodeKey))
+  assert.equal(leaked.length, 0, 'R4: CLIENT candidates must not appear in companyCandidates')
+
+  // allCandidates is the union
+  assert.equal(
+    result.allCandidates.length,
+    result.companyCandidates.length + result.clientCandidates.length,
+  )
+
+  // At least one company-scope policy (COMPANY_POLICY or FOUNDER_INSTRUCTION)
+  assert.ok(
+    result.companyCandidates.some(
+      (c) => c.claimClass === CLAIM_CLASS.COMPANY_POLICY || c.claimClass === CLAIM_CLASS.FOUNDER_INSTRUCTION,
+    ),
+    'expected at least one COMPANY_POLICY or FOUNDER_INSTRUCTION in companyCandidates',
+  )
+
+  // At least one client exception
+  assert.ok(
+    result.clientCandidates.some((c) => c.claimClass === CLAIM_CLASS.CLIENT_EXCEPTION),
+    'expected at least one CLIENT_EXCEPTION in clientCandidates',
+  )
+})
+
+// ── G3-hardening: B — Identity validation ─────────────────────────────────────
+
+test('G3-hardening-B: AMBIGUOUS_ENTITY_IDENTITY when clientId resolves to multiple entities', () => {
+  // 'Acme' is a registered alias for both acme-us and acme-eu in entity-registry.csv
+  const { graph, brain } = seeded()
+  const result = resolvePolicy(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    scope: { level: SEMANTIC_SCOPE.CLIENT, clientId: 'Acme' },
+    topic: 'late_fee_policy',
+    queryDate: '2026-08-31',
+  })
+  assert.equal(result.status, G3_RESOLUTION_STATUS.ABSTAIN, `expected ABSTAIN, got: ${result.status}`)
+  const classes = result.conflicts.map((c) => c.conflictClass)
+  assert.ok(
+    classes.includes(CONFLICT_CLASS.AMBIGUOUS_ENTITY_IDENTITY),
+    `expected AMBIGUOUS_ENTITY_IDENTITY in ${JSON.stringify(classes)}`,
+  )
+  assert.equal(result.winner, null, 'winner must be null when identity is ambiguous')
+  assert.equal(result.canActAutomatically, false, 'R9: canActAutomatically always false')
+  assert.equal(result.canonicalMoneyWritable, false, 'R0: canonicalMoneyWritable always false')
+})
+
+test('G3-hardening-B: AMBIGUOUS_ENTITY_IDENTITY when clientId is not in entity registry', () => {
+  // 'Northwind West' does not appear in entity-registry.csv
+  const { graph, brain } = seeded()
+  const result = resolvePolicy(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    scope: { level: SEMANTIC_SCOPE.CLIENT, clientId: 'Northwind West' },
+    topic: 'late_fee_policy',
+    queryDate: '2026-08-31',
+  })
+  assert.equal(result.status, G3_RESOLUTION_STATUS.ABSTAIN, `expected ABSTAIN, got: ${result.status}`)
+  const classes = result.conflicts.map((c) => c.conflictClass)
+  assert.ok(
+    classes.includes(CONFLICT_CLASS.AMBIGUOUS_ENTITY_IDENTITY),
+    `expected AMBIGUOUS_ENTITY_IDENTITY in ${JSON.stringify(classes)}`,
+  )
+  assert.equal(result.winner, null, 'winner must be null when identity is unresolved')
+})
+
+test('G3-hardening-B: validateClientIdentity returns valid for canonical entity ID', () => {
+  const { graph } = seeded()
+  const r = validateClientIdentity(graph, { actor: founderA, tenantId: tenantA, clientId: 'atlas' })
+  assert.equal(r.valid, true, 'atlas is a canonical entity ID — should resolve')
+  assert.equal(r.state, RESOLUTION_STATE.RESOLVED)
+})
+
+// ── G3-hardening: C — Founder decision integration ────────────────────────────
+
+test('G3-hardening-C: applyFounderDecisions returns applied:false when no decisions exist', () => {
+  const { graph, brain } = seeded()
+  const candidates = buildPolicyCandidates(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    scope: { level: SEMANTIC_SCOPE.COMPANY }, queryDate: '2026-08-31',
+  }).filter((c) => c.topic === 'late_fee_policy')
+
+  const result = applyFounderDecisions(candidates, { brain, tenantId: tenantA, topic: 'late_fee_policy' })
+  assert.equal(result.applied, false, 'no decisions in seeded fixture')
+  assert.equal(result.winner, null)
+  assert.equal(result.authorityGrantable, false, 'R9: authorityGrantable always false')
+})
+
+test('G3-hardening-C: applyFounderDecisions resolves winner when valid decision exists', () => {
+  const { graph, brain } = seeded()
+  const candidates = buildPolicyCandidates(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    scope: { level: SEMANTIC_SCOPE.COMPANY }, queryDate: '2026-08-31',
+  }).filter((c) => c.topic === 'late_fee_policy' && c.candidateStatus === CANDIDATE_STATUS.ACTIVE)
+
+  assert.ok(candidates.length > 0, 'expected active candidates for late_fee_policy')
+  const chosenCandidate = candidates.find((c) => c.claimClass === CLAIM_CLASS.COMPANY_POLICY)
+  assert.ok(chosenCandidate, 'expected a COMPANY_POLICY candidate')
+
+  // Directly push a synthetic founder decision (testing G3 reading, not the write path)
+  brain.decisions.push({
+    id: 'decision-g3-test-1',
+    tenantId: tenantA,
+    actorId: founderA.id,
+    actorRole: 'FOUNDER',
+    decidedAt: '2026-08-31T10:00:00Z',
+    decisionType: 'RESOLVE_CONFLICT',
+    target: 'late_fee_policy',
+    targetId: `conflict:${tenantA}:late_fee_policy`,
+    oldState: { status: 'CONFLICTED' },
+    newState: { governingClaimId: chosenCandidate.claimId },
+    evidenceClaimIds: [chosenCandidate.claimId],
+    reason: 'founder test decision',
+    revocable: true,
+    idempotencyKey: 'test-idem-g3-c-1',
+    requestFingerprint: 'test',
+    supersedesDecisionId: null,
+    status: 'RECORDED',
+  })
+
+  const result = applyFounderDecisions(candidates, { brain, tenantId: tenantA, topic: 'late_fee_policy' })
+  assert.equal(result.applied, true, 'expected applied:true when decision picks a valid candidate')
+  assert.equal(result.winner?.claimId, chosenCandidate.claimId)
+  assert.equal(result.authorityGrantable, false, 'R9: policy decision ≠ DW authority')
+})
+
+test('G3-hardening-C: applyFounderDecisions is invalidated when backing evidence revoked', () => {
+  const { graph, brain } = seeded()
+  const candidates = buildPolicyCandidates(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    scope: { level: SEMANTIC_SCOPE.COMPANY }, queryDate: '2026-08-31',
+  }).filter((c) => c.topic === 'late_fee_policy' && c.candidateStatus === CANDIDATE_STATUS.ACTIVE)
+
+  const chosenCandidate = candidates.find((c) => c.claimClass === CLAIM_CLASS.COMPANY_POLICY)
+  assert.ok(chosenCandidate)
+
+  brain.decisions.push({
+    id: 'decision-g3-test-revoke',
+    tenantId: tenantA,
+    actorId: founderA.id,
+    actorRole: 'FOUNDER',
+    decidedAt: '2026-08-31T10:00:00Z',
+    decisionType: 'RESOLVE_CONFLICT',
+    target: 'late_fee_policy',
+    targetId: `conflict:${tenantA}:late_fee_policy`,
+    oldState: { status: 'CONFLICTED' },
+    newState: { governingClaimId: chosenCandidate.claimId },
+    evidenceClaimIds: [chosenCandidate.claimId],
+    reason: 'decision under test',
+    revocable: true,
+    idempotencyKey: 'test-idem-g3-c-revoke',
+    requestFingerprint: 'test',
+    supersedesDecisionId: null,
+    status: 'RECORDED',
+  })
+
+  // Confirm it applies before revocation
+  const before = applyFounderDecisions(candidates, { brain, tenantId: tenantA, topic: 'late_fee_policy' })
+  assert.equal(before.applied, true)
+
+  // Revoke the source backing the chosen candidate
+  const chosenClaim = brain.claims.find((c) => c.id === chosenCandidate.claimId)
+  assert.ok(chosenClaim)
+  // Deactivate the claim directly (simulating revocation effect on evidence)
+  chosenClaim.active = false
+
+  // After evidence revocation, applyFounderDecisions must not apply
+  const after = applyFounderDecisions(candidates, { brain, tenantId: tenantA, topic: 'late_fee_policy' })
+  assert.equal(after.applied, false, 'decision must not apply when backing evidence is revoked (R6)')
+  assert.equal(after.winner, null)
+})
+
+// ── G3-hardening: D — SUPERSEDES freshness validation ─────────────────────────
+
+test('G3-hardening-D: SUPERSEDES edge invalidated after backing evidence revoked → conflict restored', () => {
+  const { brain, graph } = seeded()
+
+  // Ingest a fresh 3% policy
+  ingestContent(brain, workerA, 'policy-fresh-d.md', 'We charge a 3% late fee on overdue invoices.', 'policy-fresh-d')
+  graph.build({ actor: founderA, tenantId: tenantA })
+
+  const policyNodes = graph.nodes.filter(
+    (n) => n.tenantId === tenantA && n.type === GRAPH_NODE_TYPE.POLICY_CANDIDATE && n.active,
+  ).filter((n) => {
+    const c = brain.claims.find((c) => c.id === n.data?.claimId)
+    return c?.claimType === 'late_fee_policy'
+  })
+
+  const newNode = policyNodes.find((n) => {
+    const c = brain.claims.find((c) => c.id === n.data?.claimId)
+    return c?.value?.ratePercent === 3
+  })
+  const oldNode = policyNodes.find((n) => {
+    const c = brain.claims.find((c) => c.id === n.data?.claimId)
+    return c?.value?.ratePercent === 5
+  })
+  assert.ok(newNode, 'expected 3% late_fee_policy node')
+  assert.ok(oldNode, 'expected 5% late_fee_policy node')
+
+  // Create SUPERSEDES edge: 3% supersedes 5%
+  graph.persistEdge({
+    actor: founderA, tenantId: tenantA,
+    edge: createGraphEdge({
+      stableKey: `edge:${newNode.stableKey}:supersedes:${oldNode.stableKey}`,
+      fromKey: newNode.stableKey, toKey: oldNode.stableKey,
+      type: GRAPH_EDGE_TYPE.SUPERSEDES, tenantId: tenantA,
+      explicit: true,
+      claimIds: newNode.provenance.claimIds,
+      rootSourceVersionIds: newNode.provenance.rootSourceVersionIds,
+    }),
+  })
+
+  // Before revocation: 5% is SUPERSEDED
+  const beforeCandidates = buildPolicyCandidates(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    scope: { level: SEMANTIC_SCOPE.COMPANY }, queryDate: '2026-08-31',
+  }).filter((c) => c.topic === 'late_fee_policy')
+  const fivePctBefore = beforeCandidates.find((c) => c.graphNodeKey === oldNode.stableKey)
+  assert.equal(fivePctBefore?.candidateStatus, CANDIDATE_STATUS.SUPERSEDED, '5% must be SUPERSEDED after explicit edge')
+
+  // Revoke the source backing the 3% policy (policy-fresh-d.md)
+  const freshSource = brain.sources.find((s) => s.identity === 'policy-fresh-d')
+  assert.ok(freshSource, 'expected policy-fresh-d.md source to exist')
+  brain.revokeSource({ actor: founderA, tenantId: tenantA, sourceId: freshSource.id, reason: 'revoked for D test' })
+  graph.build({ actor: founderA, tenantId: tenantA })
+
+  // After revocation: SUPERSEDES edge's provenance roots are REVOKED → edge is no longer valid.
+  // The 5% node (from collections-policy.md, not revoked) should become ACTIVE again.
+  const afterCandidates = buildPolicyCandidates(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    scope: { level: SEMANTIC_SCOPE.COMPANY }, queryDate: '2026-08-31',
+  }).filter((c) => c.topic === 'late_fee_policy')
+  const fivePctAfter = afterCandidates.find((c) => c.graphNodeKey === oldNode.stableKey)
+  assert.equal(
+    fivePctAfter?.candidateStatus, CANDIDATE_STATUS.ACTIVE,
+    '5% must be ACTIVE again once backing evidence for the supersession is revoked (D)',
+  )
+})
+
+// ── G3-hardening: E — Complete conflict/abstention model ─────────────────────
+
+test('G3-hardening-E: CURRENT_VS_HISTORICAL detected when current candidate contradicts historical rule', () => {
+  // G3 spec: CURRENT_VS_HISTORICAL fires when an ACTIVE candidate is paired with a HISTORICAL
+  // one in classifyConflicts. A "historical" candidate must appear in getPoliciesApplicable
+  // (APPLIES_TO_COMPANY edge) — docs with scope:HISTORICAL use HISTORICAL_TO instead and are
+  // excluded. So we ingest an explicitly expired doc (effective_to in the past, no scope:HISTORICAL)
+  // → gets APPLIES_TO_COMPANY edge, temporality=HISTORICAL → candidateStatus=HISTORICAL.
+  const { brain, graph } = seeded()
+  // Expired doc: effective_to before queryDate, no scope field → APPLIES_TO_COMPANY edge, temporality=HISTORICAL
+  const hist = `---\ndocument_type: policy_candidate\neffective_to: 2023-12-31\n---\nWe charged a 10% late fee on all overdue invoices.`
+  // Current doc: effective_from before queryDate, no effective_to → APPLIES_TO_COMPANY edge, temporality=CURRENT
+  const curr = `---\ndocument_type: policy_candidate\neffective_from: 2026-01-01\n---\nWe charge a 5% late fee on all invoices.`
+  ingestContent(brain, workerA, 'pc-cvh-hist.md', hist, 'pc-cvh-hist')
+  ingestContent(brain, workerA, 'pc-cvh-curr.md', curr, 'pc-cvh-curr')
+  graph.build({ actor: founderA, tenantId: tenantA })
+
+  const result = resolvePolicy(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    scope: { level: SEMANTIC_SCOPE.COMPANY },
+    topic: 'policy_candidate_record',
+    queryDate: '2026-08-31',
+  })
+
+  const classes = result.conflicts.map((c) => c.conflictClass)
+  assert.ok(
+    classes.includes(CONFLICT_CLASS.CURRENT_VS_HISTORICAL),
+    `expected CURRENT_VS_HISTORICAL in ${JSON.stringify(classes)}`,
+  )
+  // CURRENT_VS_HISTORICAL is non-blocking — the current candidate can still resolve without it blocking.
+  assert.equal(result.canonicalMoneyWritable, false, 'R0')
+  assert.equal(result.canActAutomatically, false, 'R9')
+})
+
+test('G3-hardening-E: CONTRACT_VS_COMPANY_POLICY detected when client has active contract and company has active policy', () => {
+  // atlas has an active contract (atlas-contract.md, effective_from 2026-01-01 = CURRENT).
+  // The seeded company also has 5% COMPANY_POLICY.
+  // Resolving late_fee_policy for atlas (CLIENT scope) must surface CONTRACT_VS_COMPANY_POLICY.
+  const { graph, brain } = seeded()
+  const result = resolvePolicy(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    scope: { level: SEMANTIC_SCOPE.CLIENT, clientId: 'atlas' },
+    topic: 'late_fee_policy',
+    queryDate: '2026-08-31',
+  })
+
+  const classes = result.conflicts.map((c) => c.conflictClass)
+  assert.ok(
+    classes.includes(CONFLICT_CLASS.CONTRACT_VS_COMPANY_POLICY),
+    `expected CONTRACT_VS_COMPANY_POLICY in ${JSON.stringify(classes)}`,
+  )
+  assert.equal(result.canActAutomatically, false, 'R9')
+  assert.equal(result.canonicalMoneyWritable, false, 'R0')
+})
+
+// ── G3-hardening: F — G3 Ask DW policy ────────────────────────────────────────
+
+test('G3-hardening-F: askDwPolicy handles 9 deterministic question types', () => {
+  const { graph, brain } = seeded()
+
+  // 1. Company policy query
+  const r1 = askDwPolicy(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    question: 'What is our late fee policy?', queryDate: '2026-08-31',
+  })
+  assert.equal(r1.kind, 'G3_ASK_DW_POLICY_RESPONSE_V0')
+  assert.equal(r1.questionType, 'COMPANY_POLICY')
+  assert.notEqual(r1.resolutionState, G3_RESOLUTION_STATUS.NO_POLICY, 'has late_fee_policy evidence')
+  assert.equal(r1.canonicalMoneyWritable, false, 'R0')
+  assert.equal(r1.authorityBoundary.canActAutomatically, false, 'R9')
+  assert.equal(r1.authorityBoundary.authorityGrantable, false, 'R9')
+
+  // 2. Client policy — Atlas rule
+  const r2 = askDwPolicy(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    question: 'What is the Atlas late fee rate?', clientId: 'atlas', queryDate: '2026-08-31',
+  })
+  assert.equal(r2.questionType, 'CLIENT_POLICY')
+  assert.equal(r2.clientId, 'atlas')
+
+  // 3. Scope inquiry — is Atlas rule company-wide?
+  const r3 = askDwPolicy(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    question: 'Is the Atlas rate company-wide?', clientId: 'atlas', queryDate: '2026-08-31',
+  })
+  assert.equal(r3.questionType, 'SCOPE_INQUIRY')
+  assert.ok(r3.answer.includes('R4'), `expected R4 reference in scope answer: ${r3.answer}`)
+
+  // 4. Historical
+  const r4 = askDwPolicy(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    question: 'What was the historical late fee policy?', queryDate: '2026-08-31',
+  })
+  assert.equal(r4.questionType, 'HISTORICAL')
+
+  // 5. Why unresolved
+  const r5 = askDwPolicy(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    question: 'Why is the late fee policy unresolved?', queryDate: '2026-08-31',
+  })
+  assert.equal(r5.questionType, 'WHY_UNRESOLVED')
+
+  // 6. Conflicts
+  const r6 = askDwPolicy(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    question: 'What conflicts exist for the late fee policy?', queryDate: '2026-08-31',
+  })
+  assert.equal(r6.questionType, 'CONFLICTS')
+
+  // 7. Unresolved
+  const r7 = askDwPolicy(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    question: 'What is unresolved about the late fee policy?', queryDate: '2026-08-31',
+  })
+  assert.ok(['WHY_UNRESOLVED', 'CONFLICTS'].includes(r7.questionType), `expected WHY_UNRESOLVED or CONFLICTS, got: ${r7.questionType}`)
+
+  // 8. Founder decisions
+  const r8 = askDwPolicy(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    question: 'What did the founder decide about late fees?', queryDate: '2026-08-31',
+  })
+  assert.equal(r8.questionType, 'FOUNDER_DECISIONS')
+  assert.equal(r8.founderDecisions.length, 0, 'no decisions in seeded fixture')
+
+  // 9. DW authority
+  const r9 = askDwPolicy(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    question: 'Can DW act automatically on this late fee policy?', queryDate: '2026-08-31',
+  })
+  assert.equal(r9.questionType, 'DW_AUTHORITY')
+  assert.equal(r9.authorityBoundary.canActAutomatically, false, 'R9')
+  assert.equal(r9.authorityBoundary.authorityGrantable, false, 'R9: policy decision ≠ DW authority')
+  assert.ok(r9.answer.includes('R9'), `expected R9 reference in DW authority answer: ${r9.answer}`)
+})
+
+// ── G3-hardening: G — DW Intelligence context expanded fields ─────────────────
+
+test('G3-hardening-G: buildG3DwIntelligenceContext exposes all required typed fields', () => {
+  const { graph, brain } = seeded()
+  const ctx = buildG3DwIntelligenceContext(graph, brain, {
+    actor: founderA, tenantId: tenantA, clientId: 'atlas', queryDate: '2026-08-31',
+  })
+
+  assert.equal(ctx.kind, 'G3_DW_INTELLIGENCE_CONTEXT_V0')
+
+  // G — required typed fields
+  assert.ok(Array.isArray(ctx.applicablePolicyCandidates), 'applicablePolicyCandidates must be array')
+  assert.ok(Array.isArray(ctx.excludedPolicyCandidates), 'excludedPolicyCandidates must be array')
+  assert.ok(Array.isArray(ctx.unresolvedConflicts), 'unresolvedConflicts must be array')
+  assert.ok(Array.isArray(ctx.precedenceEvidence), 'precedenceEvidence must be array')
+  assert.ok(typeof ctx.temporalApplicability === 'object', 'temporalApplicability must be object')
+  assert.ok(typeof ctx.temporalApplicability.hasUnknownTemporal === 'boolean')
+  assert.ok(Array.isArray(ctx.clientExceptions), 'clientExceptions must be array')
+  assert.ok(Array.isArray(ctx.founderDecisions), 'founderDecisions must be array')
+  assert.ok('provenancePaths' in ctx, 'provenancePaths must be present')
+  assert.ok(typeof ctx.uncertainty === 'object', 'uncertainty must be object')
+  assert.ok(typeof ctx.uncertainty.hasUnknownTemporal === 'boolean')
+  assert.ok(typeof ctx.uncertainty.hasUnresolvedConflicts === 'boolean')
+  assert.ok(typeof ctx.authorityBoundary === 'object')
+  assert.equal(ctx.authorityBoundary.canActAutomatically, false, 'R9')
+
+  // seeded atlas has at least one CLIENT_EXCEPTION
+  assert.ok(ctx.clientExceptions.length > 0, 'expected at least one CLIENT_EXCEPTION for atlas')
+
+  // Structural boundary constants (5 required)
+  assert.equal(ctx.boundaries.canonicalMoneyWritable, false, 'R0')
+  assert.equal(ctx.boundaries.authorityGrantable, false, 'R9')
+  assert.equal(ctx.boundaries.policyConflictsResolvableByConfidence, false, 'R1')
+  assert.equal(ctx.boundaries.observedDelegationIsAuthority, false, 'R7')
+  assert.equal(ctx.boundaries.behaviorCreatesPolicy, false, 'R2, R3')
 })
