@@ -1,7 +1,8 @@
 # M2G G3 — Conflict & Policy Intelligence V0
 
-**Status:** Architecture draft — preparation phase only. Tests in `companyBrainG3Policy.test.mjs` run
-against the frozen G2 checkpoint (`5d0dc3b`). G3 runtime logic is not yet implemented.
+**Status:** Implemented — G3 runtime in `src/lib/companyBrain/policyIntelligence.js`.
+Tests in `companyBrainG3Policy.test.mjs` all pass (189 tests, 0 failures, 0 todo).
+G2 frozen checkpoint: `5d0dc3b`.
 **Branch:** `m2g/company-brain-bootstrap-g3`
 **Date:** 2026-08-31
 

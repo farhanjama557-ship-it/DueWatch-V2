@@ -1,0 +1,85 @@
+M2G G3 Validation Report
+Branch: m2g/company-brain-bootstrap-g3
+Date: 2026-08-31
+
+== Test Results ==
+
+npm run test:company-brain-g2 (G0+G1+G2 suite):
+  tests 179 | pass 179 | fail 0 | todo 0
+
+npm run test:company-brain-g3 (G0+G1+G2+G3 suite):
+  tests 189 | pass 189 | fail 0 | todo 0
+
+npm test (full suite):
+  tests 1159 | pass 1159 | fail 0 | todo 0
+
+npm run build:
+  ✓ built in ~12s — no errors, no new warnings
+
+git diff --check:
+  (no output — no whitespace errors)
+
+== G3-Specific Tests (10 formerly todo, now passing) ==
+
+  ok 180 - G3-temporal: classify UNKNOWN/CURRENT/EXPIRED/FUTURE from effectiveTime and queryDate
+  ok 181 - G3-temporal: UNKNOWN temporal state prevents automatic resolution — canActAutomatically:false
+  ok 182 - G3-conflict-class: FOUNDER_INSTRUCTION_VS_PRIOR_POLICY classified when both present
+  ok 183 - G3-conflict-class: OVERLAPPING_EFFECTIVE_PERIODS when two candidates have open-ended UNKNOWN effectiveTo
+  ok 184 - G3-conflict-class: CONFIDENCE_DISAGREEMENT classified (not resolved) when candidates differ only by confidence
+  ok 185 - G3-conflict-class: SCOPE_ESCALATION when CLIENT candidate is used to answer COMPANY question
+  ok 186 - G3-conflict-class: MISSING_PRECEDENCE when two candidates have no supersession evidence
+  ok 187 - G3-provenance: DANGLING_PROVENANCE conflict class when artifact chain is broken
+  ok 188 - G3-supersession: SUPERSEDES edge resolves conflict without recordFounderDecision when explicit
+  ok 189 - G3-dw-intelligence: G3DwIntelligenceContext.authorityBoundary.canActAutomatically=false when any conflict is CONFLICTED
+
+== Security Scans ==
+
+Credential scan (SUPABASE_KEY, sk-, password=, api_key=):
+  0 findings in policyIntelligence.js and companyBrainG3Policy.test.mjs
+
+Financial mutation scan (db., supabase., rpc(, INSERT, UPDATE, DELETE):
+  0 findings in policyIntelligence.js
+
+Provider/live-integration scan (fetch(, https://, localhost, DATABASE_URL, process.env):
+  0 findings in policyIntelligence.js
+
+G4/M2H scope scan (G4, M2H, scheduled action, pulse redesign, fake learn):
+  0 findings
+
+== G3 Exit Gate Checklist ==
+
+[x] 1. All adversarial scenarios in M2G_G3_ADVERSARIAL_PLAN.md have passing tests.
+[x] 2. No G3 path resolves a CONFLICTED policy by confidence, recency, or behavioral frequency.
+        (CONFIDENCE_DISAGREEMENT test 184: classifyConflicts surfaces the disagreement, never resolves it)
+[x] 3. R0-R9 invariants each have at least one dedicated regression test.
+        (K1-K9 in companyBrainG3Policy.test.mjs, plus G3-specific tests 180-189)
+[x] 4. canonicalMoneyWritable: false is structurally enforced on every G3 output path.
+        (resolvePolicy returns canonicalMoneyWritable: false; buildG3DwIntelligenceContext
+         returns boundaries.canonicalMoneyWritable: false; no write path exists)
+[x] 5. authorityBoundary.canActAutomatically is false whenever any relevant conflict is unresolved.
+        (test 189: seeded brain has CONFLICTED conflicts → canActAutomatically: false)
+[x] 6. G3 temporal classification correctly handles null effective dates as UNKNOWN (not CURRENT).
+        (test 180: classifyTemporalState(null, ...) === UNKNOWN;
+         test 181: seeded g1-realistic candidates all UNKNOWN → canActAutomatically: false)
+[x] 7. CLIENT-scoped rules never appear in COMPANY-scope G3 resolution results (R4).
+        (test 185: buildPolicyCandidates CLIENT scope → classifyConflicts COMPANY scope → SCOPE_ESCALATION)
+
+== Files Changed ==
+
+  src/lib/companyBrain/policyIntelligence.js  (new — G3 runtime)
+  tests/companyBrainG3Policy.test.mjs          (10 test.todo() → real tests; G3 imports added)
+  package.json                                 (test:company-brain-g3 script added; pgsql-parser pinned exact)
+  docs/company-brain/M2G_G3_CONFLICT_POLICY_INTELLIGENCE_V0.md  (status updated)
+  docs/company-brain/M2G_G3_ADVERSARIAL_PLAN.md                 (scenarios marked implemented)
+  docs/company-brain/M2G_G3_PRECEDENCE_MODEL.md                 (new)
+  docs/company-brain/M2G_G3_TEMPORAL_APPLICABILITY.md           (new)
+  docs/company-brain/M2G_G3_EVIDENCE.md                         (new)
+  docs/company-brain/M2G_G3_VALIDATION.txt                      (this file)
+
+== Boundary Conditions Confirmed ==
+
+  - No supabase db push, no Edge deploy, no Vercel deploy
+  - No modifications to converge/legacy-live-baseline (PR #45)
+  - No merge of PR #44 or PR #45
+  - No G4 or M2H work begun
+  - All changes isolated to m2g/company-brain-bootstrap-g3

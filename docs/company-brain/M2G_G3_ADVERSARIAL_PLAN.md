@@ -1,6 +1,6 @@
 # M2G G3 — Adversarial Test Plan
 
-**Status:** Architecture draft — preparation phase only.
+**Status:** Implemented — all scenarios below have passing tests in `companyBrainG3Policy.test.mjs`.
 **Branch:** `m2g/company-brain-bootstrap-g3`
 **Date:** 2026-08-31
 
