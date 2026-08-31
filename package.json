@@ -27,7 +27,7 @@
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",
-    "pgsql-parser": "18.2.6",
+    "pgsql-parser": "^18.2.6",
     "vite": "^5.4.0"
   },
   "overrides": {
