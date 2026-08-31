@@ -1,0 +1,4 @@
+person_id,person_name,role_id,role_name,company_id,delegation
+person-founder,Jordan Lee,role-founder,Founder,duewatch-company,approves settlement proposals
+person-am,Morgan Chen,role-account-manager,Account Manager,duewatch-company,handles Atlas client communication
+person-accounting,Riley Park,role-accounting,Accounting Lead,duewatch-company,reconciles accounting records

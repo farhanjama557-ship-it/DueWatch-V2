@@ -62,6 +62,31 @@ test('founder decision RPC is authenticated, tenant-scoped, idempotent, and opti
   assert.match(fn, /insert into public\.company_brain_founder_decision_attempts/)
   assert.match(fn, /'rejected_stale'/)
   assert.match(fn, /insert into public\.company_brain_founder_decisions/)
+  assert.match(fn, /request_fingerprint/)
+  for (const outcome of ['rejected_idempotency_conflict', 'rejected_prior_state_mismatch', 'rejected_provenance_mismatch']) {
+    assert.match(fn, new RegExp(`insert into public\\.company_brain_founder_decision_attempts[\\s\\S]+?'${outcome}'`))
+    assert.match(fn, new RegExp(`return jsonb_build_object\\('outcome', '${outcome}'`))
+  }
+  assert.match(fn, /p_prior_state <@ v_actual_state/)
+  assert.match(fn, /v_target_evidence/)
+})
+
+test('founder decision rejection outcomes are durable audit categories', () => {
+  for (const outcome of ['rejected_stale', 'rejected_idempotency_conflict', 'rejected_prior_state_mismatch', 'rejected_provenance_mismatch']) {
+    assert.match(sql, new RegExp(`'${outcome}'`))
+  }
+})
+
+test('G1 snapshots are durably invalidated by knowledge mutations', () => {
+  assert.match(sql, /active boolean not null default true/)
+  assert.match(sql, /create unique index company_brain_one_active_snapshot_idx/)
+  assert.match(sql, /create or replace function private\.invalidate_company_brain_snapshot\(\)/)
+  for (const trigger of ['source_version', 'claim', 'founder_decision', 'conflict', 'authority', 'tombstone']) assert.ok(sql.includes(`company_brain_snapshot_stale_on_${trigger}`))
+})
+
+test('G1 claims enforce semantic client-reference integrity', () => {
+  assert.match(sql, /company_brain_claims_client_reference_match_check/)
+  assert.match(sql, /company_brain_claims_client_scope_reference_check/)
 })
 
 test('source revocation is persistent and invalidates dependent knowledge', () => {

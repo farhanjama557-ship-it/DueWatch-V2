@@ -126,14 +126,22 @@ export function createClaim(input = {}) {
   if (MONEY_TRUTH_CLASSES.has(input.claimType) || input.canonicalFinancialTruth === true) {
     throw new Error('Company Brain cannot create canonical money truth')
   }
+  const semanticScope = { ...(input.semanticScope || {}) }
+  const subjectScope = { ...(input.subjectScope || {}) }
+  if (semanticScope.clientId && subjectScope.clientId && semanticScope.clientId !== subjectScope.clientId) {
+    throw new Error('claim client semantic reference mismatch')
+  }
+  if (semanticScope.level === 'CLIENT' && !(semanticScope.clientId || subjectScope.clientId)) {
+    throw new Error('client-scoped claim requires client reference')
+  }
   return deepFreeze({
     kind: 'COMPANY_BRAIN_CLAIM_V0',
     tenantId: required(input.tenantId, 'claim tenantId'),
     id: required(input.id, 'claim id'),
     claimClass,
     claimType: required(input.claimType, 'claim type'),
-    semanticScope: deepFreeze({ ...(input.semanticScope || {}) }),
-    subjectScope: deepFreeze({ ...(input.subjectScope || {}) }),
+    semanticScope: deepFreeze(semanticScope),
+    subjectScope: deepFreeze(subjectScope),
     value: deepFreeze(input.value),
     artifactIds: [...new Set(input.artifactIds || [])],
     explicit: input.explicit === true,

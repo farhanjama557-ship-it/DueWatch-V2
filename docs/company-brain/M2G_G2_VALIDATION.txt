@@ -1,0 +1,65 @@
+M2G-G2 VALIDATION
+Date: 2026-08-30
+Branch: m2g/company-brain-bootstrap-g2
+G1 checkpoint commit: ab6db44b84f05a47f002fd6bce21dfe2451bc6ea
+G2 base SHA: ab6db44b84f05a47f002fd6bce21dfe2451bc6ea
+
+PRE-G2 CHECKPOINT
+PASS complete G1 diff review
+PASS G1 focused tests: 66/66
+PASS pre-G2 full repository tests: 1036/1036
+PASS pre-G2 production build: 1998 modules transformed
+PASS G1 structural/RLS migration checks
+PASS clean G1 checkpoint commit
+
+G2 COMMANDS
+npm run test:company-brain-g2
+PASS 129/129 (27 G0 + 34 G1 behavior + 13 G1 migration + 40 G2 behavior + 15 G2 migration/parser)
+
+npm test
+PASS 1099/1099
+
+npm run build
+PASS Vite production build; 1978 modules transformed
+NOTE existing chunk-size warnings only; no build failure
+
+git diff --check
+PASS
+
+SCOPE/CREDENTIAL SCANS
+PASS no secret/key/token literals introduced
+PASS no production/provider mutation path introduced
+PASS no R0 financial-table mutation in G2 migration or implementation
+PASS no G3, M2H, live connector, vector-authority, or product UI work
+
+MIGRATIONS
+G1: supabase/migrations/20260830055532_company_brain_durable_ingestion_g1.sql
+G2: supabase/migrations/20260831005949_company_brain_company_graph_g2.sql
+PASS deterministic schema/RLS/grant/provenance/revocation-trigger checks
+PASS real PostgreSQL AST parse for G1 and G2 migrations
+PASS parser rejects leading-token and unterminated-statement corruption
+PASS Brain snapshot invalidation propagates to referenced active graph versions
+PASS normalized provenance enforces exact tenant claim-root triples
+PASS normalized resolution candidates enforce same tenant and graph version
+PASS name-only resolution refuses a conflicted sole candidate
+PASS founder idempotency/prior-state/provenance rejection attempts remain auditable
+NOT RUNTIME APPLIED: no isolated local Supabase/Postgres runtime available
+NOT DEPLOYMENT VERIFIED
+
+EXIT GATE
+PASS deterministic Company Graph flow in repository scope
+PASS ambiguity and conflicts preserved
+PASS canonical financial truth and authority remain untouched
+PASS no locked R0 or DW Intelligence contract amendment required
+
+UNRESOLVED / NON-OPERATIONAL CASES
+- Acme alias: AMBIGUOUS between acme-us and acme-eu.
+- Northwind West: UNRESOLVED orphan reference.
+- Old Atlas: historical alias, inactive for current resolution.
+- Acme person/client collision: separated by entity type.
+
+DEFERRALS
+- Runtime-apply and test G1/G2 migrations in isolated Supabase/Postgres.
+- G3 policy precedence, temporal applicability, and richer conflict logic.
+- G4+ operating-model/authority/UI work.
+- All M2H live integrations and provider lifecycle work.

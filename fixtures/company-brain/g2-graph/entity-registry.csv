@@ -1,0 +1,6 @@
+entity_type,entity_id,name,aliases,company_id
+COMPANY,duewatch-company,DueWatch,,
+CLIENT,atlas,Atlas Group,Atlas|Atlas Co,duewatch-company
+CLIENT,acme-us,Acme Ltd,Acme,duewatch-company
+CLIENT,acme-eu,Acme Ltd.,Acme,duewatch-company
+PERSON,person-acme,Acme,,duewatch-company

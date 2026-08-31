@@ -22,6 +22,12 @@ function hash(value) {
   return crypto.createHash('sha256').update(value).digest('hex')
 }
 
+function stable(value) {
+  if (Array.isArray(value)) return `[${value.map(stable).join(',')}]`
+  if (value && typeof value === 'object') return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stable(value[key])}`).join(',')}}`
+  return JSON.stringify(value)
+}
+
 function normalizeContent(content) {
   return content.replace(/\r\n/g, '\n').replace(/[ \t]+$/gm, '').trim()
 }
@@ -62,12 +68,23 @@ function extractedClaim(input, index, claimClass, claimType, value, semanticScop
     derived: options.derived === true,
     confidence: options.confidence ?? 1,
     uncertainty: options.uncertainty ?? null,
+    effectiveTime: options.effectiveTime ?? null,
     status: options.status || 'OBSERVED',
     assumptions: options.assumptions || [],
     provenanceRootIds: [input.sourceVersionId],
     independentCorroboration: options.independentCorroboration === true,
     canonicalFinancialTruth: false,
   })
+}
+
+function frontmatter(content) {
+  if (!content.startsWith('---\n')) return null
+  const end = content.indexOf('\n---', 4)
+  if (end < 0) return null
+  return Object.fromEntries(content.slice(4, end).split('\n').map((line) => {
+    const split = line.indexOf(':')
+    return split < 0 ? null : [line.slice(0, split).trim(), line.slice(split + 1).trim()]
+  }).filter(Boolean))
 }
 
 export function extractDeterministicClaims({ tenantId, sourceVersionId, artifactId, filename, content } = {}) {
@@ -81,10 +98,35 @@ export function extractDeterministicClaims({ tenantId, sourceVersionId, artifact
     const headers = rows.shift()?.map((cell) => cell.toLowerCase()) || []
     for (const row of rows) {
       const data = Object.fromEntries(headers.map((header, index) => [header, row[index]]))
+      if (data.entity_type && data.entity_id && data.name) claims.push(extractedClaim(input, claims.length, CLAIM_CLASS.INTERPRETATION, 'entity_record', { entityType: data.entity_type.toUpperCase(), entityId: data.entity_id, name: data.name, aliases: (data.aliases || '').split('|').filter(Boolean), companyId: data.company_id || null }, { level: data.entity_type.toUpperCase() === 'CLIENT' ? 'CLIENT' : 'COMPANY', clientId: data.entity_type.toUpperCase() === 'CLIENT' ? data.entity_id : undefined, temporality: 'CURRENT' }, { entityId: data.entity_id }))
+      if (data.person_id && data.role_id && data.company_id) {
+        claims.push(extractedClaim(input, claims.length, CLAIM_CLASS.ROLE, 'role_record', { personId: data.person_id, personName: data.person_name, roleId: data.role_id, roleName: data.role_name, companyId: data.company_id }, { level: 'ROLE', roleId: data.role_id, temporality: 'CURRENT' }, { personId: data.person_id, roleId: data.role_id }))
+        if (data.delegation) claims.push(extractedClaim(input, claims.length, CLAIM_CLASS.DELEGATION, 'observed_delegation_record', { personId: data.person_id, roleId: data.role_id, delegation: data.delegation, dwAuthority: false }, { level: 'ROLE', roleId: data.role_id, temporality: 'CURRENT' }, { personId: data.person_id, roleId: data.role_id }))
+      }
+      if (data.alias && data.entity_id) claims.push(extractedClaim(input, claims.length, CLAIM_CLASS.INTERPRETATION, 'alias_record', { alias: data.alias, entityId: data.entity_id, entityType: (data.entity_type || 'CLIENT').toUpperCase(), effectiveFrom: data.effective_from || null, effectiveTo: data.effective_to || null }, { level: data.effective_to ? 'HISTORICAL' : 'CLIENT', clientId: data.entity_id, temporality: data.effective_to ? 'HISTORICAL' : 'CURRENT' }, { entityId: data.entity_id }, { status: data.effective_to ? 'HISTORICAL' : 'OBSERVED' }))
       if (data.client && data.payment_terms_days) claims.push(extractedClaim(input, claims.length, CLAIM_CLASS.PAYMENT_TERMS_CONTEXT, 'payment_terms', { netDays: Number(data.payment_terms_days) }, { level: 'CLIENT', clientId: data.client.toLowerCase(), temporality: 'CURRENT' }, { clientId: data.client.toLowerCase() }))
       if (data.client && data.late_fee_percent) claims.push(extractedClaim(input, claims.length, CLAIM_CLASS.CLIENT_EXCEPTION, 'late_fee_policy', { ratePercent: Number(data.late_fee_percent), onlyWhenApplicable: true }, { level: 'CLIENT', clientId: data.client.toLowerCase(), temporality: 'CURRENT' }, { clientId: data.client.toLowerCase() }))
     }
   } else {
+    const meta = frontmatter(normalized)
+    if (meta?.document_type) {
+      const map = {
+        contract: [CLAIM_CLASS.PAYMENT_TERMS_CONTEXT, 'contract_record'],
+        policy_candidate: [CLAIM_CLASS.COMPANY_POLICY, 'policy_candidate_record'],
+        client_exception: [CLAIM_CLASS.CLIENT_EXCEPTION, 'client_exception_record'],
+        workflow: [CLAIM_CLASS.COLLECTION_WORKFLOW, 'workflow_record'],
+        precedent: [CLAIM_CLASS.HISTORICAL_PRECEDENT, 'precedent_record'],
+        interaction: [CLAIM_CLASS.INTERPRETATION, 'interaction_record'],
+        orphan_reference: [CLAIM_CLASS.INTERPRETATION, 'orphan_reference_record'],
+      }
+      const mapped = map[meta.document_type]
+      if (mapped) {
+        const level = (meta.scope || (meta.client_id ? 'CLIENT' : 'DOCUMENT')).toUpperCase()
+        const temporality = meta.effective_to || level === 'HISTORICAL' ? 'HISTORICAL' : 'CURRENT'
+        claims.push(extractedClaim(input, claims.length, mapped[0], mapped[1], { ...meta }, { level, clientId: meta.client_id || undefined, temporality }, { clientId: meta.client_id || undefined, entityReference: meta.client_reference || undefined }, { status: temporality === 'HISTORICAL' ? 'HISTORICAL' : 'OBSERVED', effectiveTime: { from: meta.effective_from || null, to: meta.effective_to || null } }))
+      }
+    }
+    if (claims.length) return Object.freeze(claims)
     const lateFee = /(?:charge\s+a\s+)?(\d+(?:\.\d+)?)%\s+late fee/i.exec(normalized)
     if (lateFee) claims.push(extractedClaim(input, claims.length, CLAIM_CLASS.COMPANY_POLICY, 'late_fee_policy', { ratePercent: Number(lateFee[1]) }, { level: 'COMPANY', temporality: 'CURRENT' }))
     const reminders = /reminders?\s+at\s+(\d+)\s*(?:,|\/|and)\s*(\d+)\s*(?:,?\s*and|,|\/)\s*(\d+)/i.exec(normalized)
@@ -262,24 +304,50 @@ export class CompanyBrainDurableStore {
 
   latestSnapshot({ actor, tenantId }) {
     assertActor(actor, tenantId)
-    return this.tenantRows(this.snapshots, tenantId).at(-1) || null
+    const latest = this.tenantRows(this.snapshots, tenantId).at(-1) || null
+    return latest?.knowledgeVersion === this.version(tenantId) ? latest : null
   }
 
   recordFounderDecision({ actor, tenantId, idempotencyKey, targetId, expectedRevision, decisionType, oldState, newState, evidenceClaimIds, reason } = {}) {
     assertActor(actor, tenantId)
     if (actor.role !== 'FOUNDER') throw new Error('founder role required')
+    const requestFingerprint = hash(stable({ targetId, expectedRevision, decisionType, oldState, newState, evidenceClaimIds: [...(evidenceClaimIds || [])].sort(), reason }))
+    const auditRejection = (outcome, actualRevision = null) => {
+      this.decisionAttempts.push(Object.freeze({ tenantId, actorId: actor.id, targetId, expectedRevision, actualRevision, outcome, requestFingerprint, attemptedAt: this.clock() }))
+    }
     const prior = this.decisions.find((row) => row.tenantId === tenantId && row.idempotencyKey === idempotencyKey)
-    if (prior) return prior
+    if (prior) {
+      if (prior.requestFingerprint !== requestFingerprint) {
+        auditRejection('REJECTED_IDEMPOTENCY_CONFLICT', prior.targetRevision)
+        throw new Error('founder decision idempotency conflict')
+      }
+      return prior
+    }
     const target = this.conflicts.find((row) => row.tenantId === tenantId && row.id === targetId)
     if (!target) throw new Error('decision target missing or revoked')
     const key = `${tenantId}:${targetId}`
     const actualRevision = this.targetRevisions.get(key) || 0
     if (expectedRevision !== actualRevision) {
-      this.decisionAttempts.push({ tenantId, actorId: actor.id, targetId, expectedRevision, actualRevision, outcome: 'REJECTED_STALE', attemptedAt: this.clock() })
+      auditRejection('REJECTED_STALE', actualRevision)
       throw new Error('stale founder decision')
     }
-    const decision = createFounderDecision({ id: id('decision', `${tenantId}:${idempotencyKey}`), tenantId, actorId: actor.id, actorRole: 'FOUNDER', decidedAt: this.clock(), decisionType, target: target.topic, oldState, newState, evidenceClaimIds, reason, revocable: true })
-    const persisted = Object.freeze({ ...decision, idempotencyKey, targetId, targetRevision: actualRevision + 1, supersedesDecisionId: this.tenantRows(this.decisions, tenantId).filter((row) => row.targetId === targetId).at(-1)?.id || null })
+    const authoritativeOldState = { status: target.status, revision: actualRevision, topic: target.topic, semanticScope: target.semanticScope }
+    if (!oldState || typeof oldState !== 'object' || Object.entries(oldState).some(([key, value]) => stable(authoritativeOldState[key]) !== stable(value))) {
+      auditRejection('REJECTED_PRIOR_STATE_MISMATCH', actualRevision)
+      throw new Error('founder decision prior state mismatch')
+    }
+    if (!newState || typeof newState !== 'object' || Array.isArray(newState)) throw new Error('founder decision new state malformed')
+    const expectedEvidence = new Set(target.competingClaimIds)
+    const suppliedEvidence = new Set(evidenceClaimIds || [])
+    if (expectedEvidence.size !== suppliedEvidence.size || [...expectedEvidence].some((claimId) => !suppliedEvidence.has(claimId))) {
+      auditRejection('REJECTED_PROVENANCE_MISMATCH', actualRevision)
+      throw new Error('founder decision provenance mismatch')
+    }
+    for (const claimId of suppliedEvidence) {
+      if (!this.claims.some((claim) => claim.tenantId === tenantId && claim.id === claimId && claim.active)) throw new Error('founder decision provenance unknown or inactive')
+    }
+    const decision = createFounderDecision({ id: id('decision', `${tenantId}:${idempotencyKey}`), tenantId, actorId: actor.id, actorRole: 'FOUNDER', decidedAt: this.clock(), decisionType, target: target.topic, oldState: authoritativeOldState, newState, evidenceClaimIds, reason, revocable: true })
+    const persisted = Object.freeze({ ...decision, idempotencyKey, requestFingerprint, targetId, targetRevision: actualRevision + 1, supersedesDecisionId: this.tenantRows(this.decisions, tenantId).filter((row) => row.targetId === targetId).at(-1)?.id || null })
     this.decisions.push(persisted)
     this.targetRevisions.set(key, actualRevision + 1)
     target.status = 'RESOLVED'

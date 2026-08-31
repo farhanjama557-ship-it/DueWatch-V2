@@ -98,7 +98,17 @@ create table public.company_brain_claims (
   constraint company_brain_claims_source_version_fk foreign key (user_id, source_version_id)
     references public.company_brain_source_versions(user_id, id) on delete restrict,
   constraint company_brain_claims_artifact_fk foreign key (user_id, artifact_id)
-    references public.company_brain_artifacts(user_id, id) on delete restrict
+    references public.company_brain_artifacts(user_id, id) on delete restrict,
+  constraint company_brain_claims_semantic_scope_object_check check (jsonb_typeof(semantic_scope) = 'object'),
+  constraint company_brain_claims_subject_scope_object_check check (jsonb_typeof(subject_scope) = 'object'),
+  constraint company_brain_claims_client_reference_match_check check (
+    semantic_scope->>'clientId' is null or subject_scope->>'clientId' is null
+    or semantic_scope->>'clientId' = subject_scope->>'clientId'
+  ),
+  constraint company_brain_claims_client_scope_reference_check check (
+    semantic_scope->>'level' <> 'CLIENT'
+    or coalesce(semantic_scope->>'clientId', subject_scope->>'clientId') is not null
+  )
 );
 
 create table public.company_brain_claim_roots (
@@ -145,6 +155,7 @@ create table public.company_brain_founder_decisions (
   user_id uuid not null references auth.users(id) on delete cascade,
   actor_id uuid not null references auth.users(id) on delete restrict,
   idempotency_key text not null,
+  request_fingerprint text not null check (request_fingerprint ~ '^[0-9a-f]{64}$'),
   decision_type text not null,
   target_type text not null check (target_type in ('CONFLICT','AUTHORITY_PROPOSAL')),
   target_id uuid not null,
@@ -173,7 +184,10 @@ create table public.company_brain_founder_decision_attempts (
   target_id uuid not null,
   expected_revision integer not null check (expected_revision >= 0),
   actual_revision integer,
-  outcome text not null check (outcome in ('ACCEPTED','REJECTED_STALE')),
+  outcome text not null check (outcome in (
+    'ACCEPTED','REJECTED_STALE','REJECTED_IDEMPOTENCY_CONFLICT',
+    'REJECTED_PRIOR_STATE_MISMATCH','REJECTED_PROVENANCE_MISMATCH'
+  )),
   decision_id uuid,
   request_fingerprint text not null check (request_fingerprint ~ '^[0-9a-f]{64}$'),
   created_at timestamptz not null default now(),
@@ -233,11 +247,17 @@ create table public.company_brain_snapshots (
   authority_refs jsonb not null default '[]'::jsonb,
   active_claim_refs jsonb not null default '[]'::jsonb,
   tombstone_watermark bigint not null default 0,
+  active boolean not null default true,
   created_at timestamptz not null default now(),
+  invalidated_at timestamptz,
   unique (user_id, id),
   unique (user_id, snapshot_version),
-  unique (user_id, knowledge_version, snapshot_hash)
+  unique (user_id, knowledge_version, snapshot_hash),
+  check ((active and invalidated_at is null) or (not active and invalidated_at is not null))
 );
+
+create unique index company_brain_one_active_snapshot_idx
+  on public.company_brain_snapshots (user_id) where active;
 
 create index company_brain_claims_lookup_idx on public.company_brain_claims
   (user_id, claim_type, active, effective_at);
@@ -297,6 +317,49 @@ grant select on public.company_brain_ingestion_jobs, public.company_brain_source
   public.company_brain_source_tombstones, public.company_brain_snapshots
   to authenticated;
 
+-- Any knowledge mutation invalidates the prior active durable snapshot. A
+-- consumer must build a new snapshot before treating Company Brain as fresh.
+create schema if not exists private;
+revoke all on schema private from public, anon, authenticated;
+
+create or replace function private.invalidate_company_brain_snapshot()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_user_id uuid := case when tg_op = 'DELETE' then old.user_id else new.user_id end;
+begin
+  update public.company_brain_snapshots
+    set active = false, invalidated_at = coalesce(invalidated_at, now())
+    where user_id = v_user_id and active;
+  if tg_op = 'DELETE' then return old; end if;
+  return new;
+end;
+$$;
+
+revoke execute on function private.invalidate_company_brain_snapshot() from public, anon, authenticated;
+
+create trigger company_brain_snapshot_stale_on_source_version
+after insert or update of status on public.company_brain_source_versions
+for each row execute function private.invalidate_company_brain_snapshot();
+create trigger company_brain_snapshot_stale_on_claim
+after insert or update of active, status on public.company_brain_claims
+for each row execute function private.invalidate_company_brain_snapshot();
+create trigger company_brain_snapshot_stale_on_founder_decision
+after insert on public.company_brain_founder_decisions
+for each row execute function private.invalidate_company_brain_snapshot();
+create trigger company_brain_snapshot_stale_on_conflict
+after insert or update of status, revision on public.company_brain_conflicts
+for each row execute function private.invalidate_company_brain_snapshot();
+create trigger company_brain_snapshot_stale_on_authority
+after insert or update of status, revision on public.company_brain_authority_proposals
+for each row execute function private.invalidate_company_brain_snapshot();
+create trigger company_brain_snapshot_stale_on_tombstone
+after insert on public.company_brain_source_tombstones
+for each row execute function private.invalidate_company_brain_snapshot();
+
 -- Authenticated, optimistic founder decision boundary. SECURITY DEFINER is
 -- intentionally narrow, has an empty search_path, validates auth.uid(), and
 -- is executable only by authenticated callers.
@@ -319,22 +382,78 @@ declare
   v_user_id uuid := (select auth.uid());
   v_current_revision integer;
   v_existing uuid;
+  v_existing_fingerprint text;
+  v_existing_revision integer;
   v_decision_id uuid := gen_random_uuid();
   v_supersedes uuid;
-  v_fingerprint text := encode(sha256(convert_to(concat_ws('|', p_target_type, p_target_id::text, p_expected_revision::text, p_decision_type, p_prior_state::text, p_new_state::text, p_reason, p_provenance::text), 'utf8')), 'hex');
+  v_actual_state jsonb;
+  v_target_evidence jsonb;
+  v_canonical_provenance jsonb;
+  v_fingerprint text;
 begin
   if v_user_id is null then raise exception 'COMPANY_BRAIN_AUTH_REQUIRED'; end if;
   if p_target_type not in ('CONFLICT','AUTHORITY_PROPOSAL') or p_target_id is null then raise exception 'COMPANY_BRAIN_SCOPE_INVALID'; end if;
   if p_idempotency_key is null or btrim(p_idempotency_key) = '' or p_reason is null or btrim(p_reason) = '' then raise exception 'COMPANY_BRAIN_DECISION_MALFORMED'; end if;
-  select id into v_existing from public.company_brain_founder_decisions where user_id = v_user_id and idempotency_key = p_idempotency_key;
-  if v_existing is not null then return jsonb_build_object('outcome', 'IDEMPOTENT_REPLAY', 'decision_id', v_existing); end if;
+  if jsonb_typeof(p_prior_state) <> 'object' or jsonb_typeof(p_new_state) <> 'object' or jsonb_typeof(p_provenance) <> 'array' or jsonb_array_length(p_provenance) = 0 then raise exception 'COMPANY_BRAIN_DECISION_MALFORMED'; end if;
+  select coalesce(jsonb_agg(value order by value), '[]'::jsonb) into v_canonical_provenance from jsonb_array_elements_text(p_provenance);
+  v_fingerprint := encode(sha256(convert_to(concat_ws('|', p_target_type, p_target_id::text, p_expected_revision::text, p_decision_type, p_prior_state::text, p_new_state::text, p_reason, v_canonical_provenance::text), 'utf8')), 'hex');
+  select id, request_fingerprint, target_revision
+    into v_existing, v_existing_fingerprint, v_existing_revision
+    from public.company_brain_founder_decisions
+    where user_id = v_user_id and idempotency_key = p_idempotency_key;
+  if v_existing is not null then
+    if v_existing_fingerprint <> v_fingerprint then
+      insert into public.company_brain_founder_decision_attempts (
+        user_id, actor_id, target_type, target_id, expected_revision,
+        actual_revision, outcome, decision_id, request_fingerprint
+      ) values (
+        v_user_id, v_user_id, p_target_type, p_target_id, p_expected_revision,
+        v_existing_revision, 'REJECTED_IDEMPOTENCY_CONFLICT', v_existing, v_fingerprint
+      );
+      return jsonb_build_object('outcome', 'REJECTED_IDEMPOTENCY_CONFLICT', 'actual_revision', v_existing_revision);
+    end if;
+    return jsonb_build_object('outcome', 'IDEMPOTENT_REPLAY', 'decision_id', v_existing);
+  end if;
 
   if p_target_type = 'CONFLICT' then
-    select revision into v_current_revision from public.company_brain_conflicts where user_id = v_user_id and id = p_target_id for update;
+    select revision, jsonb_build_object('status', status, 'revision', revision, 'topic', topic, 'semanticScope', semantic_scope)
+      into v_current_revision, v_actual_state
+      from public.company_brain_conflicts where user_id = v_user_id and id = p_target_id for update;
+    select coalesce(jsonb_agg(claim_id order by claim_id), '[]'::jsonb) into v_target_evidence
+      from public.company_brain_conflict_members where user_id = v_user_id and conflict_id = p_target_id;
   else
-    select revision into v_current_revision from public.company_brain_authority_proposals where user_id = v_user_id and id = p_target_id and status <> 'REVOKED' for update;
+    select revision, jsonb_build_object('status', status, 'revision', revision, 'actionClass', action_class, 'authorityScope', authority_scope), evidence_claim_ids
+      into v_current_revision, v_actual_state, v_target_evidence
+      from public.company_brain_authority_proposals where user_id = v_user_id and id = p_target_id and status <> 'REVOKED' for update;
   end if;
   if v_current_revision is null then raise exception 'COMPANY_BRAIN_TARGET_MISSING_OR_REVOKED'; end if;
+  if not (p_prior_state <@ v_actual_state) then
+    insert into public.company_brain_founder_decision_attempts (
+      user_id, actor_id, target_type, target_id, expected_revision,
+      actual_revision, outcome, request_fingerprint
+    ) values (
+      v_user_id, v_user_id, p_target_type, p_target_id, p_expected_revision,
+      v_current_revision, 'REJECTED_PRIOR_STATE_MISMATCH', v_fingerprint
+    );
+    return jsonb_build_object('outcome', 'REJECTED_PRIOR_STATE_MISMATCH', 'actual_revision', v_current_revision);
+  end if;
+  if not (p_provenance @> v_target_evidence and v_target_evidence @> p_provenance) then
+    insert into public.company_brain_founder_decision_attempts (
+      user_id, actor_id, target_type, target_id, expected_revision,
+      actual_revision, outcome, request_fingerprint
+    ) values (
+      v_user_id, v_user_id, p_target_type, p_target_id, p_expected_revision,
+      v_current_revision, 'REJECTED_PROVENANCE_MISMATCH', v_fingerprint
+    );
+    return jsonb_build_object('outcome', 'REJECTED_PROVENANCE_MISMATCH', 'actual_revision', v_current_revision);
+  end if;
+  if exists (
+    select 1 from jsonb_array_elements_text(p_provenance) evidence(claim_id)
+    where not exists (
+      select 1 from public.company_brain_claims c
+      where c.user_id = v_user_id and c.id = evidence.claim_id::uuid and c.active
+    )
+  ) then raise exception 'COMPANY_BRAIN_PROVENANCE_UNKNOWN_OR_INACTIVE'; end if;
   if v_current_revision <> p_expected_revision then
     insert into public.company_brain_founder_decision_attempts (
       user_id, actor_id, target_type, target_id, expected_revision,
@@ -348,13 +467,13 @@ begin
   select id into v_supersedes from public.company_brain_founder_decisions where user_id = v_user_id and target_type = p_target_type and target_id = p_target_id order by created_at desc limit 1;
 
   insert into public.company_brain_founder_decisions (
-    id, user_id, actor_id, idempotency_key, decision_type, target_type,
+    id, user_id, actor_id, idempotency_key, request_fingerprint, decision_type, target_type,
     target_id, target_revision, prior_state, new_state, reason, provenance,
     supersedes_decision_id
   ) values (
-    v_decision_id, v_user_id, v_user_id, p_idempotency_key, p_decision_type,
-    p_target_type, p_target_id, p_expected_revision + 1, p_prior_state,
-    p_new_state, p_reason, p_provenance, v_supersedes
+    v_decision_id, v_user_id, v_user_id, p_idempotency_key, v_fingerprint, p_decision_type,
+    p_target_type, p_target_id, p_expected_revision + 1, v_actual_state,
+    p_new_state, p_reason, v_target_evidence, v_supersedes
   );
 
   if p_target_type = 'CONFLICT' then

@@ -206,6 +206,29 @@ test('founder decision idempotency returns the original durable decision', () =>
   assert.equal(s.decisions.length, 1)
 })
 
+test('founder decision idempotency key rejects a materially different request', () => {
+  const s = store(); const conflict = seedConflict(s)
+  s.recordFounderDecision(decisionInput(conflict))
+  assert.throws(() => s.recordFounderDecision(decisionInput(conflict, { reason: 'Different request under the same key.' })), /idempotency conflict/)
+  assert.equal(s.decisions.length, 1)
+  assert.equal(s.decisionAttempts.at(-1).outcome, 'REJECTED_IDEMPOTENCY_CONFLICT')
+  assert.match(s.decisionAttempts.at(-1).requestFingerprint, /^[0-9a-f]{64}$/)
+})
+
+test('founder decision rejects client-supplied prior state that disagrees with the server target', () => {
+  const s = store(); const conflict = seedConflict(s)
+  assert.throws(() => s.recordFounderDecision(decisionInput(conflict, { oldState: { status: 'RESOLVED' } })), /prior state mismatch/)
+  assert.equal(s.decisions.length, 0)
+  assert.equal(s.decisionAttempts.at(-1).outcome, 'REJECTED_PRIOR_STATE_MISMATCH')
+})
+
+test('founder decision requires the server-authoritative conflict provenance set', () => {
+  const s = store(); const conflict = seedConflict(s)
+  assert.throws(() => s.recordFounderDecision(decisionInput(conflict, { evidenceClaimIds: conflict.competingClaimIds.slice(1) })), /provenance mismatch/)
+  assert.equal(s.decisions.length, 0)
+  assert.equal(s.decisionAttempts.at(-1).outcome, 'REJECTED_PROVENANCE_MISMATCH')
+})
+
 test('20 repeated approvals do not persist or self-promote standing authority', () => {
   const s = store(); seedConflict(s); s.createSnapshot({ actor: founderA, tenantId: tenantA })
   const history = Array.from({ length: 20 }, (_, index) => ({ tenantId: tenantA, actionClass: 'WAIVE_SETTLEMENT', caseId: index }))
@@ -235,6 +258,23 @@ test('contextual paid statement remains non-canonical and Ask DW routes to R0', 
   const claim = s.claims[0]
   assert.equal(claim.canonicalFinancialTruth, false)
   assert.equal(s.askDw({ actor: founderA, tenantId: tenantA, question: 'Did invoice 104 get paid?' }).status, 'AUTHORITATIVE_FINANCIAL_REFETCH_REQUIRED')
+})
+
+test('Company Brain consumers rebuild instead of returning a stale durable snapshot', () => {
+  const s = store(); seedConflict(s)
+  const before = s.createSnapshot({ actor: founderA, tenantId: tenantA })
+  ingest(s, workerA, tenantA, 'g1-realistic/payment-note.txt', 'payment-note', 'freshness-payment')
+  assert.equal(s.latestSnapshot({ actor: founderA, tenantId: tenantA }), null)
+  const answer = s.askDw({ actor: founderA, tenantId: tenantA, question: 'Did invoice 104 get paid?' })
+  const after = s.latestSnapshot({ actor: founderA, tenantId: tenantA })
+  assert.equal(answer.status, 'AUTHORITATIVE_FINANCIAL_REFETCH_REQUIRED')
+  assert.notEqual(after.id, before.id)
+  assert.equal(after.knowledgeVersion, s.version(tenantA))
+})
+
+test('client semantic and subject references cannot disagree', () => {
+  assert.throws(() => createClaim({ tenantId: tenantA, id: 'mismatch', claimClass: CLAIM_CLASS.CLIENT_EXCEPTION, claimType: 'late_fee_policy', semanticScope: { level: 'CLIENT', clientId: 'atlas' }, subjectScope: { clientId: 'globex' }, value: {}, artifactIds: ['artifact'], provenanceRootIds: ['root'] }), /semantic reference mismatch/)
+  assert.throws(() => createClaim({ tenantId: tenantA, id: 'missing-client', claimClass: CLAIM_CLASS.CLIENT_EXCEPTION, claimType: 'late_fee_policy', semanticScope: { level: 'CLIENT' }, subjectScope: {}, value: {}, artifactIds: ['artifact'], provenanceRootIds: ['root'] }), /requires client reference/)
 })
 
 test('durable Atlas waiver statement remains contextual and approval-required', () => {
