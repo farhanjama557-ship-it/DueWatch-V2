@@ -10,7 +10,7 @@ Gate:              G6 — Founder review / bootstrap UX
 Branch:            m2g/company-brain-bootstrap-g6
 Starting HEAD:     9a60ec08f5604b0a3b73182e40e0f26c639d2288  (frozen G5)
 Parent SHA:        9a60ec08f5604b0a3b73182e40e0f26c639d2288
-Resulting commit:  <G6_COMMIT_SHA>
+Resulting commit:  531510371f723c076d1e4d7ff5a44ceb4054ad0c
 Corrected G4:      14a8c4f820bad58bbc975f07b55740089861d106  (G5 parent, verified)
 Corrected G3:      b653ffb0f04c8277ec40b34816166e578b9dcbd9  (verified ancestor of HEAD)
 
