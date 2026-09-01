@@ -69,6 +69,7 @@ export default function InvoiceDetailPanel({
 }) {
   const { user } = useAuth()
   const {
+    invoices,
     autopilotEnabled,
     awaitingSignature,
     hasCompletedAutopilotRun,
@@ -372,7 +373,12 @@ export default function InvoiceDetailPanel({
           />
 
           <DwInvoiceIntelligencePanel model={dwCase} />
-          <AskDwInvoiceLiveProbe invoiceId={data.id} />
+          <AskDwInvoiceLiveProbe
+            invoiceId={data.id}
+            invoiceIds={invoices
+              .filter((invoiceRow) => invoiceRow.client_id === data.client_id)
+              .map((invoiceRow) => invoiceRow.id)}
+          />
 
           {autopilotEnabled && (
             <div className={invoicePaused ? 'invoice-autopilot-block paused' : 'invoice-autopilot-block'}>

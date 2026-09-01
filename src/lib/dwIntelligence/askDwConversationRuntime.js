@@ -8,6 +8,11 @@ import {
   getAskDwConversationMemory,
   validateAskDwCaseState,
 } from './askDwCaseState.js'
+import {
+  askDwTurnToJob,
+  classifyAskDwConversationalTurn,
+} from './askDwConversationalTurn.js'
+import { ASK_DW_SCOPE } from './askDwIntent.js'
 
 const CASE_CONTEXT_VERSION = 'ASK_DW_CASE_CONTEXT_V0'
 
@@ -425,6 +430,7 @@ function directSideEffect(result) {
  */
 export function createAskDwCaseAwareRuntime({
   runInvoiceQuestion,
+  runScopedQuestion = null,
   resolveCaseEvents = null,
 } = {}) {
   if (typeof runInvoiceQuestion !== 'function') {
@@ -432,6 +438,9 @@ export function createAskDwCaseAwareRuntime({
   }
   if (resolveCaseEvents != null && typeof resolveCaseEvents !== 'function') {
     throw new Error('Ask DW resolveCaseEvents must be a function')
+  }
+  if (runScopedQuestion != null && typeof runScopedQuestion !== 'function') {
+    throw new Error('Ask DW scoped question runtime must be a function')
   }
 
   return freeze({
@@ -443,6 +452,8 @@ export function createAskDwCaseAwareRuntime({
       mode = 'normal',
       now = new Date(),
       proposedResolverEvents = [],
+      companyBrainReadModel = null,
+      needsYouReadModel = null,
     } = {}) {
       validateAskDwCaseState(caseState)
       const tenant = requiredId(tenantId, 'Ask DW conversation tenantId')
@@ -497,18 +508,45 @@ export function createAskDwCaseAwareRuntime({
       }
 
       const control = resolveAskDwDeterministicCaseControl({ state: next, text })
+      const resolvedCaseContext = buildAskDwCaseContext(next)
+      const conversationalTurn = classifyAskDwConversationalTurn({
+        text: String(text || ''),
+        context: {},
+        caseContext: resolvedCaseContext,
+      })
+      const requestedJob = askDwTurnToJob(conversationalTurn)
+      const clientLevelAnswerAvailable = Boolean(
+        runScopedQuestion &&
+        requestedJob.scope === ASK_DW_SCOPE.CLIENT &&
+        resolvedCaseContext.focus?.clientRef?.id
+      )
+      const portfolioAnswerAvailable = Boolean(
+        runScopedQuestion && requestedJob.scope === ASK_DW_SCOPE.PORTFOLIO
+      )
+      const resolverNeedsOnlyInvoice = Boolean(
+        resolverOutcome?.blocked &&
+        resolverOutcome.status === 'NEEDS_INVOICE_RESOLUTION' &&
+        clientLevelAnswerAvailable
+      )
+      const resolverNeedsOnlySubject = Boolean(
+        resolverOutcome?.blocked &&
+        portfolioAnswerAvailable &&
+        ['NEEDS_CLIENT_RESOLUTION', 'NEEDS_REFERENCE_RESOLUTION'].includes(resolverOutcome.status)
+      )
 
       // A resolver may fail closed on identity ambiguity or a missing reference,
       // but it cannot override exact deterministic founder-control phrases.
       if (resolverOutcome?.blocked && control.classification === 'NONE') {
-        return noReadResult({
-          status: resolverOutcome.status,
-          state: next,
-          control,
-          appliedEvents,
-          reason: resolverOutcome.reason || 'Ask DW entity resolution requires explicit selection.',
-          resolverOutcome,
-        })
+        if (!resolverNeedsOnlyInvoice && !resolverNeedsOnlySubject) {
+          return noReadResult({
+            status: resolverOutcome.status,
+            state: next,
+            control,
+            appliedEvents,
+            reason: resolverOutcome.reason || 'Ask DW entity resolution requires explicit selection.',
+            resolverOutcome,
+          })
+        }
       }
 
       if (control.blocked) {
@@ -529,7 +567,55 @@ export function createAskDwCaseAwareRuntime({
       const caseContext = buildAskDwCaseContext(next)
       const invoiceId = caseContext.focus?.invoiceRef?.id ?? null
 
-      if (!invoiceId) {
+      if (!invoiceId || portfolioAnswerAvailable) {
+        const scoped = portfolioAnswerAvailable
+          ? { scope: ASK_DW_SCOPE.PORTFOLIO, clientId: null }
+          : clientLevelAnswerAvailable
+            ? { scope: ASK_DW_SCOPE.CLIENT, clientId: caseContext.focus.clientRef.id }
+            : null
+
+        if (scoped) {
+          const askDw = await runScopedQuestion({
+            tenantId: tenant,
+            clientId: scoped.clientId,
+            scope: scoped.scope,
+            mode,
+            text: String(text || ''),
+            now: new Date(at),
+            caseContext,
+            companyBrainReadModel,
+            needsYouReadModel,
+          })
+
+          if (directSideEffect(askDw)) {
+            throw new Error('Ask DW case-aware runtime blocked a direct side effect')
+          }
+          if (askDw?.liveReadReceipt?.writesPerformed === true) {
+            throw new Error('Ask DW case-aware runtime requires read-only live refresh')
+          }
+
+          return freeze({
+            status: 'ANSWERED',
+            caseState: next,
+            caseContext,
+            appliedEvents: clone(appliedEvents),
+            control,
+            resolver: resolverOutcome ? clone(resolverOutcome) : null,
+            askDw,
+            executionBoundary: null,
+            reason: null,
+            safeguards: {
+              liveTruthReadPerformed: hasLiveReadReceipt(askDw),
+              canonicalTruthPersistedToCaseState: false,
+              caseStateCanGrantAuthority: false,
+              directExecutionPerformed: false,
+              deterministicActionPhraseGate: true,
+              modelProposedReferentsRequireResolverVerification: true,
+              scopedAnswerDidNotRequireInvoice: true,
+            },
+          })
+        }
+
         return noReadResult({
           status: 'NEEDS_INVOICE_RESOLUTION',
           state: next,
@@ -553,6 +639,8 @@ export function createAskDwCaseAwareRuntime({
         text: String(text || ''),
         now: new Date(at),
         caseContext,
+        companyBrainReadModel,
+        needsYouReadModel,
       })
 
       if (directSideEffect(askDw)) {

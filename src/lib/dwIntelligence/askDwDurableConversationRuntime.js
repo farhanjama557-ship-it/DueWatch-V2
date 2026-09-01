@@ -22,6 +22,7 @@ import {
   AskDwConversationPersistenceConflictError,
   createAskDwConversationPersistence,
 } from './askDwConversationPersistence.js'
+import { createAskDwLiveRuntime } from './askDwLiveRuntime.js'
 
 export const ASK_DW_DURABLE_CONVERSATION_PROFILE = Object.freeze({
   id: 'ASK_DW_DURABLE_CONVERSATION_V0',
@@ -169,6 +170,8 @@ export function createAskDwDurableConversationRuntime({
     expiresAt = null,
     initialInvoiceId = null,
     initialInvoiceIds = null,
+    companyBrainReadModel = null,
+    needsYouReadModel = null,
   } = {}) {
     const tenant = required(tenantId, 'Ask DW durable conversation tenantId')
     const conversation = required(conversationId, 'Ask DW durable conversation conversationId')
@@ -220,6 +223,8 @@ export function createAskDwDurableConversationRuntime({
       text,
       mode,
       now: new Date(at),
+      companyBrainReadModel,
+      needsYouReadModel,
     })
 
     validateAskDwCaseState(result?.caseState)
@@ -324,6 +329,39 @@ export function createAskDwDurableControlledConversationRuntime({
     resolverProfile: ASK_DW_ENTITY_RESOLVER_PROFILE,
     persistenceProfile: ASK_DW_CONVERSATION_PERSISTENCE_PROFILE,
     runInvoiceQuestion: controlled.runInvoiceQuestion,
+    runConversationTurn: durable.runConversationTurn,
+  })
+}
+
+/**
+ * Production G7 composition. This is the same durable case engine used by the
+ * controlled runtime, with the existing live orchestrator and read-only entity
+ * resolver injected. It adds no conversation state, authority, or execution
+ * path of its own.
+ */
+export function createAskDwDurableLiveConversationRuntime({
+  supabase,
+  persistence = null,
+} = {}) {
+  const entityResolver = createAskDwEntityResolver({ supabase })
+  const live = createAskDwLiveRuntime({
+    supabase,
+    resolveCaseEvents: entityResolver.resolveCaseEvents,
+  })
+  const store = persistence || createAskDwConversationPersistence({ supabase })
+  const durable = createAskDwDurableConversationRuntime({
+    conversationRuntime: live,
+    persistence: store,
+  })
+
+  return freeze({
+    scope: live.scope,
+    conversationScope: 'ASK_DW_G7_LIVE_DURABLE_V0',
+    profile: ASK_DW_DURABLE_CONVERSATION_PROFILE,
+    resolverProfile: ASK_DW_ENTITY_RESOLVER_PROFILE,
+    persistenceProfile: ASK_DW_CONVERSATION_PERSISTENCE_PROFILE,
+    runInvoiceQuestion: live.runInvoiceQuestion,
+    runScopedQuestion: live.runScopedQuestion,
     runConversationTurn: durable.runConversationTurn,
   })
 }

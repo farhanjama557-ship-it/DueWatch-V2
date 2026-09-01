@@ -13,9 +13,9 @@ const contract = fs.readFileSync(contractUrl, 'utf8')
 test('Ask DW renders a product answer instead of dumping answer JSON', () => {
   assert.match(component, /answer\?\.executiveConclusion/)
   assert.match(component, /ask-dw-live-probe__conclusion/)
-  assert.match(component, /<summary>Evidence<\/summary>/)
-  assert.match(component, /<summary>Verification<\/summary>/)
-  assert.match(component, /<summary>Technical details<\/summary>/)
+  assert.match(component, /<summary>Evidence and checks<\/summary>/)
+  assert.match(component, /verificationCopy/)
+  assert.doesNotMatch(component, /<summary>Technical details<\/summary>/)
   assert.doesNotMatch(component, /JSON\.stringify\(answer/)
 })
 

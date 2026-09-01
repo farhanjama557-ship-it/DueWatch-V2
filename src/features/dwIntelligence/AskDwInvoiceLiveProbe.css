@@ -56,7 +56,13 @@
 
 .ask-dw-live-probe__actions {
   margin-top: 9px;
-  justify-content: flex-end;
+  justify-content: space-between;
+}
+
+.ask-dw-live-probe__actions > span {
+  color: var(--text-muted, #7a746d);
+  font-size: 10px;
+  line-height: 1.4;
 }
 
 .ask-dw-live-probe__actions button {
@@ -81,6 +87,95 @@
   background: #fff3f0;
   font-size: 12px;
   color: #9f3429;
+}
+
+.ask-dw-live-probe__notice {
+  margin: 10px 0;
+  border: 1px solid #efe0d4;
+  border-radius: 9px;
+  padding: 9px 10px;
+  background: #fff9f5;
+  color: #765431;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.ask-dw-live-probe__modes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+  margin: 0 0 11px;
+}
+
+.ask-dw-live-probe__modes button {
+  border: 1px solid var(--border, #ddd7cf);
+  border-radius: 9px;
+  padding: 8px 9px;
+  text-align: left;
+  background: rgba(255, 255, 255, .66);
+  color: var(--text, #292621);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.ask-dw-live-probe__modes button.is-active {
+  border-color: var(--primary, #b65f3a);
+  background: #fff8f4;
+  box-shadow: inset 0 0 0 1px rgba(182, 95, 58, .12);
+}
+
+.ask-dw-live-probe__modes button:disabled {
+  cursor: default;
+  opacity: .62;
+}
+
+.ask-dw-live-probe__modes span {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-muted, #7a746d);
+  font-size: 10px;
+}
+
+.ask-dw-live-probe__conversation {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 440px;
+  overflow-y: auto;
+  margin: 0 0 12px;
+  padding: 3px 2px 4px;
+}
+
+.ask-dw-live-probe__message {
+  border-radius: 10px;
+  padding: 10px 11px;
+}
+
+.ask-dw-live-probe__message.is-founder {
+  align-self: flex-end;
+  max-width: 88%;
+  background: #f3efeb;
+}
+
+.ask-dw-live-probe__message.is-founder span {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--text-muted, #7a746d);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+}
+
+.ask-dw-live-probe__message.is-founder p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.ask-dw-live-probe__message.is-dw {
+  border: 1px solid var(--border, #e6e1db);
+  background: rgba(255, 255, 255, .86);
 }
 
 .ask-dw-live-probe__result {
@@ -211,4 +306,8 @@
   line-height: 1.45;
   max-height: 260px;
   overflow: auto;
+}
+
+.ask-dw-live-probe__work {
+  color: var(--text-muted, #6e6862);
 }

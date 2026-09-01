@@ -11,6 +11,10 @@ import {
   classifyAskDwIntent,
   validateProposedAskDwIntent,
 } from './askDwIntent.js'
+import {
+  askDwTurnToJob,
+  classifyAskDwConversationalTurn,
+} from './askDwConversationalTurn.js'
 
 const HIGH_RISK_ACTIONS = new Set([
   'mark_paid',
@@ -183,6 +187,136 @@ function buildWorkManifest({ policy, result }) {
   }
 }
 
+function runScopedConversationCore({
+  mode,
+  text,
+  context,
+  snapshot,
+}) {
+  if (!snapshot || snapshot.tenantId !== context.tenantId) {
+    throw new Error('Ask DW scoped snapshot tenant mismatch')
+  }
+  if (!['CLIENT', 'PORTFOLIO'].includes(snapshot.scope)) {
+    throw new Error('Ask DW scoped snapshot scope invalid')
+  }
+  if (snapshot.scope === 'CLIENT' && (!snapshot.clientId || snapshot.clientId !== context.clientId)) {
+    throw new Error('Ask DW scoped snapshot client mismatch')
+  }
+  if (
+    snapshot.canonicalState?.readOnly !== true ||
+    snapshot.canonicalState?.sideEffect !== false ||
+    snapshot.portfolioSummary?.readOnly !== true ||
+    snapshot.portfolioSummary?.sideEffect !== false
+  ) {
+    throw new Error('Ask DW scoped snapshot did not prove read-only retrieval')
+  }
+
+  const turn = classifyAskDwConversationalTurn({ text, context })
+  const mapped = askDwTurnToJob(turn)
+  const intent = freeze({
+    job: mapped.job,
+    scope: snapshot.scope,
+    actionIntent: mapped.actionIntent === true,
+    predictionIntent: false,
+    confidence: 'DETERMINISTIC_CONVERSATION_SCOPE',
+    source: 'scoped_conversation_core',
+  })
+  const blockedAction = intent.actionIntent === true
+  const policy = buildAskDwModePolicy({
+    mode,
+    risk: blockedAction ? ASK_DW_RISK.HIGH : ASK_DW_RISK.MEDIUM,
+    actionIntent: blockedAction,
+  })
+  const canonicalFacts = freeze({
+    tenantId: snapshot.tenantId,
+    scope: snapshot.scope,
+    clientId: snapshot.clientId ?? null,
+    canonicalState: snapshot.canonicalState.result,
+    portfolioSummary: snapshot.portfolioSummary.result,
+    asOf: snapshot.asOf,
+  })
+  const authority = freeze({
+    actual: 'NOT_GRANTED',
+    policyAuthorized: false,
+    canActAutomatically: false,
+    basis: blockedAction ? 'invoice_reference_required_for_action' : 'read_only_scoped_conversation',
+  })
+  const executiveState = blockedAction ? 'BLOCKED' : 'WATCH'
+  const hardSafety = blockedAction ? 'BLOCKED' : 'NO_UNAUTHORIZED_SIDE_EFFECT'
+  const packet = freeze({
+    mode,
+    requestedMode: policy.requestedMode,
+    internalDepth: policy.internalDepth,
+    autoEscalated: policy.autoEscalated,
+    job: intent.job,
+    responseShape: policy.responseContract,
+    executiveState,
+    canonicalFacts,
+    arState: null,
+    evidenceRefs: [],
+    claims: [],
+    precedent: null,
+    uncertainty: snapshot.portfolioSummary.result?.complete === false
+      ? { actionable: false, reasons: ['BOUNDED_SCOPE_INCOMPLETE'] }
+      : null,
+    recommendation: null,
+    constraints: {
+      readOnly: true,
+      invoiceRequiredForAction: true,
+      scopedActionBlocked: blockedAction,
+    },
+    authority,
+    hardSafetyOutcome: hardSafety,
+    needsYou: { required: false, reason: null, question: null },
+    safeguards: {
+      canonicalMutationFromConversation: false,
+      directProviderExecutionFromConversation: false,
+      rawChainOfThoughtVisible: false,
+      serverRevalidationRequired: true,
+    },
+  })
+  const reasoningTrail = [
+    freeze({
+      type: 'ENTITY_RESOLUTION',
+      observable: true,
+      summary: snapshot.scope === 'CLIENT'
+        ? `Resolved tenant-scoped client ${snapshot.clientId}.`
+        : 'Resolved the authenticated tenant portfolio.',
+    }),
+    freeze({
+      type: 'CANONICAL_TRUTH_READ',
+      observable: true,
+      summary: `Read current ${snapshot.scope.toLowerCase()} canonical state through the bounded read-only registry.`,
+    }),
+    freeze({
+      type: 'AUTHORITY_CHECK',
+      observable: true,
+      summary: 'Scoped conversation granted no execution authority.',
+    }),
+  ]
+
+  return freeze({
+    intent,
+    risk: blockedAction ? ASK_DW_RISK.HIGH : ASK_DW_RISK.MEDIUM,
+    policy,
+    intelligence: {
+      state: executiveState,
+      execution: { mode: 'none', sideEffect: false, outcome: blockedAction ? 'BLOCKED_INVOICE_REQUIRED' : 'NO_ACTION' },
+      hardViolations: [],
+    },
+    packet,
+    reasoningTrail,
+    workManifest: {
+      completedDeterministicWork: ['tenant_scope', 'canonical_scoped_read', 'authority_non_escalation'],
+      requiredModelOrToolWork: policy.internalDepth === 'deep'
+        ? ['competing_hypothesis_analysis', 'independent_verification']
+        : [],
+      completedModelOrToolWork: [],
+      truthfullyPending: policy.internalDepth === 'deep',
+    },
+  })
+}
+
 /**
  * Ask DW deterministic core.
  *
@@ -198,6 +332,14 @@ export function runAskDwDeterministicCore({
   proposedIntent = null,
   intelligenceInput = {},
 } = {}) {
+  if (intelligenceInput?.conversationScopeSnapshot) {
+    return runScopedConversationCore({
+      mode,
+      text,
+      context,
+      snapshot: intelligenceInput.conversationScopeSnapshot,
+    })
+  }
   const proposed = proposedIntent ? validateProposedAskDwIntent(proposedIntent) : null
   if (proposedIntent && !proposed.valid) throw new Error('Invalid proposed Ask DW intent')
 
