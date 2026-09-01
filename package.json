@@ -12,6 +12,7 @@
     "test:company-brain-g1": "node --test tests/companyBrainG0.test.mjs tests/companyBrainG1DurableStore.test.mjs tests/companyBrainG1Migration.test.mjs",
     "test:company-brain-g2": "node --test tests/companyBrainG0.test.mjs tests/companyBrainG1DurableStore.test.mjs tests/companyBrainG1Migration.test.mjs tests/companyBrainG2Graph.test.mjs tests/companyBrainG2Migration.test.mjs",
     "test:company-brain-g3": "node --test tests/companyBrainG0.test.mjs tests/companyBrainG1DurableStore.test.mjs tests/companyBrainG1Migration.test.mjs tests/companyBrainG2Graph.test.mjs tests/companyBrainG2Migration.test.mjs tests/companyBrainG3Policy.test.mjs",
+    "test:company-brain-g4": "node --test tests/companyBrainG0.test.mjs tests/companyBrainG1DurableStore.test.mjs tests/companyBrainG1Migration.test.mjs tests/companyBrainG2Graph.test.mjs tests/companyBrainG2Migration.test.mjs tests/companyBrainG3Policy.test.mjs tests/companyBrainG4OperatingModel.test.mjs",
     "clients:dedupe": "node scripts/client-dedupe.mjs",
     "system-brain:audit": "node scripts/system-brain-audit.mjs",
     "system-brain:deployment": "node scripts/system-brain-deployment-fingerprint.mjs",
