@@ -1,0 +1,255 @@
+Gate:
+M2G G5 — Authority & Delegation
+
+Branch:
+m2g/company-brain-bootstrap-g5
+
+Frozen corrected G4 parent:
+14a8c4f820bad58bbc975f07b55740089861d106
+
+Corrected G3 ancestor:
+b653ffb0f04c8277ec40b34816166e578b9dcbd9
+
+PRE-FLIGHT
+
+- Branch verified exactly: m2g/company-brain-bootstrap-g5
+- Starting HEAD verified exactly: 14a8c4f820bad58bbc975f07b55740089861d106
+- Corrected G3 ancestor verified with git merge-base --is-ancestor.
+- Starting worktree was clean.
+- Frozen G4 parent was the exact merge-base.
+
+ARCHITECTURE SUMMARY
+
+G5 is a separate deterministic authority boundary in
+src/lib/companyBrain/authorityDelegation.js. It does not modify the frozen
+G0/G1 approved-proposal helper, G2 observed human delegation, corrected G3
+policy resolution, G4 operating-model proposals, or the existing
+nextActionAuthority execution-specific revalidation contract.
+
+The G5 boundary contains:
+
+- inert authority proposals;
+- an explicit founder/tenant-owner grant operation;
+- durable grant, provenance, attempt, revision, supersession, and revocation
+  shapes;
+- one canonical current-state derivation;
+- one pure deterministic authority evaluator;
+- deeply frozen Ask DW and DW Intelligence read-only seams;
+- no provider, scheduler, financial-write, or external execution dependency.
+
+AUTHORITY DOMAIN MODEL
+
+Each grant records tenant, grant ID, authenticated founder grantor, DW grantee,
+action, exact scope, client/entity reference, amount/currency limit where
+applicable, exact conditions, effective window/expiry, channel where
+applicable, approval requirement, lifecycle status, provenance, reviewed
+upstream dependencies/fingerprints, revision, supersession, revocation,
+idempotency fingerprint, and created/decided timestamps.
+
+Typed lifecycle states:
+
+PROPOSED, GRANTED, REVOKED, STALE, INVALIDATED, SUPERSEDED.
+
+Typed evaluator outcomes:
+
+ALLOWED, NEEDS_APPROVAL, DENIED, UNKNOWN, STALE.
+
+PROPOSAL VS GRANT
+
+createG5AuthorityProposal() always returns PROPOSED with authorityGranted=false
+and grantableByInference=false. Observed roles/delegation, G3 policy, G4 model,
+approval history, provider capability, precedent, and model confidence remain
+context only. AuthorityDelegationStore.grantAuthority() requires the distinct
+explicitGrant=true operation. Proposals are never passed to current-grant
+derivation.
+
+HUMAN AUTHORITY VS DW AUTHORITY
+
+Human role/delegation evidence is explicitly non-authoritative. A standing
+grant must name grantee { type: "DW", id: "DUEWATCH" }. Authenticated external
+agents may not use the founder grant path. The current repository has a
+single authenticated user/tenant owner boundary rather than production RBAC;
+G5 preserves that strongest existing boundary and does not invent broader
+roles.
+
+EXPLICIT GRANT PATH / GRANTOR VALIDATION
+
+Runtime grants require an authenticated FOUNDER whose actor ID is the tenant
+owner ID, explicitGrant=true, a semantic idempotency key, exact resolved scope,
+known same-tenant provenance, reviewed upstream state, and every material
+dimension required by the action. The SQL RPC derives user_id and grantor_id
+from auth.uid(), rejects malformed/cross-tenant references, and is the only
+authenticated write path. Direct authenticated table writes remain revoked.
+
+SCOPE SEMANTICS
+
+COMPANY, CLIENT, and ENTITY are distinct exact scopes. COMPANY cannot carry a
+client/entity dimension. CLIENT requires an exact tenant-owned client. ENTITY
+requires an exact active RESOLVED node in an active graph version. Missing,
+ambiguous, unresolved, mismatched, or cross-tenant dimensions fail closed.
+No missing dimension is interpreted as a wildcard.
+
+AMOUNT / CHANNEL / CONDITION / TIME SEMANTICS
+
+- Monetary actions require a non-negative integer amount limit and exact
+  three-letter currency. Requests at the limit are eligible; requests above
+  it or without amount/currency fail closed.
+- Communication actions require an exact channel. EMAIL does not authorize
+  SMS or another channel.
+- Grant conditions and request conditions must match exactly.
+- effectiveFrom is inclusive; expiresAt is exclusive. Not-yet-effective and
+  expired grants cannot govern.
+- approvalRequirement=FOUNDER returns NEEDS_APPROVAL even for an otherwise
+  exact current grant.
+
+FRESHNESS / LINEAGE SEMANTICS
+
+Only explicitly reviewed dependencies are compared. A missing, revoked, or
+fingerprint-changed material dependency returns STALE. Required-current source
+provenance becoming SUPERSEDED, REVOKED, INVALIDATED, or FAILED stales the
+grant. Reviewed G4 model, Brain snapshot, and graph invalidation have scoped
+staleness triggers. An unrelated Company Brain source/version change does not
+widen or invalidate authority.
+
+REVOCATION SEMANTICS
+
+Explicit revocation immediately changes the current grant to REVOKED, records
+the authenticated tenant owner, timestamp, reason, idempotency fingerprint,
+and durable revocation event, and never deletes the grant. Revoked authority
+cannot return ALLOWED. A revoked explicit successor does not resurrect its
+predecessor.
+
+SUPERSESSION SEMANTICS
+
+The canonical derivation first applies explicit supersession lineage, then
+evaluates the unsuperseded tips. If D2 supersedes D1, D1 is audit history even
+when D2 is malformed, stale, invalidated, expired, or revoked. For D1 -> D2 ->
+D3, only D3 may be current. There is no hidden rollback. History ordering is
+decidedAt then grant ID for deterministic replay.
+
+IDEMPOTENCY SEMANTICS
+
+The same explicit request retried with the same idempotency key and semantic
+fingerprint returns the original grant. Reusing the key with different
+semantics is a durable REJECTED_IDEMPOTENCY_CONFLICT outcome. A new explicit
+founder revision with a new key remains a distinct audit record.
+
+PERSISTENCE MODEL
+
+Migration:
+supabase/migrations/20260901175714_company_brain_authority_delegation_g5.sql
+
+Tables:
+
+- company_brain_authority_grants_g5
+- company_brain_authority_grant_provenance_g5
+- company_brain_authority_revocations_g5
+- company_brain_authority_attempts_g5
+
+The schema uses tenant-composite FKs for clients, graph entities, provenance
+claim-root pairs, proposals, Brain snapshots, G4 operating models, graph
+fingerprints, supersession, revocation, and attempts. All public G5 tables have
+RLS and owner-only SELECT policies. Browser roles have read-only grants. The
+grant/revoke SECURITY DEFINER RPCs set search_path='', derive tenant/grantor
+from auth.uid(), and have EXECUTE revoked from PUBLIC/anon before authenticated
+is explicitly granted.
+
+TENANT ISOLATION
+
+Runtime tests prove Tenant B cannot read, create, or revoke Tenant A authority.
+Client/entity, provenance, proposal, upstream state, supersession, and grant
+links are tenant-composite or server-validated. Wrong-tenant rows are not
+exposed by current derivation or read models.
+
+ASK DW / DW INTELLIGENCE READ-ONLY SEAM
+
+toAskDwAuthorityContext() and toDwIntelligenceAuthorityContext() return deeply
+frozen typed read models containing current, proposed, revoked, stale,
+superseded, and invalidated authority. They expose canGrant=false,
+canRevoke=false, canExecute=false, modelOutputCanGrant=false, and
+canonicalMoneyWritable=false. No grant/revoke callback is exposed.
+
+PROVIDER CAPABILITY != AUTHORITY
+
+Provider capability is accepted only as ignored non-authority context by the
+canonical evaluator. The G5 implementation and migration contain no Stripe,
+Gmail, QuickBooks, Twilio, provider invocation, HTTP execution, or credential
+integration.
+
+CANONICAL MONEY BOUNDARY
+
+Authority determines whether a hypothetical action is allowed; it does not
+make any financial fact true. Evaluation returns canonicalMoneyMutated=false.
+No G5 source or migration inserts, updates, deletes, or alters invoice,
+payment, payment-attempt, payment-receipt, payout, or bank-transaction truth.
+
+NO EXECUTION BOUNDARY
+
+Every result, including ALLOWED, returns executed=false. G5 contains no email,
+SMS, call, schedule, queue, provider, bank, accounting, or financial mutation
+operation. Existing execution authority modules were not modified.
+
+VALIDATION RESULTS
+
+- npm run test:company-brain-g2: PASS — 129/129
+- npm run test:company-brain-g3: PASS — 229/229
+- Corrected G3 tests 228–230 direct rerun: PASS — 3/3
+- npm run test:company-brain-g4: PASS — 264/264
+- npm run test:company-brain-g5: PASS — 362/362
+- G5-specific runtime + migration tests: PASS — 98/98
+- npm test: PASS — 1,332/1,332
+- npm run build: PASS — Vite production build completed; 1,978 modules
+  transformed. Existing chunk-size advisory only.
+- git diff --check: PASS — no whitespace errors
+
+SECURITY / STATIC REVIEW
+
+- Credential/secret scan: PASS. No API keys, service-role secrets, private-key
+  blocks, AWS secrets, GitHub tokens, or password assignments found in G5
+  changed files.
+- Canonical financial mutation scan: PASS. No G5 implementation/migration
+  mutation of invoices, payments, payment_attempts, payment_receipts, payouts,
+  or bank_transactions.
+- Tenant isolation review: PASS. Auth-derived tenant/grantor, owner-read RLS,
+  read-only table grants, and tenant-composite references verified.
+- Authority-escalation scan: PASS. ALLOWED is emitted only after an exact
+  current explicit grant match.
+- Repeated-approval escalation scan: PASS. One and 100 approvals remain inert
+  history; approvalHistory is ignored non-authority context.
+- Provider-capability confusion scan: PASS. Provider capabilities are ignored
+  context and no provider integration exists.
+- Execution-capability scan: PASS. No fetch, provider invocation, scheduling,
+  queueing, email/SMS/call, or external side-effect path exists.
+- G6 scope scan: PASS. No G6-named or G6 implementation files exist in the G5
+  diff.
+- Unsafe generic authenticated-write scan: PASS. No INSERT/UPDATE/DELETE/ALL
+  table grant or generic authenticated write policy exists; writes are RPC-only.
+- Superseded/revoked current-state scan: PASS. Canonical derivation excludes
+  both before current eligibility and preserves audit history.
+- LLM-final-authority scan: PASS. modelOutput cannot affect current grants or
+  final evaluation and the read seam exposes modelOutputCanGrant=false.
+- Frozen G0–G4 review: PASS. No frozen Company Brain source, prior test, prior
+  migration, or nextActionAuthority file differs from the corrected G4 parent.
+
+MIGRATION STATIC / RUNTIME QUALIFICATION
+
+- Supabase CLI observed during inspection: 2.116.0.
+- pgsql-parser static validation: PASS.
+- Migration security/static contract tests: PASS.
+- Local psql: unavailable.
+- Local Docker CLI: unavailable.
+- Docker socket: absent.
+- Isolated Supabase/Postgres migration application: NOT RUN.
+- Production deployment/application: NOT RUN.
+
+Therefore the migration is parser/static verified only. No runtime deployment
+verification is claimed.
+
+SCOPE CONFIRMATIONS
+
+- G0–G4 semantics were not modified.
+- Corrected G3 supersession semantics were not rewritten.
+- Existing next-action/Autopilot authority was not broadened.
+- No founder-review UI was added.
+- No external execution was added.
+- G6 was not started.
