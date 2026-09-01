@@ -1,9 +1,10 @@
-M2G G3 Validation Report — G3 Hardening + Exit-Gate Closure + G3 Consistency Patch + TRUE FINAL EXIT PATCH + FINAL SEMANTIC CLOSURE
+M2G G3 Validation Report — G3 Hardening + Exit-Gate Closure + G3 Consistency Patch + TRUE FINAL EXIT PATCH + FINAL SEMANTIC CLOSURE + CANONICAL STATE FINAL CLOSURE
 Branch: m2g/company-brain-bootstrap-g3
-Date: 2026-09-01
+Date: 2026-08-31
 Starting SHA (exit-gate work): f2a533dc902d00b2106c1dd8ef770f8fdca01fbd
 Starting SHA (consistency patch): 7dbfa3efcf65488cb5934c8f240744d21960438c
 Starting SHA (FINAL SEMANTIC CLOSURE): f182d060ca7661d29132a934eaf76389c7a28844
+Starting SHA (CANONICAL STATE FINAL CLOSURE): 8bbf4b7d12dc6a0d31fb8cb4b1dbb7cf67dadf61
 
 == Test Results ==
 
@@ -11,10 +12,10 @@ npm run test:company-brain-g2 (G0+G1+G2 suite):
   tests 129 | pass 129 | fail 0 | todo 0
 
 npm run test:company-brain-g3 (G0+G1+G2+G3 suite):
-  tests 223 | pass 223 | fail 0 | todo 0
+  tests 226 | pass 226 | fail 0 | todo 0
 
 npm test (full suite):
-  tests 1193 | pass 1193 | fail 0 | todo 0
+  tests 1196 | pass 1196 | fail 0 | todo 0
 
 npm run build:
   ✓ built in ~13s — no errors, no new warnings
@@ -373,7 +374,8 @@ Tenant isolation scan (tenantId checks):
     A newer malformed decision (null/wrong-topic governingClaimId) masked a valid older one.
     Fix: evaluate Phase 3 on ALL Phase-1+2-valid decisions; keep only fully valid; sort; pick newest.
     Older-but-valid decisions are no longer masked by newer-but-malformed ones.
-    Malformed decisions remain in result.decisions (auditable) but do not govern.
+    Malformed decisions remain auditable in result.invalidatedDecisions but are excluded from
+    result.decisions, which contains only fully valid current decisions.
 
   Issue 5 — CONTRACT provenance fix not regressed:
     rootSourceVersionIds overlap check, DERIVED_FROM edge scan, topic-specific behavior, and
@@ -401,8 +403,8 @@ Tenant isolation scan (tenantId checks):
 
 [x] 224. test-224 (E): newer malformed (null governingClaimId, later timestamp) + older valid (earlier
          timestamp) → applyFounderDecisions winner = candidateA from older valid; latestDecision =
-         older valid. Both decisions in result.decisions (auditable). resolvePolicy RESOLVED with
-         candidateA as winner. R0, R9 confirmed.
+         older valid. Only the older valid decision is in result.decisions; the malformed decision
+         is in result.invalidatedDecisions. resolvePolicy RESOLVED with candidateA as winner. R0, R9 confirmed.
 
 == Files Changed (FINAL SEMANTIC CLOSURE, relative to TRUE FINAL EXIT PATCH at f182d060) ==
 
@@ -424,3 +426,90 @@ Tenant isolation scan (tenantId checks):
   - All changes isolated to m2g/company-brain-bootstrap-g3
   - G2 contracts unmodified; hardening reads G2 APIs without changing them
   - Stayed on m2g/company-brain-bootstrap-g3; no rebase onto another lineage
+
+== CANONICAL STATE FINAL CLOSURE — Issues 1–4 ==
+
+  Issue 1 — Resolver/DW conflict-specific founder coverage parity:
+    resolvePolicy and buildG3DwIntelligenceContext now use the same conflict-coverage result.
+    A fully valid founder decision covers only a relevant policy-resolvable conflict whose
+    candidateKeys contain the selected winner. Any other relevant blocking conflict remains
+    unresolved and prevents RESOLVED, except where an earlier structural boundary requires ABSTAIN.
+    Exact CLIENT-scoped decisions do not treat unrelated company-only conflict pairs as relevant
+    to that client's exception, while conflicts involving that client remain blocking.
+
+  Issue 2 — Current decisions separated from invalid audit history:
+    applyFounderDecisions.decisions contains only fully valid current/applicable decisions.
+    Decisions rejected for scope/topic, inactive evidence, or malformed winner references are
+    retained in invalidatedDecisions with invalidReason. resolvePolicy founderDecisions and
+    resolvedConflictEvidence are derived only from fully valid current decisions.
+
+  Issue 3 — Exact contract provenance attribution:
+    CONTRACT_VS_COMPANY_POLICY conflict contractKeys are derived per qualifying CLIENT_EXCEPTION
+    provenance root through active DERIVED_FROM edges. Unrelated active contracts for the same
+    client are not attached to the conflict.
+
+  Issue 4 — Documentation invariant:
+    The stale statement that null governingClaimId is valid was removed. When Phase 3 evaluation
+    runs, a null governingClaimId is malformed and cannot govern or cover a conflict.
+
+== CANONICAL STATE FINAL CLOSURE — Deterministic Regression Tests (3 new: 225–227) ==
+
+[x] 225. Three-way A/B/C policy state: founder selects A, while an independently blocking B-vs-C
+         conflict does not contain A. resolvePolicy remains CONFLICTED with no selected winner.
+         DW Intelligence exposes the identical unresolved conflict identities for the same topic/scope.
+
+[x] 226. Older valid decision plus newer null-governingClaimId decision: only the older valid decision
+         appears in applyFounderDecisions.decisions and resolver founderDecisions/resolved evidence.
+         The malformed newer record remains in invalidatedDecisions/invalidatedFounderDecisions.
+
+[x] 227. One provenance-linked Atlas contract plus a second unrelated active Atlas contract:
+         CONTRACT_VS_COMPANY_POLICY contractKeys includes only contract:contract-atlas-2026 and
+         excludes contract:contract-atlas-payment-terms-only.
+
+== CANONICAL STATE FINAL CLOSURE — Final Validation ==
+
+  npm run test:company-brain-g2:
+    tests 129 | pass 129 | fail 0 | skipped 0 | todo 0
+
+  npm run test:company-brain-g3:
+    tests 226 | pass 226 | fail 0 | skipped 0 | todo 0
+
+  npm test:
+    tests 1196 | pass 1196 | fail 0 | skipped 0 | todo 0
+
+  npm run build:
+    PASS — Vite 5.4.21, 1978 modules transformed, production bundle built successfully.
+    The existing chunk-size advisory remains; there are no build errors or new warnings.
+
+  git diff --check:
+    PASS — no whitespace errors.
+
+  Credential scan:
+    PASS — no Stripe live/restricted/webhook secrets, AWS access-key patterns, private-key headers,
+    Supabase service-role assignment, or Stripe secret-key assignment in the changed runtime/test
+    files or Company Brain evidence documents.
+
+  Canonical financial mutation scan:
+    PASS — no INSERT/UPDATE/DELETE/ALTER targeting invoices, payments, payment_attempts, payouts,
+    or bank_transactions in the changed runtime/test files.
+
+  Tenant/invariant review:
+    PASS — every runtime graph/brain read continues to flow through tenantId-filtered APIs or explicit
+    tenant comparisons. R0 canonicalMoneyWritable:false and R9 canActAutomatically:false remain
+    structurally present on every applicable G3 output and are covered by the focused/full suites.
+
+== Files Changed (CANONICAL STATE FINAL CLOSURE, relative to 8bbf4b7d) ==
+
+  src/lib/companyBrain/policyIntelligence.js  (shared conflict coverage; valid/invalid decision separation;
+                                               exact contract provenance attribution; stale comment correction)
+  tests/companyBrainG3Policy.test.mjs         (strengthened test 224; new tests 225–227; fixtures supporting
+                                               conflict-specific coverage without weakening tests 180–224)
+  docs/company-brain/M2G_G3_VALIDATION.txt    (this final closure evidence)
+
+== Final Boundary Confirmation ==
+
+  - No G4 or M2H work begun.
+  - No G2 implementation or contract file changed.
+  - No Supabase push, Edge deployment, Vercel deployment, or live-provider action performed.
+  - No canonical financial write path added or modified.
+  - Changes remain isolated to m2g/company-brain-bootstrap-g3.
