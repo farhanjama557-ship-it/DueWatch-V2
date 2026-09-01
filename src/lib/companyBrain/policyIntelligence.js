@@ -106,24 +106,68 @@ function stableStringify(value) {
  * @param {{ brain, tenantId, topic?: string|null, scope?: object|null }} opts
  * @returns {boolean}
  */
-function isFounderDecisionValid(d, { brain, tenantId, topic = null, scope = null }) {
-  if (d.tenantId !== tenantId) return false
-  if (topic !== null && d.target !== topic) return false
-  if (d.status !== 'RECORDED') return false
+/**
+ * Full 3-phase founder decision evaluation.
+ *
+ * Phase 1 — structural validity:
+ *   tenantId match, topic match (if provided), status === 'RECORDED',
+ *   all evidenceClaimIds still active in brain (R6)
+ * Phase 2 — scope validation:
+ *   decision scope matches the requested scope (R4)
+ * Phase 3 — winner-candidate validation (only when candidates !== null):
+ *   a non-null governingClaimId must map to an ACTIVE candidate in the provided list;
+ *   if it maps to nothing (non-existent or inactive) → invalid.
+ *   A null governingClaimId is valid (decision exists but picks no winner yet).
+ *
+ * @param {object} d - raw brain.decisions entry
+ * @param {{ brain, tenantId, topic?, scope?, candidates? }} opts
+ *   candidates: null → skip Phase 3 (structural/scope check only)
+ *               array (even empty) → Phase 3 runs
+ * @returns {{ valid: boolean, winner: PolicyCandidate|null, reason: string }}
+ */
+function evaluateFounderDecision(d, { brain, tenantId, topic = null, scope = null, candidates = null }) {
+  // Phase 1: structural validity
+  if (d.tenantId !== tenantId) return { valid: false, winner: null, reason: 'tenantId mismatch' }
+  if (topic !== null && d.target !== topic) return { valid: false, winner: null, reason: 'topic mismatch' }
+  if (d.status !== 'RECORDED') return { valid: false, winner: null, reason: 'status not RECORDED' }
   if (!(d.evidenceClaimIds ?? []).every((cid) =>
     brain.claims.some((c) => c.id === cid && c.active && c.tenantId === tenantId),
-  )) return false
+  )) return { valid: false, winner: null, reason: 'evidence claim revoked (R6)' }
+
+  // Phase 2: scope validation
   if (scope !== null) {
     const decisionScope = d.scope ?? { level: SEMANTIC_SCOPE.COMPANY }
     if (scope.level === SEMANTIC_SCOPE.CLIENT) {
-      if (decisionScope.level !== SEMANTIC_SCOPE.CLIENT) return false
-      if (decisionScope.clientId !== scope.clientId) return false
+      if (decisionScope.level !== SEMANTIC_SCOPE.CLIENT)
+        return { valid: false, winner: null, reason: 'decision not CLIENT-scoped for CLIENT request' }
+      if (decisionScope.clientId !== scope.clientId)
+        return { valid: false, winner: null, reason: 'decision clientId does not match request clientId' }
     } else {
-      // COMPANY-scope request: reject CLIENT-scoped decisions
-      if (decisionScope.level === SEMANTIC_SCOPE.CLIENT) return false
+      if (decisionScope.level === SEMANTIC_SCOPE.CLIENT)
+        return { valid: false, winner: null, reason: 'CLIENT-scoped decision cannot answer COMPANY request' }
     }
   }
-  return true
+
+  // Phase 3: winner-candidate validation (only when candidates provided)
+  const governingClaimId = d.newState?.governingClaimId ?? null
+  if (candidates !== null && governingClaimId !== null) {
+    const candidate = candidates.find(
+      (c) => c.claimId === governingClaimId && c.candidateStatus === CANDIDATE_STATUS.ACTIVE,
+    )
+    if (!candidate) {
+      return {
+        valid: false, winner: null,
+        reason: `governingClaimId '${governingClaimId}' does not resolve to an active candidate`,
+      }
+    }
+    return { valid: true, winner: candidate, reason: 'ok' }
+  }
+
+  return { valid: true, winner: null, reason: 'ok' }
+}
+
+function isFounderDecisionValid(d, { brain, tenantId, topic = null, scope = null }) {
+  return evaluateFounderDecision(d, { brain, tenantId, topic, scope, candidates: null }).valid
 }
 
 /**
@@ -144,6 +188,15 @@ function isFounderDecisionValid(d, { brain, tenantId, topic = null, scope = null
  * @returns {boolean}
  */
 function doesDecisionCoverConflict(decision, pc, allCandidates) {
+  // Winner check: governingClaimId must map to an active candidate (Issue 1)
+  const governingClaimId = decision.newState?.governingClaimId ?? null
+  if (governingClaimId !== null) {
+    const winnerCandidate = allCandidates.find(
+      (c) => c.claimId === governingClaimId && c.candidateStatus === CANDIDATE_STATUS.ACTIVE,
+    )
+    if (!winnerCandidate) return false
+  }
+
   const conflictCandidates = pc.candidateKeys
     .map((k) => allCandidates.find((ca) => ca.graphNodeKey === k))
     .filter(Boolean)
@@ -352,7 +405,7 @@ export function buildPolicyCandidates(graph, brain, { actor, tenantId, scope, qu
       graphNodeKey: node.stableKey,
       claimId,
       claimClass: claimClassStr,
-      topic: claim?.claimType ?? node.label ?? null,
+      topic: claim?.claimType ?? node.data?.policy_topic ?? node.label ?? null,
       value: claim?.value ?? node.data ?? null,
       scopeLevel: node.semanticScope?.level ?? scope.level,
       clientId: node.semanticScope?.clientId ?? scope.clientId ?? null,
@@ -477,10 +530,12 @@ export function applyFounderDecisions(candidates, { brain, tenantId, topic, scop
   )
   const latestDecision = sorted[0]
 
-  const governingClaimId = latestDecision.newState?.governingClaimId ?? null
-  const winner = governingClaimId
-    ? (candidates.find((c) => c.claimId === governingClaimId) ?? null)
-    : null
+  // Use evaluateFounderDecision Phase 3 for winner validation:
+  // governingClaimId must map to an ACTIVE candidate (Issue 1).
+  const evalResult = evaluateFounderDecision(latestDecision, {
+    brain, tenantId, topic, scope: requestedScope, candidates,
+  })
+  const winner = evalResult.valid ? evalResult.winner : null
 
   return {
     applied: winner !== null,
@@ -784,16 +839,18 @@ export function resolvePolicy(graph, brain, {
           c.scopeLevel === SEMANTIC_SCOPE.CLIENT &&
           (!topic || c.topic === topic),
       )
-      // Fire only when the client has CONTRACT-DERIVED exception evidence for this topic.
-      // DERIVED_FROM edges are on CLIENT_EXCEPTION nodes (exception:*), not POLICY_CANDIDATE nodes (policy:*).
-      // A non-contract founder note or standalone client claim coexisting with a contract is
+      // Fire only when an active CLIENT candidate is provenance-linked to contract-derived evidence.
+      // A standalone client claim or non-contract-derived exception coexisting with a contract is
       // COMPANY_VS_CLIENT_EXCEPTION or FOUNDER_INSTRUCTION_VS_PRIOR_POLICY, not CONTRACT_VS_COMPANY_POLICY.
+      // The provenance link is established by: the CLIENT candidate's rootSourceVersionIds overlap
+      // with the rootSourceVersionIds of any CLIENT_EXCEPTION node that has a DERIVED_FROM edge
+      // to an active contract (Issue 2 — structural provenance check, not merely contract existence).
       const contractNodeKeys = new Set(contracts.map((c) => c.stableKey))
-      let hasContractDerivedException = false
+      const contractDerivedRootIds = new Set()
       try {
         const snap = graph.requireSnapshot({ actor, tenantId })
-        hasContractDerivedException = snap.nodes.some(
-          (n) =>
+        snap.nodes.forEach((n) => {
+          if (
             n.active &&
             n.type === GRAPH_NODE_TYPE.CLIENT_EXCEPTION &&
             n.semanticScope?.clientId === scope.clientId &&
@@ -804,15 +861,22 @@ export function resolvePolicy(graph, brain, {
                 e.type === GRAPH_EDGE_TYPE.DERIVED_FROM &&
                 e.fromKey === n.stableKey &&
                 contractNodeKeys.has(e.toKey),
-            ),
-        )
-      } catch (_) { /* no snapshot — treat as not contract-derived */ }
-      if (companyActiveForTopic.length > 0 && clientActiveForTopic.length > 0 && hasContractDerivedException) {
+            )
+          ) {
+            ;(n.provenance?.rootSourceVersionIds ?? []).forEach((id) => contractDerivedRootIds.add(id))
+          }
+        })
+      } catch (_) { /* no snapshot — no contract-derived roots */ }
+      // CLIENT candidates whose provenance overlaps with contract-derived exception evidence
+      const contractDerivedClientCandidates = clientActiveForTopic.filter(
+        (c) => c.provenance.rootSourceVersionIds.some((id) => contractDerivedRootIds.has(id)),
+      )
+      if (companyActiveForTopic.length > 0 && contractDerivedClientCandidates.length > 0) {
         extraConflicts.push({
           conflictClass: CONFLICT_CLASS.CONTRACT_VS_COMPANY_POLICY,
           candidateKeys: [
             ...companyActiveForTopic.map((c) => c.graphNodeKey),
-            ...clientActiveForTopic.map((c) => c.graphNodeKey),
+            ...contractDerivedClientCandidates.map((c) => c.graphNodeKey),
           ],
           contractKeys: contracts.map((c) => c.stableKey),
           reason: `Client ${scope.clientId} has active contract(s) with contract-derived exception evidence for topic '${topic ?? 'any'}' contradicting company policy — explicit founder reconciliation required (R8)`,
@@ -1009,8 +1073,20 @@ export function askDwPolicy(graph, brain, {
     ? { level: SEMANTIC_SCOPE.CLIENT, clientId }
     : { level: SEMANTIC_SCOPE.COMPANY }
 
+  // Phase 3 candidate validation uses scope-appropriate candidates (not questionType-based ones).
+  // When questionScope is CLIENT, use clientResolution candidates so CLIENT-scoped governingClaimIds resolve.
+  const scopeResolution = questionScope.level === SEMANTIC_SCOPE.CLIENT
+    ? (clientResolution ?? companyResolution)
+    : companyResolution
+  const founderDecisionCandidates = scopeResolution.candidates.filter(
+    (c) => c.candidateStatus === CANDIDATE_STATUS.ACTIVE,
+  )
+
   const founderDecisions = (brain.decisions ?? []).filter((d) =>
-    isFounderDecisionValid(d, { brain, tenantId, topic, scope: questionScope }),
+    evaluateFounderDecision(d, {
+      brain, tenantId, topic, scope: questionScope,
+      candidates: founderDecisionCandidates,
+    }).valid,
   )
 
   const hasUnknownTemporal = applicablePolicyCandidates.some(
@@ -1144,15 +1220,24 @@ export function buildG3DwIntelligenceContext(graph, brain, {
 } = {}) {
   const g2ctx = graph.dwIntelligenceContext({ actor, tenantId, clientId })
 
-  const companyCandidates = buildPolicyCandidates(graph, brain, {
-    actor, tenantId, scope: { level: SEMANTIC_SCOPE.COMPANY }, queryDate,
+  // Determine context scope for conflict detection and founder decision filtering
+  const contextScope = clientId
+    ? { level: SEMANTIC_SCOPE.CLIENT, clientId }
+    : { level: SEMANTIC_SCOPE.COMPANY }
+
+  // Use resolvePolicy(topic=null) for consistent conflict detection — same CONTRACT detection
+  // and SUPERSEDES application as resolvePolicy (Issue 4). topic=null skips founder decisions.
+  const policyResolution = resolvePolicy(graph, brain, {
+    actor, tenantId, scope: contextScope, topic: null, queryDate,
   })
+
+  // All candidates from resolvePolicy (SUPERSEDES already applied, CONTRACT detection ran)
+  const allCandidates = policyResolution.candidates
+
+  // Split by scope for downstream consumers
   const clientCandidates = clientId
-    ? buildPolicyCandidates(graph, brain, {
-        actor, tenantId, scope: { level: SEMANTIC_SCOPE.CLIENT, clientId }, queryDate,
-      })
+    ? allCandidates.filter((c) => c.scopeLevel === SEMANTIC_SCOPE.CLIENT)
     : []
-  const allCandidates = [...companyCandidates, ...clientCandidates]
 
   const applicablePolicyCandidates = allCandidates.filter(
     (c) =>
@@ -1188,12 +1273,13 @@ export function buildG3DwIntelligenceContext(graph, brain, {
     (c) => c.tenantId === tenantId && c.status === 'CONFLICTED',
   )
 
-  // G3 policy conflicts: derived from G3 reasoning on candidates (Issue 5).
-  // These capture G3-specific classes (MISSING_PRECEDENCE, CONFIDENCE_DISAGREEMENT, etc.)
-  // that the G2 brain cannot classify on its own.
-  const policyConflicts = classifyConflicts(allCandidates, {})
+  // G3 policy conflicts: from resolvePolicy(topic=null) — same CONTRACT detection and
+  // SUPERSEDES application as resolvePolicy (Issue 4)
+  const policyConflicts = policyResolution.detectedConflicts
 
-  // Valid founder decisions (freshness-checked, no scope filter — we check per-conflict below)
+  // Valid founder decisions for conflict coverage — no scope filter here;
+  // doesDecisionCoverConflict handles scope isolation per conflict (Issue 3).
+  // Structural + evidence validity only, so cross-scope decisions still cover same-scope conflicts.
   const validFounderDecisions = (brain.decisions ?? []).filter((d) =>
     isFounderDecisionValid(d, { brain, tenantId, topic: null, scope: null }),
   )
@@ -1212,10 +1298,22 @@ export function buildG3DwIntelligenceContext(graph, brain, {
   const hasConflicts = brainConflicts.length > 0 || unresolvedPolicyConflicts.length > 0
   const danglingProvenances = detectDanglingProvenance(brain, { tenantId })
 
-  // Founder decisions for this tenant
-  const founderDecisions = (brain.decisions ?? []).filter(
-    (d) => d.tenantId === tenantId && d.status === 'RECORDED',
-  )
+  // Founder decisions: use evaluateFounderDecision with contextScope and active candidates (Issues 1, 5).
+  // Only decisions valid for the context scope and with resolvable winner candidates are current.
+  // Decisions that fail (revoked evidence, wrong scope, invalid governingClaimId) are invalidated.
+  const evaluatedDecisions = (brain.decisions ?? []).map((d) => ({
+    d,
+    result: evaluateFounderDecision(d, {
+      brain, tenantId, topic: null, scope: contextScope,
+      candidates: applicablePolicyCandidates,
+    }),
+  }))
+  const founderDecisions = evaluatedDecisions
+    .filter(({ result }) => result.valid)
+    .map(({ d }) => d)
+  const invalidatedFounderDecisions = evaluatedDecisions
+    .filter(({ d, result }) => d.tenantId === tenantId && !result.valid)
+    .map(({ d, result }) => ({ ...d, invalidReason: result.reason }))
 
   const canActAutomatically = false // R9: always false
 
@@ -1262,6 +1360,7 @@ export function buildG3DwIntelligenceContext(graph, brain, {
     excludedPolicyCandidates,
     clientExceptions,
     founderDecisions,
+    invalidatedFounderDecisions,
     precedenceEvidence,
     temporalApplicability,
     danglingProvenance: danglingProvenances,

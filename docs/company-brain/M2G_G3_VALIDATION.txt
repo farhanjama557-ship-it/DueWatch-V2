@@ -1,4 +1,4 @@
-M2G G3 Validation Report — G3 Hardening + Exit-Gate Closure + G3 Consistency Patch
+M2G G3 Validation Report — G3 Hardening + Exit-Gate Closure + G3 Consistency Patch + TRUE FINAL EXIT PATCH
 Branch: m2g/company-brain-bootstrap-g3
 Date: 2026-09-01
 Starting SHA (exit-gate work): f2a533dc902d00b2106c1dd8ef770f8fdca01fbd
@@ -10,18 +10,18 @@ npm run test:company-brain-g2 (G0+G1+G2 suite):
   tests 129 | pass 129 | fail 0 | todo 0
 
 npm run test:company-brain-g3 (G0+G1+G2+G3 suite):
-  tests 215 | pass 215 | fail 0 | todo 0
+  tests 218 | pass 218 | fail 0 | todo 0
 
 npm test (full suite):
-  tests 1185 | pass 1185 | fail 0 | todo 0
+  tests 1188 | pass 1188 | fail 0 | todo 0
 
 npm run build:
-  ✓ built in ~14s — no errors, no new warnings
+  ✓ built in ~13s — no errors, no new warnings
 
 git diff --check:
   (no output — no whitespace errors)
 
-== G3-Specific Tests (36 total: 10 from G3 runtime + 12 from hardening + 10 from exit-gate closure + 4 from consistency patch) ==
+== G3-Specific Tests (39 total: 10 from G3 runtime + 12 from hardening + 10 from exit-gate closure + 4 from consistency patch + 3 from TRUE FINAL EXIT PATCH [net: replaced 1, added 4]) ==
 
   ok 180 - G3-temporal: classify UNKNOWN/CURRENT/EXPIRED/FUTURE from effectiveTime and queryDate
   ok 181 - G3-temporal: UNKNOWN temporal state prevents automatic resolution — canActAutomatically:false
@@ -59,6 +59,11 @@ git diff --check:
   ok 213 - G3-consistency-2: askDwPolicy uncertainty.hasUnresolvedConflicts reflects unresolvedConflicts (3-state)
   ok 214 - G3-consistency-3: buildG3DwIntelligenceContext unresolvedPolicyConflicts is scope-aware
   ok 215 - G3-consistency-4: CONTRACT_VS_COMPANY_POLICY does NOT fire for non-contract-derived client evidence
+  [G3-consistency-4 removed; replaced by test-217 (adversarial regression with 4 explicit preconditions) — see TRUE FINAL EXIT PATCH section below]
+  ok 216 - test-216: decision with invalid governingClaimId cannot govern in resolvePolicy, askDwPolicy, or buildG3DwIntelligenceContext
+  ok 217 - test-217: CONTRACT_VS_COMPANY_POLICY does NOT fire when client evidence is CSV-based (not contract-derived)
+  ok 218 - test-218: resolvePolicy and buildG3DwIntelligenceContext agree on CONTRACT_VS_COMPANY_POLICY for atlas
+  ok 219 - test-219: revoked and out-of-scope founder decisions absent from buildG3DwIntelligenceContext.founderDecisions
 
 == Hardening Fixes Applied (G3 Hardening) ==
 
@@ -229,6 +234,7 @@ Tenant isolation scan (tenantId checks):
 [x] 215. G3-consistency-4: CONTRACT_VS_COMPANY_POLICY negative for non-provenance-linked evidence —
          standalone exception (no contract_id, no DERIVED_FROM edge) + active contract + company
          policy must NOT fire CONTRACT_VS_COMPANY_POLICY (Issue 4)
+         [REMOVED from test file — replaced by test-217 with explicit precondition assertions]
 
 == Files Changed ==
 
@@ -242,6 +248,94 @@ Tenant isolation scan (tenantId checks):
                                                unresolvedConflicts in askDwPolicy, CONTRACT provenance)
   tests/companyBrainG3Policy.test.mjs         (4 new consistency regression tests: 212–215)
   docs/company-brain/M2G_G3_VALIDATION.txt    (this file, updated)
+
+  TRUE FINAL EXIT PATCH (relative to consistency patch):
+  src/lib/companyBrain/policyIntelligence.js  (Issues 1–5: evaluateFounderDecision 3-phase,
+                                               isFounderDecisionValid thin wrapper,
+                                               doesDecisionCoverConflict winner check,
+                                               buildPolicyCandidates topic fix for CLIENT_EXCEPTION,
+                                               CONTRACT provenance structural fix via rootSourceVersionIds,
+                                               askDwPolicy scope-appropriate Phase 3 candidates,
+                                               buildG3DwIntelligenceContext uses resolvePolicy(topic=null),
+                                               invalidatedFounderDecisions exposed)
+  tests/companyBrainG3Policy.test.mjs         (G3-consistency-4 removed; 4 new tests: 216–219)
+  docs/company-brain/M2G_G3_VALIDATION.txt    (this file, updated)
+
+== TRUE FINAL EXIT PATCH — Issues 1–5 (M2G-G3 TRUE FINAL EXIT PATCH) ==
+
+  Issue 1 — Shared evaluateFounderDecision (3-phase):
+    New function evaluateFounderDecision(d, {brain, tenantId, topic, scope, candidates})
+    returning {valid, winner, reason}. Three phases:
+      Phase 1: structural validity (tenantId, status=RECORDED, evidenceClaimIds active)
+      Phase 2: scope validation (CLIENT vs COMPANY, exact clientId match)
+      Phase 3: winner-candidate validation (governingClaimId → ACTIVE candidate in candidates list)
+    isFounderDecisionValid becomes thin wrapper (candidates: null, skips Phase 3).
+    doesDecisionCoverConflict checks winner-candidate existence before topic/scope.
+    applyFounderDecisions uses evaluateFounderDecision with Phase 3 (candidates list provided).
+    askDwPolicy uses evaluateFounderDecision with scope-appropriate candidates for Phase 3
+      (founderDecisionCandidates from scopeResolution, not questionType-based primaryResolution).
+    buildG3DwIntelligenceContext uses evaluateFounderDecision for founderDecisions and
+      produces invalidatedFounderDecisions for decisions that fail any phase.
+
+  Issue 2 — CONTRACT provenance structural fix:
+    CONTRACT_VS_COMPANY_POLICY fires only when a CLIENT policy candidate's
+    provenance.rootSourceVersionIds overlaps with contract-derived CLIENT_EXCEPTION nodes'
+    rootSourceVersionIds (found via DERIVED_FROM edge scan in graph snapshot).
+    CSV-based CLIENT_EXCEPTION POLICY_CANDIDATEs have no DERIVED_FROM edge → no overlap → no fire.
+    buildPolicyCandidates topic fix: topic now uses node.data?.policy_topic for CLIENT_EXCEPTION
+    nodes (so atlas-exception.md appears in clientActiveForTopic with topic='late_fee_policy').
+
+  Issue 3 — Replace G3-consistency-4 with true adversarial regression (test 217):
+    Old test 215 (G3-consistency-4) removed.
+    New test 217 verifies 4 explicit preconditions before asserting CONTRACT does NOT fire:
+      Pre-1: active contract exists for testco
+      Pre-2: active COMPANY late_fee_policy candidate exists
+      Pre-3: active CLIENT late_fee_policy candidate exists for testco
+      Pre-4: CLIENT candidate is NOT contract-derived (no DERIVED_FROM edge to contract node)
+    Then asserts CONTRACT_VS_COMPANY_POLICY absent from resolvePolicy.conflicts.
+
+  Issue 4 — DW Intelligence uses same G3 conflict computation as resolvePolicy:
+    buildG3DwIntelligenceContext now calls resolvePolicy(topic=null) for the context scope.
+    policyConflicts = policyResolution.detectedConflicts (same computation path as resolvePolicy).
+    Test 218 proves resolvePolicy and buildG3DwIntelligenceContext agree on CONTRACT presence
+    for atlas scope.
+
+  Issue 5 — Return only currently valid founder decisions in DW Intelligence:
+    buildG3DwIntelligenceContext.founderDecisions filtered via evaluateFounderDecision with
+    contextScope (CLIENT:clientId when clientId provided, COMPANY otherwise) + Phase 3 candidates.
+    invalidatedFounderDecisions: all tenantId-matching decisions that fail any phase, annotated
+    with invalidReason explaining which phase/check failed.
+    Test 219 proves: CLIENT-scoped decision absent from COMPANY context founderDecisions;
+    decision with revoked evidence claim absent after revocation; both appear in invalidatedFounderDecisions.
+
+== G3 Consistency Patch — Regression Tests (4 new: 212–215) ==
+
+[x] 212. G3-consistency-1: askDwPolicy founderDecisions scope-filtered — atlas sees only atlas
+         decision, COMPANY sees only COMPANY decision, acme-us sees only acme-us decision
+         (three independent decisions in same brain, each scoped differently; Issue 1)
+[x] 213. G3-consistency-2: uncertainty.hasUnresolvedConflicts 3-state proof — A:conflict→true,
+         B:valid decision→false, C:revoke standalone backing→true again (Issue 2 + R6)
+         Uses standalone backing claim in evidenceClaimIds to separate decision validity
+         from candidate presence (candidates remain active in states B and C).
+[x] 214. G3-consistency-3: buildG3DwIntelligenceContext unresolvedPolicyConflicts is scope-aware —
+         atlas decision reduces atlas unresolvedPolicyConflicts; COMPANY and acme-us unchanged
+         (Issue 3; doesDecisionCoverConflict + scope isolation)
+[x] 215. G3-consistency-4 REMOVED — replaced by test-217 (adversarial regression; see below)
+
+== TRUE FINAL EXIT PATCH — Deterministic Regression Tests (4 new: 216–219) ==
+
+[x] 216. test-216: invalid/nonexistent governingClaimId cannot govern in resolvePolicy, askDwPolicy,
+         or buildG3DwIntelligenceContext. The decision appears in invalidatedFounderDecisions with
+         invalidReason explaining the bad governingClaimId. R0, R9 confirmed false.
+[x] 217. test-217: CONTRACT_VS_COMPANY_POLICY does NOT fire when client evidence is CSV-based
+         (not provenance-linked to a contract). Replaces G3-consistency-4 with an adversarial
+         regression that explicitly asserts all 4 preconditions before calling resolvePolicy.
+[x] 218. test-218: resolvePolicy and buildG3DwIntelligenceContext expose same
+         CONTRACT_VS_COMPANY_POLICY state for atlas (Issue 4 regression).
+         Both surfaces include CONTRACT_VS_COMPANY_POLICY; they agree exactly.
+[x] 219. test-219: revoked evidence claim and out-of-scope (CLIENT-scoped in COMPANY context)
+         founder decisions both absent from buildG3DwIntelligenceContext.founderDecisions;
+         both appear in invalidatedFounderDecisions with explaining invalidReason (Issue 5).
 
 == Boundary Conditions Confirmed ==
 

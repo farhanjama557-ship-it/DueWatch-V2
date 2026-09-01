@@ -2185,32 +2185,161 @@ test('G3-consistency-3: buildG3DwIntelligenceContext unresolvedPolicyConflicts i
   assert.equal(afterCompany.boundaries.canonicalMoneyWritable, false, 'R0')
 })
 
-// ── G3-consistency: 4 — CONTRACT provenance negative regression (Issue 4 regression) ──
+// ── Test 216 — invalid governingClaimId cannot govern in resolver, Ask DW, or DW Intelligence ──
 
-test('G3-consistency-4: CONTRACT_VS_COMPANY_POLICY does NOT fire for non-contract-derived client evidence', () => {
-  // A client-scoped founder instruction (not derived from a contract) coexisting with
-  // an active contract and a company late-fee policy must NOT fire CONTRACT_VS_COMPANY_POLICY.
-  // It may fire COMPANY_VS_CLIENT_EXCEPTION or FOUNDER_INSTRUCTION_VS_PRIOR_POLICY instead.
+test('test-216: decision with invalid governingClaimId cannot govern in resolvePolicy, askDwPolicy, or buildG3DwIntelligenceContext', () => {
+  // A founder decision whose governingClaimId points to a non-existent claim must not
+  // produce a winner, must not appear in founderDecisions (after Issue 1 Phase 3 check).
   const brain = new CompanyBrainDurableStore({ clock: clocks() })
 
-  // Company-wide 5% late fee
-  ingestContent(brain, workerA, 'sop-c4.md', 'Charge a 5% late fee on all overdue invoices.', 'sop-c4')
+  // Two conflicting company policies
+  ingestContent(brain, workerA, 'sop-216a.md', 'Charge a 5% late fee on all overdue invoices.', 'sop-216a')
+  ingestContent(brain, workerA, 'sop-216b.md', 'Charge a 3% late fee on all overdue invoices.', 'sop-216b')
 
-  // Active contract for testco — Net 30 payment terms only, no late-fee exception
-  const contractContent = `---\ndocument_type: contract\ncontract_id: contract-testco\nclient_id: testco\nscope: CLIENT\neffective_from: 2026-01-01\n---\nPayment terms: Net 30.`
-  ingestContent(brain, workerA, 'contract-testco.md', contractContent, 'contract-testco')
-
-  // Client-scoped founder instruction saying 2% — but NOT linked to the contract
-  // (ingested as a client_exception_record WITHOUT a contract_id field → no DERIVED_FROM edge)
-  const exceptionContent = `---\ndocument_type: client_exception\nexception_id: exception-testco-standalone\nclient_id: testco\npolicy_topic: late_fee_policy\nscope: CLIENT\n---\nTestCo gets a 2% late fee rate per founder verbal agreement.`
-  ingestContent(brain, workerA, 'exception-testco-standalone.md', exceptionContent, 'exception-testco-standalone')
-
-  // Entity registry so testco is resolvable
-  ingestContent(brain, workerA, 'reg-c4.csv', 'entity_type,entity_id,name\nCLIENT,testco,TestCo', 'reg-c4')
+  // Entity registry
+  ingestContent(brain, workerA, 'reg-216.csv', 'entity_type,entity_id,name\nCOMPANY,duewatch-company,DueWatch', 'reg-216')
 
   const graph = new CompanyGraphStore({ brainStore: brain, clock: clocks() })
   graph.build({ actor: founderA, tenantId: tenantA })
 
+  // Confirm a real candidate exists to use as valid claimId reference
+  const candidates = buildPolicyCandidates(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    scope: { level: SEMANTIC_SCOPE.COMPANY }, queryDate: '2026-08-31',
+  }).filter((c) => c.candidateStatus === CANDIDATE_STATUS.ACTIVE && c.topic === 'late_fee_policy')
+  assert.ok(candidates.length >= 2, 'need at least 2 active late_fee_policy candidates for conflict')
+
+  // Decision with non-existent governingClaimId
+  brain.decisions.push({
+    id: 'decision-216-invalid',
+    tenantId: tenantA,
+    actorId: founderA.id, actorRole: 'FOUNDER',
+    decidedAt: '2026-08-31T12:00:00Z',
+    decisionType: 'RESOLVE_CONFLICT',
+    target: 'late_fee_policy',
+    scope: { level: SEMANTIC_SCOPE.COMPANY },
+    oldState: { status: 'CONFLICTED' },
+    newState: { governingClaimId: 'claim-does-not-exist-xxxxxxxx' },
+    evidenceClaimIds: [],
+    reason: 'invalid decision',
+    revocable: true,
+    idempotencyKey: 'idem-216',
+    requestFingerprint: 'test',
+    supersedesDecisionId: null,
+    status: 'RECORDED',
+  })
+
+  // resolvePolicy: invalid governingClaimId → winner must be null, not RESOLVED by this decision
+  const resolution = resolvePolicy(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    scope: { level: SEMANTIC_SCOPE.COMPANY },
+    topic: 'late_fee_policy',
+    queryDate: '2026-08-31',
+  })
+  assert.notEqual(resolution.status, G3_RESOLUTION_STATUS.RESOLVED,
+    'resolvePolicy must NOT resolve when governingClaimId is invalid')
+  assert.equal(resolution.winner, null, 'resolvePolicy winner must be null for invalid governingClaimId')
+  assert.equal(resolution.canActAutomatically, false, 'R9')
+  assert.equal(resolution.canonicalMoneyWritable, false, 'R0')
+
+  // askDwPolicy: invalid decision must not appear in founderDecisions
+  const askResult = askDwPolicy(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    question: 'What founder decisions exist for the late fee policy?',
+    queryDate: '2026-08-31',
+  })
+  assert.ok(
+    !askResult.founderDecisions.some((d) => d.id === 'decision-216-invalid'),
+    'askDwPolicy.founderDecisions must not include decision with invalid governingClaimId',
+  )
+
+  // buildG3DwIntelligenceContext: invalid decision must not appear in founderDecisions
+  const dwCtx = buildG3DwIntelligenceContext(graph, brain, {
+    actor: founderA, tenantId: tenantA, queryDate: '2026-08-31',
+  })
+  assert.ok(
+    !dwCtx.founderDecisions.some((d) => d.id === 'decision-216-invalid'),
+    'buildG3DwIntelligenceContext.founderDecisions must not include decision with invalid governingClaimId',
+  )
+  assert.ok(
+    dwCtx.invalidatedFounderDecisions.some((d) => d.id === 'decision-216-invalid'),
+    'buildG3DwIntelligenceContext.invalidatedFounderDecisions must include the invalid decision',
+  )
+  assert.ok(
+    dwCtx.invalidatedFounderDecisions.find((d) => d.id === 'decision-216-invalid')?.invalidReason?.includes('governingClaimId'),
+    'invalidatedFounderDecisions entry must explain the invalid governingClaimId',
+  )
+})
+
+// ── Test 217 — true adversarial regression: CSV-based client evidence + contract ─
+
+test('test-217: CONTRACT_VS_COMPANY_POLICY does NOT fire when client evidence is CSV-based (not contract-derived)', () => {
+  // Adversarial regression: all conditions for CONTRACT to fire are present EXCEPT the one
+  // that matters — the client's late_fee_policy evidence is NOT provenance-linked to the contract.
+  // Preconditions explicitly verified before the resolvePolicy call (per spec).
+  const brain = new CompanyBrainDurableStore({ clock: clocks() })
+
+  // Company-wide 5% late fee
+  ingestContent(brain, workerA, 'sop-217.md', 'Charge a 5% late fee on all overdue invoices.', 'sop-217')
+
+  // Active contract for testco — payment terms only, no late-fee clause
+  const contractContent = `---\ndocument_type: contract\ncontract_id: contract-testco-217\nclient_id: testco\nscope: CLIENT\neffective_from: 2026-01-01\n---\nPayment terms: Net 30.`
+  ingestContent(brain, workerA, 'contract-217.md', contractContent, 'contract-217')
+
+  // CSV-based late_fee_policy for testco — NOT a client_exception_record, no DERIVED_FROM edge
+  ingestContent(brain, workerA, 'terms-217.csv',
+    'client,payment_terms_days,late_fee_percent\ntestco,30,2', 'terms-217')
+
+  // Entity registry
+  ingestContent(brain, workerA, 'reg-217.csv',
+    'entity_type,entity_id,name\nCOMPANY,duewatch-company,DueWatch\nCLIENT,testco,TestCo', 'reg-217')
+
+  const graph = new CompanyGraphStore({ brainStore: brain, clock: clocks() })
+  graph.build({ actor: founderA, tenantId: tenantA })
+
+  // Precondition 1: active contract exists for testco
+  const contracts = graph.getContractsForClient({ actor: founderA, tenantId: tenantA, clientId: 'testco' })
+  assert.ok(contracts.length > 0, 'precondition 1: active contract must exist for testco')
+
+  const allCands = buildEffectivePolicyCandidates(graph, brain, {
+    actor: founderA, tenantId: tenantA, clientId: 'testco', queryDate: '2026-08-31',
+  })
+
+  // Precondition 2: active COMPANY late_fee_policy candidate exists
+  const companyActive = allCands.companyCandidates.filter(
+    (c) => c.candidateStatus === CANDIDATE_STATUS.ACTIVE && c.topic === 'late_fee_policy',
+  )
+  assert.ok(companyActive.length > 0, 'precondition 2: active COMPANY late_fee_policy candidate must exist')
+
+  // Precondition 3: active CLIENT late_fee_policy candidate exists for testco
+  const clientActive = allCands.clientCandidates.filter(
+    (c) => c.candidateStatus === CANDIDATE_STATUS.ACTIVE && c.topic === 'late_fee_policy',
+  )
+  assert.ok(clientActive.length > 0, 'precondition 3: active CLIENT late_fee_policy candidate must exist for testco')
+
+  // Precondition 4: CLIENT candidate is NOT contract-derived
+  // Verify by checking the graph snapshot: no CLIENT_EXCEPTION node for testco + late_fee_policy
+  // with a DERIVED_FROM edge to any contract node.
+  const snap = graph.requireSnapshot({ actor: founderA, tenantId: tenantA })
+  const testcoContractKeys = new Set(contracts.map((c) => c.stableKey))
+  const contractDerivedExceptions = snap.nodes.filter(
+    (n) =>
+      n.active &&
+      n.type === GRAPH_NODE_TYPE.CLIENT_EXCEPTION &&
+      n.semanticScope?.clientId === 'testco' &&
+      n.data?.policy_topic === 'late_fee_policy' &&
+      snap.edges.some(
+        (e) =>
+          e.active &&
+          e.type === GRAPH_EDGE_TYPE.DERIVED_FROM &&
+          e.fromKey === n.stableKey &&
+          testcoContractKeys.has(e.toKey),
+      ),
+  )
+  assert.equal(contractDerivedExceptions.length, 0,
+    'precondition 4: no CLIENT_EXCEPTION node for testco+late_fee_policy may be contract-derived')
+
+  // All 4 preconditions verified — now assert CONTRACT does NOT fire
   const result = resolvePolicy(graph, brain, {
     actor: founderA, tenantId: tenantA,
     scope: { level: SEMANTIC_SCOPE.CLIENT, clientId: 'testco' },
@@ -2225,4 +2354,160 @@ test('G3-consistency-4: CONTRACT_VS_COMPANY_POLICY does NOT fire for non-contrac
   )
   assert.equal(result.canActAutomatically, false, 'R9')
   assert.equal(result.canonicalMoneyWritable, false, 'R0')
+})
+
+// ── Test 218 — resolvePolicy and DW Intelligence expose same CONTRACT_VS_COMPANY_POLICY state ──
+
+test('test-218: resolvePolicy and buildG3DwIntelligenceContext agree on CONTRACT_VS_COMPANY_POLICY for atlas', () => {
+  // Issue 4 regression: DW Intelligence must use the same G3 conflict computation as resolvePolicy.
+  // For atlas (which has a contract-derived CLIENT_EXCEPTION with policy_topic: late_fee_policy),
+  // CONTRACT_VS_COMPANY_POLICY must appear in BOTH resolvePolicy.detectedConflicts AND
+  // buildG3DwIntelligenceContext.policyConflicts.
+  const { graph, brain } = seeded()
+
+  // resolvePolicy for atlas/late_fee_policy
+  const resolution = resolvePolicy(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    scope: { level: SEMANTIC_SCOPE.CLIENT, clientId: 'atlas' },
+    topic: 'late_fee_policy',
+    queryDate: '2026-08-31',
+  })
+  const resolutionClasses = resolution.detectedConflicts.map((c) => c.conflictClass)
+  assert.ok(
+    resolutionClasses.includes(CONFLICT_CLASS.CONTRACT_VS_COMPANY_POLICY),
+    `resolvePolicy.detectedConflicts must include CONTRACT_VS_COMPANY_POLICY, got: ${JSON.stringify(resolutionClasses)}`,
+  )
+
+  // DW Intelligence for atlas context
+  const dwCtx = buildG3DwIntelligenceContext(graph, brain, {
+    actor: founderA, tenantId: tenantA, clientId: 'atlas', queryDate: '2026-08-31',
+  })
+  const dwClasses = dwCtx.policyConflicts.map((c) => c.conflictClass)
+  assert.ok(
+    dwClasses.includes(CONFLICT_CLASS.CONTRACT_VS_COMPANY_POLICY),
+    `buildG3DwIntelligenceContext.policyConflicts must include CONTRACT_VS_COMPANY_POLICY, got: ${JSON.stringify(dwClasses)}`,
+  )
+
+  // Both surfaces must agree on CONTRACT presence
+  assert.equal(
+    resolutionClasses.includes(CONFLICT_CLASS.CONTRACT_VS_COMPANY_POLICY),
+    dwClasses.includes(CONFLICT_CLASS.CONTRACT_VS_COMPANY_POLICY),
+    'resolvePolicy and DW Intelligence must agree on CONTRACT_VS_COMPANY_POLICY presence for atlas',
+  )
+  assert.equal(dwCtx.boundaries.canonicalMoneyWritable, false, 'R0')
+  assert.equal(dwCtx.authorityBoundary.canActAutomatically, false, 'R9')
+})
+
+// ── Test 219 — revoked/out-of-scope founder decisions absent from current DW Intelligence founderDecisions ──
+
+test('test-219: revoked and out-of-scope founder decisions absent from buildG3DwIntelligenceContext.founderDecisions', () => {
+  // Issue 5 regression: founderDecisions in DW Intelligence must use canonical validity evaluation
+  // (evaluateFounderDecision with contextScope). Decisions with revoked evidence or wrong scope
+  // must appear in invalidatedFounderDecisions, not founderDecisions.
+  const brain = new CompanyBrainDurableStore({ clock: clocks() })
+
+  // Company policy
+  ingestContent(brain, workerA, 'sop-219.md', 'Charge a 5% late fee on all overdue invoices.', 'sop-219')
+
+  // Backing claim for a valid decision (will be used then revoked)
+  const svIdBeforeIngest = brain.sourceVersions.length
+  ingestContent(brain, workerA, 'backing-219.md', 'Charge a 4% late fee on all overdue invoices.', 'backing-219')
+  const backingClaimAfter = brain.claims.filter((c) => c.tenantId === tenantA).at(-1)
+  assert.ok(backingClaimAfter, 'backing claim must exist')
+  const backingClaimId = backingClaimAfter.id
+
+  // Entity registry
+  ingestContent(brain, workerA, 'reg-219.csv',
+    'entity_type,entity_id,name\nCOMPANY,duewatch-company,DueWatch\nCLIENT,client-219,Client219', 'reg-219')
+
+  const graph = new CompanyGraphStore({ brainStore: brain, clock: clocks() })
+  graph.build({ actor: founderA, tenantId: tenantA })
+
+  const compCandidates = buildPolicyCandidates(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    scope: { level: SEMANTIC_SCOPE.COMPANY }, queryDate: '2026-08-31',
+  }).filter((c) => c.candidateStatus === CANDIDATE_STATUS.ACTIVE && c.topic === 'late_fee_policy')
+  const validClaimId = compCandidates[0]?.claimId ?? null
+
+  // Decision A: COMPANY-scoped, evidenceClaimId will be revoked → should appear in invalidated
+  brain.decisions.push({
+    id: 'decision-219-revoked',
+    tenantId: tenantA,
+    actorId: founderA.id, actorRole: 'FOUNDER',
+    decidedAt: '2026-08-31T10:00:00Z',
+    decisionType: 'RESOLVE_CONFLICT',
+    target: 'late_fee_policy',
+    scope: { level: SEMANTIC_SCOPE.COMPANY },
+    oldState: { status: 'CONFLICTED' },
+    newState: { governingClaimId: validClaimId },
+    evidenceClaimIds: [backingClaimId],
+    reason: 'backed by evidence that will be revoked',
+    revocable: true,
+    idempotencyKey: 'idem-219-revoked',
+    requestFingerprint: 'test',
+    supersedesDecisionId: null,
+    status: 'RECORDED',
+  })
+
+  // Decision B: CLIENT-scoped for client-219 — out-of-scope for COMPANY context → invalidated
+  brain.decisions.push({
+    id: 'decision-219-oos',
+    tenantId: tenantA,
+    actorId: founderA.id, actorRole: 'FOUNDER',
+    decidedAt: '2026-08-31T11:00:00Z',
+    decisionType: 'RESOLVE_CONFLICT',
+    target: 'late_fee_policy',
+    scope: { level: SEMANTIC_SCOPE.CLIENT, clientId: 'client-219' },
+    oldState: { status: 'CONFLICTED' },
+    newState: { governingClaimId: null },
+    evidenceClaimIds: [],
+    reason: 'client-specific decision',
+    revocable: true,
+    idempotencyKey: 'idem-219-oos',
+    requestFingerprint: 'test',
+    supersedesDecisionId: null,
+    status: 'RECORDED',
+  })
+
+  // Before revocation: decision-219-revoked should be in founderDecisions (evidence active)
+  const beforeRevoke = buildG3DwIntelligenceContext(graph, brain, {
+    actor: founderA, tenantId: tenantA, queryDate: '2026-08-31',
+  })
+  assert.ok(
+    beforeRevoke.founderDecisions.some((d) => d.id === 'decision-219-revoked'),
+    'before revocation: decision-219-revoked must be in founderDecisions',
+  )
+  // decision-219-oos is CLIENT-scoped, COMPANY context → must be invalidated
+  assert.ok(
+    !beforeRevoke.founderDecisions.some((d) => d.id === 'decision-219-oos'),
+    'COMPANY context: CLIENT-scoped decision must NOT appear in founderDecisions',
+  )
+  assert.ok(
+    beforeRevoke.invalidatedFounderDecisions.some((d) => d.id === 'decision-219-oos'),
+    'COMPANY context: CLIENT-scoped decision must appear in invalidatedFounderDecisions',
+  )
+
+  // Revoke the backing claim — decision-219-revoked becomes invalid (R6)
+  const backingClaim = brain.claims.find((c) => c.id === backingClaimId)
+  assert.ok(backingClaim)
+  backingClaim.active = false
+
+  const afterRevoke = buildG3DwIntelligenceContext(graph, brain, {
+    actor: founderA, tenantId: tenantA, queryDate: '2026-08-31',
+  })
+  assert.ok(
+    !afterRevoke.founderDecisions.some((d) => d.id === 'decision-219-revoked'),
+    'after revocation: decision-219-revoked must NOT appear in founderDecisions',
+  )
+  assert.ok(
+    afterRevoke.invalidatedFounderDecisions.some((d) => d.id === 'decision-219-revoked'),
+    'after revocation: decision-219-revoked must appear in invalidatedFounderDecisions',
+  )
+  const revokedEntry = afterRevoke.invalidatedFounderDecisions.find((d) => d.id === 'decision-219-revoked')
+  assert.ok(
+    revokedEntry?.invalidReason?.includes('revoked') || revokedEntry?.invalidReason?.includes('evidence'),
+    `invalidReason must explain evidence revocation, got: ${revokedEntry?.invalidReason}`,
+  )
+  assert.equal(afterRevoke.boundaries.canonicalMoneyWritable, false, 'R0')
+  assert.equal(afterRevoke.authorityBoundary.canActAutomatically, false, 'R9')
 })
