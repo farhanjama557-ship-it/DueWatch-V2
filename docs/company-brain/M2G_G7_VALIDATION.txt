@@ -12,7 +12,7 @@ Starting SHA:      20b7fc3358c9f57aa78c3c00584781a05b0e4d1f  (frozen G6 head)
 Checkpoint 1:      a7ac269a2e53c37573f55d48a2008b12ab6988bb
 Checkpoint 2:      933d3c2ad9dbd7a1435c1f8af85fe1668802d11d
 Checkpoint 3:      2aee5c809f4ada9e89aebb9a5aa6eeff650fb5ae
-Checkpoint 4:      <G7_CP4_SHA>
+Checkpoint 4:      83fea811e98d94eb9294d1d216ee101d72a6feb1
 
 Preconditions verified before editing:
   branch/HEAD = 20b7fc3358c9f57aa78c3c00584781a05b0e4d1f   OK
