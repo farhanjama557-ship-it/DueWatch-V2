@@ -329,8 +329,30 @@ test('untrusted resolver output cannot emit action-control events', async () => 
 
 test('safe resolver events can establish client, candidates and selected invoice in one turn', async () => {
   const calls = []
+  const verifiedEvents = [
+    {
+      type: ASK_DW_CASE_EVENT.SET_ACTIVE_CLIENT,
+      payload: { clientRef: { kind: 'client', id: 'client-anthony' } },
+    },
+    {
+      type: ASK_DW_CASE_EVENT.RESOLVE_REFERENCE,
+      payload: {
+        term: 'anthony',
+        ref: { kind: 'client', id: 'client-anthony' },
+      },
+    },
+    {
+      type: ASK_DW_CASE_EVENT.SET_INVOICE_CANDIDATES,
+      payload: { invoiceRefs: [{ kind: 'invoice', id: 'inv-1844' }] },
+    },
+    {
+      type: ASK_DW_CASE_EVENT.SELECT_INVOICE,
+      payload: { invoiceRef: { kind: 'invoice', id: 'inv-1844' } },
+    },
+  ]
   const runtime = createAskDwCaseAwareRuntime({
     runInvoiceQuestion: fakeInvoiceRunner(calls),
+    resolveCaseEvents: async () => verifiedEvents,
   })
 
   const result = await runtime.runTurn({
@@ -339,27 +361,7 @@ test('safe resolver events can establish client, candidates and selected invoice
     turnId: 'turn-resolve',
     text: 'What is going on with Anthony?',
     now: new Date(at(10)),
-    proposedResolverEvents: [
-      {
-        type: ASK_DW_CASE_EVENT.SET_ACTIVE_CLIENT,
-        payload: { clientRef: { kind: 'client', id: 'client-anthony' } },
-      },
-      {
-        type: ASK_DW_CASE_EVENT.RESOLVE_REFERENCE,
-        payload: {
-          term: 'anthony',
-          ref: { kind: 'client', id: 'client-anthony' },
-        },
-      },
-      {
-        type: ASK_DW_CASE_EVENT.SET_INVOICE_CANDIDATES,
-        payload: { invoiceRefs: [{ kind: 'invoice', id: 'inv-1844' }] },
-      },
-      {
-        type: ASK_DW_CASE_EVENT.SELECT_INVOICE,
-        payload: { invoiceRef: { kind: 'invoice', id: 'inv-1844' } },
-      },
-    ],
+    proposedResolverEvents: verifiedEvents,
   })
 
   assert.equal(result.status, 'ANSWERED')

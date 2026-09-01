@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 
 import {
   ASK_DW_CASE_EVENT,
+  applyAskDwCaseEvent,
   createAskDwCaseState,
 } from '../src/lib/dwIntelligence/askDwCaseState.js'
 import {
@@ -615,4 +616,275 @@ test('M2B runtime patch lets blocked resolver outcomes surface without granting 
   const safeBlock = /const SAFE_RESOLVER_EVENT_TYPES = new Set\(\[([\s\S]*?)\]\)/.exec(source)
   assert.ok(safeBlock)
   assert.doesNotMatch(safeBlock[1], /CONFIRM_ACTION_REFERENCE/)
+})
+
+test('G7-CP5 explicit client switches, return, and ordinal correction preserve deterministic focus', async () => {
+  const data = baseData()
+  const supabase = makeSupabase({ data })
+  const liveCalls = []
+  const { runtime } = runtimeFor(supabase, liveCalls)
+
+  const anthony = await runtime.runTurn({
+    tenantId: TENANT, caseState: initialState(), turnId: 'cp5-anthony',
+    text: 'Check INV-1902', now: new Date('2026-08-27T14:00:00.000Z'),
+  })
+  const sarah = await runtime.runTurn({
+    tenantId: TENANT, caseState: anthony.caseState, turnId: 'cp5-sarah',
+    text: 'what about Sarah?', now: new Date('2026-08-27T14:01:00.000Z'),
+  })
+  const back = await runtime.runTurn({
+    tenantId: TENANT, caseState: sarah.caseState, turnId: 'cp5-back',
+    text: 'back to Anthony Miller', now: new Date('2026-08-27T14:02:00.000Z'),
+  })
+  const corrected = await runtime.runTurn({
+    tenantId: TENANT, caseState: back.caseState, turnId: 'cp5-second',
+    text: 'I meant the second invoice', now: new Date('2026-08-27T14:03:00.000Z'),
+  })
+
+  assert.equal(anthony.caseContext.focus.invoiceRef.id, 'invoice-anthony-1902')
+  assert.equal(sarah.caseContext.focus.clientRef.id, 'client-sarah')
+  assert.equal(sarah.caseContext.focus.invoiceRef.id, 'invoice-sarah-2030')
+  assert.equal(back.status, ASK_DW_ENTITY_RESOLUTION_STATUS.NEEDS_INVOICE_RESOLUTION)
+  assert.equal(back.caseContext.focus.clientRef.id, 'client-anthony')
+  assert.equal(back.caseContext.focus.invoiceRef, null)
+  assert.equal(corrected.status, 'ANSWERED')
+  assert.equal(corrected.control.classification, 'CORRECT_ACTIVE_INVOICE')
+  assert.equal(corrected.caseContext.focus.invoiceRef.id, 'invoice-anthony-1902')
+  assert.deepEqual(liveCalls.map((call) => call.invoiceId), [
+    'invoice-anthony-1902', 'invoice-sarah-2030', 'invoice-anthony-1902',
+  ])
+})
+
+test('G7-CP5 pronoun and one-word follow-ups reverify and retain only current valid focus', async () => {
+  const supabase = makeSupabase()
+  const liveCalls = []
+  const { runtime } = runtimeFor(supabase, liveCalls)
+  const first = await runtime.runTurn({
+    tenantId: TENANT, caseState: initialState(), turnId: 'cp5-focus',
+    text: 'Check INV-1902', now: new Date('2026-08-27T14:10:00.000Z'),
+  })
+  const why = await runtime.runTurn({
+    tenantId: TENANT, caseState: first.caseState, turnId: 'cp5-why',
+    text: 'why?', mode: 'deep', now: new Date('2026-08-27T14:11:00.000Z'),
+  })
+  const them = await runtime.runTurn({
+    tenantId: TENANT, caseState: why.caseState, turnId: 'cp5-them',
+    text: 'what about them?', now: new Date('2026-08-27T14:12:00.000Z'),
+  })
+
+  assert.equal(why.caseContext.focus.invoiceRef.id, 'invoice-anthony-1902')
+  assert.equal(them.caseContext.focus.clientRef.id, 'client-anthony')
+  assert.equal(them.caseContext.focus.invoiceRef.id, 'invoice-anthony-1902')
+  assert.equal(why.resolver.status, ASK_DW_ENTITY_RESOLUTION_STATUS.RESOLVED)
+  assert.equal(liveCalls[1].mode, 'deep')
+  assert.equal(liveCalls[2].invoiceId, 'invoice-anthony-1902')
+})
+
+test('G7-CP5 an invoice-only UI anchor is tenant-reverified and gains its real client focus', async () => {
+  let state = initialState()
+  for (const event of [
+    {
+      type: ASK_DW_CASE_EVENT.SET_INVOICE_CANDIDATES,
+      payload: { invoiceRefs: [{ kind: 'invoice', id: 'invoice-anthony-1902' }] },
+    },
+    {
+      type: ASK_DW_CASE_EVENT.SELECT_INVOICE,
+      payload: { invoiceRef: { kind: 'invoice', id: 'invoice-anthony-1902' } },
+    },
+  ]) {
+    state = applyAskDwCaseEvent(state, {
+      ...event, tenantId: TENANT, expectedVersion: state.version,
+      turnId: `cp5-anchor-${state.version}`, at: '2026-08-27T14:15:00.000Z',
+    })
+  }
+  const supabase = makeSupabase()
+  const liveCalls = []
+  const { runtime } = runtimeFor(supabase, liveCalls)
+  const result = await runtime.runTurn({
+    tenantId: TENANT, caseState: state, turnId: 'cp5-anchor-follow-up',
+    text: 'that one', now: new Date('2026-08-27T14:16:00.000Z'),
+  })
+
+  assert.equal(result.status, 'ANSWERED')
+  assert.equal(result.caseContext.focus.clientRef.id, 'client-anthony')
+  assert.equal(result.caseContext.focus.invoiceRef.id, 'invoice-anthony-1902')
+  assert.equal(liveCalls[0].invoiceId, 'invoice-anthony-1902')
+})
+
+test('G7-CP5 deleted invoice is cleared on a follow-up instead of silently surviving', async () => {
+  const data = baseData()
+  const supabase = makeSupabase({ data })
+  const liveCalls = []
+  const { runtime } = runtimeFor(supabase, liveCalls)
+  const first = await runtime.runTurn({
+    tenantId: TENANT, caseState: initialState(), turnId: 'cp5-before-delete',
+    text: 'Check INV-1902', now: new Date('2026-08-27T14:20:00.000Z'),
+  })
+  data.invoices = data.invoices.filter((row) => row.id !== 'invoice-anthony-1902')
+  const followUp = await runtime.runTurn({
+    tenantId: TENANT, caseState: first.caseState, turnId: 'cp5-after-delete',
+    text: 'why?', now: new Date('2026-08-27T14:21:00.000Z'),
+  })
+
+  assert.equal(followUp.status, ASK_DW_ENTITY_RESOLUTION_STATUS.NEEDS_INVOICE_RESOLUTION)
+  assert.equal(followUp.caseContext.focus.clientRef.id, 'client-anthony')
+  assert.equal(followUp.caseContext.focus.invoiceRef, null)
+  assert.equal(liveCalls.length, 1)
+})
+
+test('G7-CP5 deleted client clears all conversational focus on a pronoun turn', async () => {
+  const data = baseData()
+  const supabase = makeSupabase({ data })
+  const liveCalls = []
+  const { runtime } = runtimeFor(supabase, liveCalls)
+  const first = await runtime.runTurn({
+    tenantId: TENANT, caseState: initialState(), turnId: 'cp5-client-before',
+    text: 'Check INV-1902', now: new Date('2026-08-27T14:30:00.000Z'),
+  })
+  data.clients = data.clients.filter((row) => row.id !== 'client-anthony')
+  const followUp = await runtime.runTurn({
+    tenantId: TENANT, caseState: first.caseState, turnId: 'cp5-client-after',
+    text: 'what about them?', now: new Date('2026-08-27T14:31:00.000Z'),
+  })
+
+  assert.equal(followUp.status, ASK_DW_ENTITY_RESOLUTION_STATUS.CLIENT_NOT_FOUND)
+  assert.equal(followUp.caseContext.focus.clientRef, null)
+  assert.equal(followUp.caseContext.focus.invoiceRef, null)
+  assert.equal(liveCalls.length, 1)
+})
+
+test('G7-CP5 first and second invoice operate only over the verified ordered candidate set', async () => {
+  const supabase = makeSupabase()
+  const liveCalls = []
+  const { runtime } = runtimeFor(supabase, liveCalls)
+  const second = await runtime.runTurn({
+    tenantId: TENANT, caseState: initialState(), turnId: 'cp5-ordinal-base',
+    text: 'Check INV-1902', now: new Date('2026-08-27T14:40:00.000Z'),
+  })
+  const first = await runtime.runTurn({
+    tenantId: TENANT, caseState: second.caseState, turnId: 'cp5-first',
+    text: 'the first invoice', now: new Date('2026-08-27T14:41:00.000Z'),
+  })
+  const backToSecond = await runtime.runTurn({
+    tenantId: TENANT, caseState: first.caseState, turnId: 'cp5-second-again',
+    text: 'the second one', now: new Date('2026-08-27T14:42:00.000Z'),
+  })
+
+  assert.equal(first.caseContext.focus.invoiceRef.id, 'invoice-anthony-1844')
+  assert.equal(backToSecond.caseContext.focus.invoiceRef.id, 'invoice-anthony-1902')
+  assert.deepEqual(backToSecond.caseContext.candidates.invoiceRefs.map((ref) => ref.id), [
+    'invoice-anthony-1844', 'invoice-anthony-1902',
+  ])
+})
+
+test('G7-CP5 missing ordinal and ambiguous other-invoice references fail closed', async () => {
+  const data = baseData()
+  data.invoices.push({
+    id: 'invoice-anthony-2001', user_id: TENANT, client_id: 'client-anthony',
+    inv_num: 'INV-2001', created_at: '2026-04-01T00:00:00Z',
+  })
+  const supabase = makeSupabase({ data })
+  const liveCalls = []
+  const { runtime } = runtimeFor(supabase, liveCalls)
+  const first = await runtime.runTurn({
+    tenantId: TENANT, caseState: initialState(), turnId: 'cp5-three',
+    text: 'Check INV-1902', now: new Date('2026-08-27T14:50:00.000Z'),
+  })
+  const other = await runtime.runTurn({
+    tenantId: TENANT, caseState: first.caseState, turnId: 'cp5-other-ambiguous',
+    text: 'no, the other one', now: new Date('2026-08-27T14:51:00.000Z'),
+  })
+
+  assert.equal(other.status, ASK_DW_ENTITY_RESOLUTION_STATUS.NEEDS_REFERENCE_RESOLUTION)
+  assert.match(other.reason, /more than one alternate/i)
+  assert.equal(other.caseContext.focus.invoiceRef.id, 'invoice-anthony-1902')
+
+  const sarah = await runtime.runTurn({
+    tenantId: TENANT, caseState: initialState(), turnId: 'cp5-sarah-one',
+    text: 'Check INV-2030', now: new Date('2026-08-27T14:52:00.000Z'),
+  })
+  const missingSecond = await runtime.runTurn({
+    tenantId: TENANT, caseState: sarah.caseState, turnId: 'cp5-missing-second',
+    text: 'the second invoice', now: new Date('2026-08-27T14:53:00.000Z'),
+  })
+  assert.equal(missingSecond.status, ASK_DW_ENTITY_RESOLUTION_STATUS.NEEDS_REFERENCE_RESOLUTION)
+  assert.equal(missingSecond.caseContext.focus.invoiceRef.id, 'invoice-sarah-2030')
+})
+
+test('G7-CP5 contract follow-up uses verified focus without treating contract as a client', async () => {
+  const supabase = makeSupabase()
+  const liveCalls = []
+  const { runtime } = runtimeFor(supabase, liveCalls)
+  const first = await runtime.runTurn({
+    tenantId: TENANT, caseState: initialState(), turnId: 'cp5-contract-base',
+    text: 'Check INV-1902', now: new Date('2026-08-27T15:00:00.000Z'),
+  })
+  const contract = await runtime.runTurn({
+    tenantId: TENANT, caseState: first.caseState, turnId: 'cp5-contract',
+    text: 'what about the contract?', now: new Date('2026-08-27T15:01:00.000Z'),
+  })
+  assert.equal(contract.status, 'ANSWERED')
+  assert.equal(contract.caseContext.focus.invoiceRef.id, 'invoice-anthony-1902')
+  assert.equal(contract.resolver.status, ASK_DW_ENTITY_RESOLUTION_STATUS.RESOLVED)
+})
+
+test('G7-CP5 new-evidence and Company Brain corrections change neither focus nor durable truth', async () => {
+  const supabase = makeSupabase()
+  const liveCalls = []
+  const { runtime } = runtimeFor(supabase, liveCalls)
+  const first = await runtime.runTurn({
+    tenantId: TENANT, caseState: initialState(), turnId: 'cp5-correction-base',
+    text: 'Check INV-1902', now: new Date('2026-08-27T15:10:00.000Z'),
+  })
+  const evidenceAssertion = await runtime.runTurn({
+    tenantId: TENANT, caseState: first.caseState, turnId: 'cp5-new-evidence',
+    text: 'they paid yesterday', now: new Date('2026-08-27T15:11:00.000Z'),
+  })
+  const policyCorrection = await runtime.runTurn({
+    tenantId: TENANT, caseState: evidenceAssertion.caseState, turnId: 'cp5-policy-correction',
+    text: 'no, our policy is different', now: new Date('2026-08-27T15:12:00.000Z'),
+  })
+  const serialized = JSON.stringify(policyCorrection.caseState)
+
+  assert.equal(evidenceAssertion.caseContext.focus.invoiceRef.id, 'invoice-anthony-1902')
+  assert.equal(policyCorrection.caseContext.focus.invoiceRef.id, 'invoice-anthony-1902')
+  assert.doesNotMatch(serialized, /paid|balance|canonicalFacts|companyBrain|authoritySnapshot/i)
+  assert.equal(policyCorrection.caseContext.boundaries.businessAuthorityStored, false)
+})
+
+test('G7-CP5 every follow-up rechecks authenticated tenant scope before reference reads', async () => {
+  const supabase = makeSupabase()
+  const liveCalls = []
+  const { runtime } = runtimeFor(supabase, liveCalls)
+  const first = await runtime.runTurn({
+    tenantId: TENANT, caseState: initialState(), turnId: 'cp5-tenant-base',
+    text: 'Check INV-1902', now: new Date('2026-08-27T15:20:00.000Z'),
+  })
+  supabase.auth.getUser = async () => ({ data: { user: { id: OTHER_TENANT } }, error: null })
+
+  await assert.rejects(() => runtime.runTurn({
+    tenantId: TENANT, caseState: first.caseState, turnId: 'cp5-tenant-follow-up',
+    text: 'why?', now: new Date('2026-08-27T15:21:00.000Z'),
+  }), /tenant mismatch/)
+  assert.equal(liveCalls.length, 1)
+})
+
+test('G7-CP5 proposed resolver event cannot invent an invoice outside verified candidates', async () => {
+  const supabase = makeSupabase()
+  const liveCalls = []
+  const { runtime } = runtimeFor(supabase, liveCalls)
+  const first = await runtime.runTurn({
+    tenantId: TENANT, caseState: initialState(), turnId: 'cp5-model-base',
+    text: 'Check INV-1902', now: new Date('2026-08-27T15:30:00.000Z'),
+  })
+
+  await assert.rejects(() => runtime.runTurn({
+    tenantId: TENANT, caseState: first.caseState, turnId: 'cp5-model-invented',
+    text: 'that one', now: new Date('2026-08-27T15:31:00.000Z'),
+    proposedResolverEvents: [{
+      type: ASK_DW_CASE_EVENT.CORRECT_ACTIVE_INVOICE,
+      payload: { invoiceRef: { kind: 'invoice', id: 'invoice-invented' } },
+    }],
+  }), /resolver proposal was not independently verified/)
+  assert.equal(liveCalls.length, 1)
 })

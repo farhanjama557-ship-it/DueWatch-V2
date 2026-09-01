@@ -14,6 +14,7 @@ const SAFE_RESOLVER_EVENT_TYPES = new Set([
   ASK_DW_CASE_EVENT.OPEN_CASE,
   ASK_DW_CASE_EVENT.SWITCH_CASE,
   ASK_DW_CASE_EVENT.SET_ACTIVE_CLIENT,
+  ASK_DW_CASE_EVENT.CLEAR_ACTIVE_FOCUS,
   ASK_DW_CASE_EVENT.SET_INVOICE_CANDIDATES,
   ASK_DW_CASE_EVENT.SELECT_INVOICE,
   ASK_DW_CASE_EVENT.CORRECT_ACTIVE_INVOICE,
@@ -35,6 +36,7 @@ const SAFE_RESOLVER_OUTCOME_STATUSES = new Set([
 
 const SHORTER_PHRASES = new Set([
   'make it shorter',
+  'make that shorter',
   'shorter',
   'keep it short',
   'be brief',
@@ -45,6 +47,12 @@ const OTHER_INVOICE_PHRASES = new Set([
   'the other invoice',
   'nah the other invoice',
   'no the other invoice',
+  'the other one',
+  'no the other one',
+  'no not that one',
+  'what about the other invoice',
+  'what about the other one',
+  'and the other invoice',
 ])
 
 const SUSPEND_ACTION_PHRASES = new Set([
@@ -95,6 +103,12 @@ function isoTime(value) {
 
 function sameRef(left, right) {
   return Boolean(left && right && left.kind === right.kind && left.id === right.id)
+}
+
+function invoiceOrdinalIndex(normalized) {
+  const match = /^(?:no )?(?:i meant )?(?:the )?(first|second)(?: invoice| one)?$/.exec(normalized)
+  if (!match) return null
+  return match[1] === 'first' ? 0 : 1
 }
 
 function assertConversationTtl(state, at) {
@@ -196,6 +210,28 @@ export function resolveAskDwDeterministicCaseControl({ state, text } = {}) {
     })
   }
 
+  const ordinalIndex = invoiceOrdinalIndex(normalized)
+  if (ordinalIndex != null) {
+    const candidates = current.candidates?.invoiceRefs || []
+    const selected = candidates[ordinalIndex] ?? null
+    if (!selected) {
+      return controlResult('ORDINAL_INVOICE', {
+        blocked: true,
+        status: 'NEEDS_REFERENCE_RESOLUTION',
+        reason: `The active case does not have a deterministic ${ordinalIndex === 0 ? 'first' : 'second'} invoice candidate.`,
+      })
+    }
+    if (sameRef(selected, current.focus?.invoiceRef)) {
+      return controlResult('KEEP_ACTIVE_INVOICE')
+    }
+    return controlResult('CORRECT_ACTIVE_INVOICE', {
+      event: {
+        type: ASK_DW_CASE_EVENT.CORRECT_ACTIVE_INVOICE,
+        payload: { invoiceRef: selected },
+      },
+    })
+  }
+
   if (OTHER_INVOICE_PHRASES.has(normalized)) {
     const candidates = current.candidates?.invoiceRefs || []
     const alternatives = candidates.filter((ref) => !sameRef(ref, current.focus?.invoiceRef))
@@ -284,6 +320,18 @@ function validateResolverEvent(event) {
   }
 }
 
+function stableEventValue(value) {
+  if (Array.isArray(value)) return `[${value.map(stableEventValue).join(',')}]`
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableEventValue(value[key])}`).join(',')}}`
+  }
+  return JSON.stringify(value)
+}
+
+function resolverEventKey(event) {
+  return stableEventValue(event)
+}
+
 
 function validateResolverOutcome(resolved) {
   if (resolved == null || Array.isArray(resolved)) return null
@@ -348,6 +396,7 @@ function noReadResult({
       caseStateCanGrantAuthority: false,
       directExecutionPerformed: false,
       deterministicActionPhraseGate: true,
+      modelProposedReferentsRequireResolverVerification: true,
     },
   })
 }
@@ -409,9 +458,10 @@ export function createAskDwCaseAwareRuntime({
       const appliedEvents = []
       let resolverOutcome = null
 
-      let resolverEvents = Array.isArray(proposedResolverEvents)
-        ? [...proposedResolverEvents]
+      const proposedEvents = Array.isArray(proposedResolverEvents)
+        ? proposedResolverEvents.map(validateResolverEvent)
         : []
+      let resolverEvents = []
 
       if (resolveCaseEvents) {
         const resolved = await resolveCaseEvents(freeze({
@@ -427,11 +477,19 @@ export function createAskDwCaseAwareRuntime({
         if (!Array.isArray(emitted)) {
           throw new Error('Ask DW resolveCaseEvents must return an event array')
         }
-        resolverEvents = [...resolverEvents, ...emitted]
+        resolverEvents = emitted.map(validateResolverEvent)
       }
 
-      for (const rawEvent of resolverEvents) {
-        const event = validateResolverEvent(rawEvent)
+      if (proposedEvents.length > 0) {
+        const verifiedEventKeys = new Set(resolverEvents.map(resolverEventKey))
+        for (const proposal of proposedEvents) {
+          if (!verifiedEventKeys.has(resolverEventKey(proposal))) {
+            throw new Error('Ask DW resolver proposal was not independently verified')
+          }
+        }
+      }
+
+      for (const event of resolverEvents) {
         next = applyTurnEvent(next, event, { tenantId: tenant, turnId: turn, at })
         appliedEvents.push(event)
       }
@@ -532,6 +590,7 @@ export function createAskDwCaseAwareRuntime({
           caseStateCanGrantAuthority: false,
           directExecutionPerformed: false,
           deterministicActionPhraseGate: true,
+          modelProposedReferentsRequireResolverVerification: true,
         },
       })
     },

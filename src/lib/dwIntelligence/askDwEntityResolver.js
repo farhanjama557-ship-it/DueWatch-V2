@@ -8,12 +8,15 @@ const MAX_EXACT_INVOICE_VARIANTS = 4
 
 const CLIENT_TERM_STOPWORDS = new Set([
   'about', 'again', 'amount', 'and', 'are', 'balance', 'been', 'being', 'brief',
-  'calculate', 'calculations', 'client', 'customer', 'decide', 'did', 'do', 'does',
+  'back', 'calculate', 'calculations', 'client', 'contract', 'customer', 'decide',
+  'did', 'different', 'dispute', 'do', 'does',
   'doing', 'done', 'due', 'follow', 'followed', 'following', 'for', 'from', 'going',
-  'has', 'hasnt', 'have', 'history', 'invoice', 'invoices', 'late', 'make', 'money',
+  'first', 'has', 'hasnt', 'have', 'her', 'him', 'history', 'invoice', 'invoices',
+  'it', 'late', 'make', 'money', 'one',
   'other', 'outstanding', 'overdue', 'paid', 'pay', 'paying', 'payment', 'payments',
-  'please', 'remind', 'reminder', 'reminders', 'short', 'shorter', 'should', 'status',
-  'that', 'the', 'their', 'them', 'this', 'today', 'what', 'whats', 'when', 'where',
+  'policy', 'please', 'remind', 'reminder', 'reminders', 'second', 'short', 'shorter',
+  'should', 'status', 'that', 'the', 'their', 'them', 'they', 'this', 'to', 'today',
+  'what', 'whats', 'when', 'where',
   'which', 'why', 'with', 'yesterday', 'you', 'your',
 ])
 
@@ -28,6 +31,7 @@ export const ASK_DW_ENTITY_RESOLUTION_STATUS = Object.freeze({
   CLIENT_HAS_NO_INVOICES: 'CLIENT_HAS_NO_INVOICES',
   NEEDS_INVOICE_RESOLUTION: 'NEEDS_INVOICE_RESOLUTION',
   INVOICE_NOT_FOUND: 'INVOICE_NOT_FOUND',
+  NEEDS_REFERENCE_RESOLUTION: 'NEEDS_REFERENCE_RESOLUTION',
 })
 
 export const ASK_DW_ENTITY_RESOLVER_PROFILE = Object.freeze({
@@ -361,8 +365,127 @@ function resolveInvoiceBindingEvent(term, invoice) {
   }
 }
 
+function clearActiveFocusEvent() {
+  return { type: ASK_DW_CASE_EVENT.CLEAR_ACTIVE_FOCUS, payload: {} }
+}
+
 function sameId(reference, id) {
   return Boolean(reference && reference.id === id)
+}
+
+async function revalidateActiveFocus({ supabase, tenantId, caseContext }) {
+  const activeClientRef = caseContext?.focus?.clientRef ?? null
+  const activeInvoiceRef = caseContext?.focus?.invoiceRef ?? null
+
+  if (!activeClientRef && !activeInvoiceRef) {
+    return outcome({
+      status: ASK_DW_ENTITY_RESOLUTION_STATUS.NEEDS_REFERENCE_RESOLUTION,
+      blocked: true,
+      reason: 'This follow-up has no current verified client or invoice reference.',
+    })
+  }
+
+  let activeInvoice = null
+  let clientId = activeClientRef?.id ?? null
+  if (activeInvoiceRef) {
+    activeInvoice = await readInvoiceById(supabase, tenantId, activeInvoiceRef.id)
+    if (!activeInvoice) {
+      if (!activeClientRef) {
+        return outcome({
+          status: ASK_DW_ENTITY_RESOLUTION_STATUS.NEEDS_INVOICE_RESOLUTION,
+          events: [clearActiveFocusEvent()],
+          blocked: true,
+          reason: 'The prior invoice reference is no longer available for the authenticated tenant.',
+        })
+      }
+      const retainedClient = await readClientById(supabase, tenantId, activeClientRef.id)
+      if (!retainedClient) {
+        return outcome({
+          status: ASK_DW_ENTITY_RESOLUTION_STATUS.CLIENT_NOT_FOUND,
+          events: [clearActiveFocusEvent()],
+          blocked: true,
+          reason: 'The prior client and invoice references are no longer available for the authenticated tenant.',
+        })
+      }
+      const remainingInvoices = await readClientInvoices(supabase, tenantId, retainedClient.id)
+      return outcome({
+        status: ASK_DW_ENTITY_RESOLUTION_STATUS.NEEDS_INVOICE_RESOLUTION,
+        events: [
+          ...clientEvents({ client: retainedClient, term: null }),
+          candidateEvent(remainingInvoices.truncated ? [] : remainingInvoices.invoices),
+        ],
+        blocked: true,
+        reason: 'The prior invoice reference is no longer available for the authenticated tenant.',
+      })
+    }
+    clientId = clientId ?? activeInvoice.client_id
+  }
+
+  const client = await readClientById(supabase, tenantId, clientId)
+  if (!client) {
+    return outcome({
+      status: ASK_DW_ENTITY_RESOLUTION_STATUS.CLIENT_NOT_FOUND,
+      events: [clearActiveFocusEvent()],
+      blocked: true,
+      reason: 'The prior client reference is no longer available for the authenticated tenant.',
+    })
+  }
+
+  const invoiceRead = await readClientInvoices(supabase, tenantId, client.id)
+  const baseEvents = clientEvents({ client, term: null })
+
+  if (invoiceRead.truncated) {
+    if (activeInvoice && activeInvoice.client_id === client.id) {
+      return outcome({
+        status: ASK_DW_ENTITY_RESOLUTION_STATUS.RESOLVED_WITH_LIMITATION,
+        events: [...baseEvents, candidateEvent([activeInvoice]), selectInvoiceEvent(activeInvoice)],
+        reason: 'The active references were re-verified, but the client invoice set exceeds the bounded candidate limit. Ordinal and other-invoice routing require an explicit invoice number.',
+      })
+    }
+    return outcome({
+      status: ASK_DW_ENTITY_RESOLUTION_STATUS.NEEDS_INVOICE_RESOLUTION,
+      events: [...baseEvents, candidateEvent([])],
+      blocked: true,
+      reason: 'The current client has more invoices than the bounded deterministic candidate set can carry; an explicit invoice number is required.',
+    })
+  }
+
+  const invoices = invoiceRead.invoices
+  const events = [...baseEvents, candidateEvent(invoices)]
+  if (invoices.length === 0) {
+    return outcome({
+      status: ASK_DW_ENTITY_RESOLUTION_STATUS.CLIENT_HAS_NO_INVOICES,
+      events,
+      blocked: true,
+      reason: 'The current client no longer has an available invoice reference.',
+    })
+  }
+
+  if (activeInvoiceRef) {
+    const current = invoices.find((invoice) => invoice.id === activeInvoiceRef.id)
+    if (!current || current.client_id !== client.id) {
+      return outcome({
+        status: ASK_DW_ENTITY_RESOLUTION_STATUS.NEEDS_INVOICE_RESOLUTION,
+        events,
+        blocked: true,
+        reason: 'The prior invoice is no longer in the current client candidate set; explicit selection is required.',
+      })
+    }
+    events.push(selectInvoiceEvent(current))
+    return outcome({ status: ASK_DW_ENTITY_RESOLUTION_STATUS.RESOLVED, events })
+  }
+
+  if (invoices.length === 1) {
+    events.push(selectInvoiceEvent(invoices[0]))
+    return outcome({ status: ASK_DW_ENTITY_RESOLUTION_STATUS.RESOLVED, events })
+  }
+
+  return outcome({
+    status: ASK_DW_ENTITY_RESOLUTION_STATUS.NEEDS_INVOICE_RESOLUTION,
+    events,
+    blocked: true,
+    reason: 'The current client has more than one verified invoice; explicit selection is required.',
+  })
 }
 
 async function resolveExplicitInvoice({ supabase, tenantId, lookup }) {
@@ -432,7 +555,7 @@ async function resolveClientText({
 
   if (search.terms.length === 0) {
     if (activeClientRef || activeInvoiceRef) {
-      return outcome({ status: ASK_DW_ENTITY_RESOLUTION_STATUS.NOOP })
+      return revalidateActiveFocus({ supabase, tenantId, caseContext })
     }
     return outcome({
       status: ASK_DW_ENTITY_RESOLUTION_STATUS.NEEDS_CLIENT_RESOLUTION,
@@ -472,7 +595,7 @@ async function resolveClientText({
           reason: 'The client reference in this turn did not match a verified client for the authenticated tenant.',
         })
       }
-      return outcome({ status: ASK_DW_ENTITY_RESOLUTION_STATUS.NOOP })
+      return revalidateActiveFocus({ supabase, tenantId, caseContext })
     }
     return outcome({
       status: search.cueTerms.length > 0

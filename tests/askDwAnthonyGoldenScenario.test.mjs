@@ -99,8 +99,36 @@ function makeFreshInvoiceRunner(callLog) {
 
 test('M1F Anthony golden conversation preserves continuity while re-reading truth every turn', async () => {
   const calls = []
+  const anthonyEvents = [
+    {
+      type: ASK_DW_CASE_EVENT.SET_ACTIVE_CLIENT,
+      payload: { clientRef: { kind: 'client', id: CLIENT } },
+    },
+    {
+      type: ASK_DW_CASE_EVENT.SET_INVOICE_CANDIDATES,
+      payload: {
+        invoiceRefs: [
+          { kind: 'invoice', id: FIRST_INVOICE },
+          { kind: 'invoice', id: OTHER_INVOICE },
+        ],
+      },
+    },
+    {
+      type: ASK_DW_CASE_EVENT.SELECT_INVOICE,
+      payload: { invoiceRef: { kind: 'invoice', id: FIRST_INVOICE } },
+    },
+    {
+      type: ASK_DW_CASE_EVENT.RESOLVE_REFERENCE,
+      payload: { term: 'anthony', ref: { kind: 'client', id: CLIENT } },
+    },
+    {
+      type: ASK_DW_CASE_EVENT.RESOLVE_REFERENCE,
+      payload: { term: 'him', ref: { kind: 'client', id: CLIENT } },
+    },
+  ]
   const runtime = createAskDwCaseAwareRuntime({
     runInvoiceQuestion: makeFreshInvoiceRunner(calls),
+    resolveCaseEvents: async ({ text }) => text.includes('Anthony') ? anthonyEvents : [],
   })
 
   let state = initialState()
@@ -111,33 +139,6 @@ test('M1F Anthony golden conversation preserves continuity while re-reading trut
     turnId: 'turn-anthony',
     text: "What's going on with Anthony?",
     now: new Date(iso(10)),
-    proposedResolverEvents: [
-      {
-        type: ASK_DW_CASE_EVENT.SET_ACTIVE_CLIENT,
-        payload: { clientRef: { kind: 'client', id: CLIENT } },
-      },
-      {
-        type: ASK_DW_CASE_EVENT.SET_INVOICE_CANDIDATES,
-        payload: {
-          invoiceRefs: [
-            { kind: 'invoice', id: FIRST_INVOICE },
-            { kind: 'invoice', id: OTHER_INVOICE },
-          ],
-        },
-      },
-      {
-        type: ASK_DW_CASE_EVENT.SELECT_INVOICE,
-        payload: { invoiceRef: { kind: 'invoice', id: FIRST_INVOICE } },
-      },
-      {
-        type: ASK_DW_CASE_EVENT.RESOLVE_REFERENCE,
-        payload: { term: 'anthony', ref: { kind: 'client', id: CLIENT } },
-      },
-      {
-        type: ASK_DW_CASE_EVENT.RESOLVE_REFERENCE,
-        payload: { term: 'him', ref: { kind: 'client', id: CLIENT } },
-      },
-    ],
   })
 
   assert.equal(anthony.status, 'ANSWERED')
@@ -160,10 +161,6 @@ test('M1F Anthony golden conversation preserves continuity while re-reading trut
     turnId: 'turn-other-invoice',
     text: 'What about the other invoice?',
     now: new Date(iso(20)),
-    proposedResolverEvents: [{
-      type: ASK_DW_CASE_EVENT.CORRECT_ACTIVE_INVOICE,
-      payload: { invoiceRef: { kind: 'invoice', id: OTHER_INVOICE } },
-    }],
   })
 
   assert.equal(other.status, 'ANSWERED')
@@ -180,10 +177,6 @@ test('M1F Anthony golden conversation preserves continuity while re-reading trut
     turnId: 'turn-shorter',
     text: 'Make that shorter.',
     now: new Date(iso(30)),
-    proposedResolverEvents: [{
-      type: ASK_DW_CASE_EVENT.SET_PRESENTATION,
-      payload: { detail: 'BRIEF' },
-    }],
   })
 
   assert.equal(shorter.status, 'ANSWERED')

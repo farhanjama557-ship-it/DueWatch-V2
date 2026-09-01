@@ -589,3 +589,36 @@ test('stale persistence after computed turn withholds answer and requires reload
   assert.equal(result.caseState, null)
   assert.equal(result.durability.staleWriteRejected, true)
 })
+
+test('G7-CP5 durable Normal to Deep mode change preserves the same reference subject', async () => {
+  const persistence = makeMemoryPersistence()
+  const calls = []
+  const durable = createAskDwDurableConversationRuntime({
+    persistence,
+    conversationRuntime: {
+      async runConversationTurn({ caseState, mode }) {
+        calls.push({ mode, invoiceId: caseState.cases[caseState.activeCaseId].focus.invoiceRef?.id })
+        return {
+          status: 'ANSWERED', caseState,
+          caseContext: { focus: clone(caseState.cases[caseState.activeCaseId].focus) },
+          askDw: { mode },
+        }
+      },
+    },
+  })
+
+  await durable.runConversationTurn({
+    tenantId: TENANT, conversationId: 'conversation-mode-cp5', turnId: 'mode-normal',
+    initialInvoiceId: 'invoice-1844', text: 'why?', mode: 'normal',
+    now: new Date('2026-08-27T18:00:00.000Z'),
+  })
+  await durable.runConversationTurn({
+    tenantId: TENANT, conversationId: 'conversation-mode-cp5', turnId: 'mode-deep',
+    text: 'anything else?', mode: 'deep', now: new Date('2026-08-27T18:01:00.000Z'),
+  })
+
+  assert.deepEqual(calls, [
+    { mode: 'normal', invoiceId: 'invoice-1844' },
+    { mode: 'deep', invoiceId: 'invoice-1844' },
+  ])
+})

@@ -4,6 +4,7 @@ export const ASK_DW_CASE_EVENT = Object.freeze({
   OPEN_CASE: 'OPEN_CASE',
   SWITCH_CASE: 'SWITCH_CASE',
   SET_ACTIVE_CLIENT: 'SET_ACTIVE_CLIENT',
+  CLEAR_ACTIVE_FOCUS: 'CLEAR_ACTIVE_FOCUS',
   SET_INVOICE_CANDIDATES: 'SET_INVOICE_CANDIDATES',
   SELECT_INVOICE: 'SELECT_INVOICE',
   CORRECT_ACTIVE_INVOICE: 'CORRECT_ACTIVE_INVOICE',
@@ -456,12 +457,31 @@ function performEvent(next, event) {
     return
   }
 
+  if (type === ASK_DW_CASE_EVENT.CLEAR_ACTIVE_FOCUS) {
+    clearClientDerivedState(caseState, {
+      oldClientRef: caseState.focus.clientRef,
+      turnId,
+      at,
+      reason: 'ACTIVE_REFERENCE_UNAVAILABLE',
+    })
+    return
+  }
+
   if (type === ASK_DW_CASE_EVENT.SET_INVOICE_CANDIDATES) {
-    caseState.candidates.invoiceRefs = [...normalizeRefs(
+    const invoiceRefs = [...normalizeRefs(
       payload.invoiceRefs || [],
       'invoice',
       MAX_INVOICE_CANDIDATES,
     )]
+    if (caseState.focus.invoiceRef && !containsRef(invoiceRefs, caseState.focus.invoiceRef)) {
+      clearInvoiceDerivedState(caseState, {
+        oldInvoiceRef: caseState.focus.invoiceRef,
+        turnId,
+        at,
+        reason: 'ACTIVE_INVOICE_LEFT_CANDIDATE_SET',
+      })
+    }
+    caseState.candidates.invoiceRefs = invoiceRefs
     return
   }
 

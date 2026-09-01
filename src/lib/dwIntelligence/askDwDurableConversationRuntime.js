@@ -158,6 +158,7 @@ export function createAskDwDurableConversationRuntime({
     caseId = 'primary',
     turnId,
     text,
+    mode = 'normal',
     now = new Date(),
     expiresAt = null,
     initialInvoiceId = null,
@@ -211,6 +212,7 @@ export function createAskDwDurableConversationRuntime({
       caseState: state,
       turnId: turn,
       text,
+      mode,
       now: new Date(at),
     })
 
