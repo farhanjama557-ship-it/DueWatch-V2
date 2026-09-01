@@ -297,7 +297,13 @@ test('G7-P6 priorities carry no execution or money capability', () => {
 })
 
 test('G7-P7 the orchestrator did not gain a mutation or execution path', () => {
-  for (const pattern of [/\.rpc\(/, /supabase/, /\bfetch\(/, /grantAuthority\(/, /sendReminder/]) {
+  // Look for real usage, not the word: a comment may legitimately name a
+  // Supabase file path while the module still performs no I/O.
+  for (const pattern of [
+    /\.rpc\(/, /\bfrom\s*\(\s*['"]/, /createClient/, /\bfetch\(/,
+    /grantAuthority\(/, /sendReminder/, /\.insert\(/, /\.update\(/,
+    /from ['"][^'"]*supabase/,
+  ]) {
     assert.doesNotMatch(orchestratorSource, pattern)
   }
   // The Company Brain is built inside the orchestrator from the caller's read

@@ -1,6 +1,13 @@
 import { buildAskDwCompanyBrainContext } from './askDwCompanyBrainContext.js'
 import { classifyAskDwConversationalTurn } from './askDwConversationalTurn.js'
 import { buildAskDwDailyPriorities } from './askDwDailyPriorities.js'
+import { enforceAskDwGrounding } from './askDwGroundingGuard.js'
+import {
+  DW_EPISTEMIC_LADDER,
+  DW_RESPONSE_SHAPE,
+  DW_STYLE_EXAMPLES,
+  dwCharacterInstructions,
+} from './askDwCharacterSpec.js'
 
 function freeze(value) {
   if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value
@@ -167,8 +174,32 @@ async function executeRequests({ requests, registry, context }) {
   return Object.freeze(runs)
 }
 
+/**
+ * DW's voice is carried in the synthesis INPUT rather than the edge function's
+ * system instructions, because supabase/functions/_shared/askDwOpenAiContract.js
+ * and ask-dw-model/index.ts are hash-locked M2D replay sources. Changing them
+ * would break that lock, which is an earlier gate's artifact and not G7's to
+ * re-cut. The model still receives the character spec on every synthesis; see
+ * the G7 validation record for the mismatch this works around.
+ */
+function answerStyleFor(core) {
+  const deep = core.policy?.internalDepth === 'deep' || core.policy?.requestedMode === 'deep'
+  return freeze({
+    character: dwCharacterInstructions(),
+    epistemicLadder: [...DW_EPISTEMIC_LADDER],
+    shape: deep ? DW_RESPONSE_SHAPE.DEEP : DW_RESPONSE_SHAPE.NORMAL,
+    styleExamples: DW_STYLE_EXAMPLES.map((example) => ({
+      founder: example.founder, dw: example.dw, demonstrates: example.demonstrates,
+    })),
+    // Style shapes wording only. It cannot widen what may be said.
+    canChangeTruth: false,
+    canGrantAuthority: false,
+  })
+}
+
 function buildSynthesisInput({ text, core, plan, toolRuns, caseContext = null, conversation = null }) {
   return {
+    answerStyle: answerStyleFor(core),
     question: String(text || ''),
     requestedMode: core.policy?.requestedMode,
     internalDepth: core.policy?.internalDepth,
@@ -350,10 +381,22 @@ export function createAskDwOrchestrator({
         caseContext,
         conversation,
       }))
-      const verification = hardenVerification({
+      // Two independent gates, in order: the existing deterministic tool-run
+      // citation check, then the G7 grounding guard. Both may only downgrade a
+      // verdict, so a model verifier saying PASS is never the last word.
+      const citationChecked = hardenVerification({
         verification: modelVerification,
         candidate,
         toolRuns,
+      })
+      const verification = enforceAskDwGrounding({
+        candidate,
+        verification: citationChecked,
+        truthLock,
+        toolRuns,
+        companyBrainContext: conversation.companyBrain,
+        conversationalTurn: conversation.turn,
+        caseContext,
       })
 
       const answer = verification.verdict === 'PASS' ? candidate : answerFallback(core)
@@ -385,6 +428,7 @@ export function createAskDwOrchestrator({
           companyBrainMutableFromConversation: false,
           conversationCanGrantAuthority: false,
           prioritiesOrderedDeterministically: true,
+          deterministicGroundingEnforced: true,
         }),
       })
     },
