@@ -10,7 +10,12 @@ import crypto from 'node:crypto'
 
 import { CLAIM_CLASS } from './index.js'
 import { GRAPH_NODE_TYPE, SEMANTIC_SCOPE } from './graphStore.js'
-import { G3_RESOLUTION_STATUS, resolvePolicy } from './policyIntelligence.js'
+import {
+  G3_RESOLUTION_STATUS,
+  TEMPORAL_STATE,
+  classifyTemporalState,
+  resolvePolicy,
+} from './policyIntelligence.js'
 
 export const OPERATING_STATEMENT_STATE = Object.freeze({
   CONFIRMED: 'CONFIRMED',
@@ -78,12 +83,20 @@ function sortedUnique(values) {
   return [...new Set(values.filter((value) => value != null))].sort()
 }
 
+function isCanonicalDate(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value || '')) return false
+  const parsed = new Date(`${value}T00:00:00.000Z`)
+  return !Number.isNaN(parsed.valueOf()) && parsed.toISOString().slice(0, 10) === value
+}
+
 function scopeOf(claim) {
   return freeze({ ...(claim.semanticScope || { level: SEMANTIC_SCOPE.COMPANY }) })
 }
 
-function statementId({ topic, state, scope, clientId, roleId, sourceClaimIds, value }) {
-  return `operating-statement-${hash({ topic, state, scope, clientId, roleId, sourceClaimIds, value }).slice(0, 24)}`
+function statementId({ topic, state, scope, clientId, roleId, sourceClaimIds, value, effectiveTime, temporalState }) {
+  return `operating-statement-${hash({
+    topic, state, scope, clientId, roleId, sourceClaimIds, value, effectiveTime, temporalState,
+  }).slice(0, 24)}`
 }
 
 function graphKeysForClaims(graphSnapshot, claimIds) {
@@ -97,9 +110,11 @@ function graphKeysForClaims(graphSnapshot, claimIds) {
   )
 }
 
-function claimStatement(claim, graphSnapshot, state, explanation) {
+function claimStatement(claim, graphSnapshot, state, explanation, temporalState) {
   const sourceClaimIds = [claim.id]
   const scope = scopeOf(claim)
+  const effectiveTime = claim.effectiveTime ? freeze({ ...claim.effectiveTime }) : null
+  const currentApplicable = state === OPERATING_STATEMENT_STATE.CONFIRMED && temporalState === TEMPORAL_STATE.CURRENT
   return freeze({
     kind: 'OPERATING_MODEL_STATEMENT_V0',
     id: statementId({
@@ -110,10 +125,15 @@ function claimStatement(claim, graphSnapshot, state, explanation) {
       roleId: scope.roleId,
       sourceClaimIds,
       value: claim.value,
+      effectiveTime,
+      temporalState,
     }),
     topic: claim.claimType,
     value: claim.value,
     state,
+    effectiveTime,
+    temporalState,
+    currentApplicable,
     scope,
     clientId: scope.clientId ?? claim.subjectScope?.clientId ?? null,
     roleId: scope.roleId ?? claim.subjectScope?.roleId ?? claim.value?.roleId ?? null,
@@ -149,6 +169,15 @@ function policyStatement(resolution, graphSnapshot) {
     state = OPERATING_STATEMENT_STATE.UNRESOLVED
   } else state = OPERATING_STATEMENT_STATE.CONFIRMED
   const value = state === OPERATING_STATEMENT_STATE.CONFIRMED ? resolution.winner?.value ?? null : null
+  const effectiveTime = resolution.winner?.effectiveTime
+    ? freeze({ ...resolution.winner.effectiveTime })
+    : null
+  const candidateTemporalStates = sortedUnique(
+    evidenceCandidates.map((candidate) => candidate.temporalState),
+  )
+  const temporalState = resolution.winner?.temporalState ?? (
+    candidateTemporalStates.length === 1 ? candidateTemporalStates[0] : TEMPORAL_STATE.UNKNOWN
+  )
   const scope = freeze({ ...resolution.scope })
   const explanation = state === OPERATING_STATEMENT_STATE.CONFIRMED
     ? `G3 resolved ${resolution.topic} for the exact ${scope.level} scope.`
@@ -162,10 +191,15 @@ function policyStatement(resolution, graphSnapshot) {
       clientId: scope.clientId,
       sourceClaimIds,
       value,
+      effectiveTime,
+      temporalState,
     }),
     topic: resolution.topic,
     value,
     state,
+    effectiveTime,
+    temporalState,
+    currentApplicable: state === OPERATING_STATEMENT_STATE.CONFIRMED && temporalState === TEMPORAL_STATE.CURRENT,
     scope,
     clientId: scope.clientId ?? null,
     roleId: null,
@@ -209,12 +243,31 @@ function missingQuestion(topic, scope = { level: SEMANTIC_SCOPE.COMPANY }) {
 }
 
 function semanticProposal(proposal) {
-  const { generatedAt: _generatedAt, proposalId: _proposalId, revision: _revision, fingerprint: _fingerprint, ...semantic } = proposal
-  return semantic
+  const {
+    generatedAt: _generatedAt,
+    proposalId: _proposalId,
+    revision: _revision,
+    fingerprint: _fingerprint,
+    storageRevision: _storageRevision,
+    persistedAt: _persistedAt,
+    supersededByProposalId: _supersededByProposalId,
+    invalidatedAt: _invalidatedAt,
+    status: _lifecycleStatus,
+    ...semantic
+  } = proposal
+  return {
+    ...semantic,
+    status: proposal.blockers?.length
+      ? OPERATING_MODEL_STATUS.BLOCKED
+      : OPERATING_MODEL_STATUS.PROPOSED,
+  }
 }
 
 function validateProposal(proposal) {
   if (proposal?.kind !== 'COMPANY_OPERATING_MODEL_PROPOSAL_V0') throw new Error('trusted G4 proposal required')
+  if (!isCanonicalDate(proposal.asOfDate)) throw new Error('valid operating model as-of date required')
+  if (proposal.sourceState?.asOfDate !== proposal.asOfDate) throw new Error('operating model as-of state mismatch')
+  if (proposal.revision !== proposal.sourceState?.knowledgeVersion) throw new Error('operating model revision/source mismatch')
   const b = proposal.boundaries || {}
   if (
     b.canonicalMoneyWritable !== false ||
@@ -224,15 +277,48 @@ function validateProposal(proposal) {
     b.observedDelegationIsAuthority !== false ||
     b.dwAuthorityDerived !== false
   ) throw new Error('G4 safety boundaries required')
-  const statements = Object.values(proposal)
-    .filter(Array.isArray)
-    .flat()
-    .filter((entry) => entry?.kind === 'OPERATING_MODEL_STATEMENT_V0')
+  const sectionNames = [
+    'collections', 'billing', 'reminders', 'promisesToPay', 'escalation', 'disputes',
+    'clientHandling', 'rolesAndResponsibilities', 'communication', 'policyOperatingRules',
+  ]
+  const statements = [
+    ...sectionNames.flatMap((name) => proposal[name] || []),
+    ...(proposal.clientOverrides || []).flatMap((entry) => entry.statements || []),
+  ]
   for (const statement of statements) {
-    if (
+    if (statement?.kind !== 'OPERATING_MODEL_STATEMENT_V0') throw new Error('invalid operating statement')
+    if (!Object.values(TEMPORAL_STATE).includes(statement.temporalState)) {
+      throw new Error('operating statement temporal state required')
+    }
+    if (statement.currentApplicable !== (
       statement.state === OPERATING_STATEMENT_STATE.CONFIRMED &&
-      (!statement.sourceClaimIds.length || !statement.rootSourceVersionIds.length)
-    ) throw new Error('confirmed operating statement requires provenance')
+      statement.temporalState === TEMPORAL_STATE.CURRENT
+    )) throw new Error('operating statement temporal applicability mismatch')
+    if (
+      (statement.state === OPERATING_STATEMENT_STATE.CONFIRMED || statement.currentApplicable) &&
+      (!statement.sourceClaimIds?.length ||
+        !statement.sourceGraphNodeKeys?.length ||
+        !statement.rootSourceVersionIds?.length)
+    ) throw new Error('current operating statement requires exact provenance')
+    if (statement.state === OPERATING_STATEMENT_STATE.CONFIRMED || statement.currentApplicable) {
+      const evidence = statement.sourceClaimIds.map((claimId) => proposal.evidenceIndex?.[claimId])
+      if (evidence.some((entry) => !entry || entry.active !== true)) {
+        throw new Error('current operating statement requires indexed evidence')
+      }
+      const indexedRoots = sortedUnique(evidence.flatMap((entry) => entry.rootSourceVersionIds || []))
+      const indexedNodes = sortedUnique(evidence.flatMap((entry) => entry.graphNodeKeys || []))
+      if (stable(indexedRoots) !== stable(sortedUnique(statement.rootSourceVersionIds))) {
+        throw new Error('operating statement root provenance mismatch')
+      }
+      if (stable(indexedNodes) !== stable(sortedUnique(statement.sourceGraphNodeKeys))) {
+        throw new Error('operating statement graph provenance mismatch')
+      }
+    }
+  }
+  const recomputed = hash(semanticProposal(proposal))
+  if (proposal.fingerprint !== recomputed) throw new Error('operating model semantic fingerprint mismatch')
+  if (proposal.proposalId !== `operating-model-${recomputed.slice(0, 24)}`) {
+    throw new Error('operating model proposal identity mismatch')
   }
   return true
 }
@@ -248,6 +334,7 @@ export function buildOperatingModelProposal({
 } = {}) {
   assertActor(actor, tenantId)
   if (!brain || !graph) throw new Error('brain and graph required')
+  if (!isCanonicalDate(queryDate)) throw new Error('valid operating model query date required')
   const brainSnapshot = brain.prepareSnapshot({ actor, tenantId })
   const graphSnapshot = graph.requireSnapshot({ actor, tenantId })
   if (graphSnapshot.brainKnowledgeVersion !== brain.version(tenantId)) {
@@ -262,26 +349,38 @@ export function buildOperatingModelProposal({
 
   for (const claim of activeClaims) {
     if (POLICY_CLASSES.has(claim.claimClass)) continue
-    const historical =
-      claim.claimClass === CLAIM_CLASS.HISTORICAL_PRECEDENT ||
-      claim.semanticScope?.temporality === 'HISTORICAL' ||
-      claim.status === 'HISTORICAL'
+    const targetSections = SECTION_BY_CLAIM_TYPE[claim.claimType]
+    if (!targetSections) continue
+    const temporalState = classifyTemporalState(
+      claim.effectiveTime,
+      claim.semanticScope?.temporality,
+      claim.claimClass,
+      queryDate,
+    )
+    const historical = [TEMPORAL_STATE.HISTORICAL, TEMPORAL_STATE.EXPIRED].includes(temporalState)
+    const temporallyUnresolved = [TEMPORAL_STATE.FUTURE, TEMPORAL_STATE.UNKNOWN].includes(temporalState)
     const roleLike = claim.claimClass === CLAIM_CLASS.ROLE || claim.claimClass === CLAIM_CLASS.DELEGATION
     const communication = claim.claimClass === CLAIM_CLASS.INTERPRETATION
     const state = historical
       ? OPERATING_STATEMENT_STATE.HISTORICAL_ONLY
       : roleLike || communication
         ? OPERATING_STATEMENT_STATE.OBSERVED
-        : OPERATING_STATEMENT_STATE.CONFIRMED
+        : temporallyUnresolved
+          ? OPERATING_STATEMENT_STATE.UNRESOLVED
+          : OPERATING_STATEMENT_STATE.CONFIRMED
     const explanation = historical
       ? 'Historical evidence is retained as context and is not a current operating rule.'
+      : temporalState === TEMPORAL_STATE.FUTURE
+        ? `Operating evidence is not applicable as of ${queryDate}; its effective period begins later.`
+        : temporalState === TEMPORAL_STATE.UNKNOWN
+          ? 'Operating evidence has unknown temporal applicability and is not treated as current.'
       : roleLike
         ? 'Human participation is observed; it does not create DW authority.'
         : communication
           ? 'Communication/context is observed evidence only and is not policy or authority.'
           : 'Current explicit operating evidence supports this descriptive statement.'
-    const statement = claimStatement(claim, graphSnapshot, state, explanation)
-    for (const section of SECTION_BY_CLAIM_TYPE[claim.claimType] || ['collections']) {
+    const statement = claimStatement(claim, graphSnapshot, state, explanation, temporalState)
+    for (const section of targetSections) {
       sections[section].push(statement)
     }
   }
@@ -385,6 +484,7 @@ export function buildOperatingModelProposal({
 
   const sourceFingerprint = hash({
     tenantId,
+    asOfDate: queryDate,
     knowledgeVersion: brainSnapshot.knowledgeVersion,
     graphFingerprint: graphSnapshot.fingerprint,
     graphVersion: graphSnapshot.id,
@@ -399,10 +499,13 @@ export function buildOperatingModelProposal({
     proposalId: null,
     revision: brainSnapshot.knowledgeVersion,
     generatedAt,
+    asOfDate: queryDate,
     sourceState: freeze({
+      brainSnapshotId: brainSnapshot.id,
       knowledgeVersion: brainSnapshot.knowledgeVersion,
       graphVersion: graphSnapshot.id,
       graphFingerprint: graphSnapshot.fingerprint,
+      asOfDate: queryDate,
       fingerprint: sourceFingerprint,
     }),
     fingerprint: null,
@@ -443,11 +546,16 @@ export function buildOperatingModelProposal({
 }
 
 /** Read-only freshness check. It never rebuilds a graph or mutates persistence. */
-export function isOperatingModelStale({ proposal, actor, tenantId, brain, graph } = {}) {
+export function isOperatingModelStale({
+  proposal, actor, tenantId, brain, graph, asOfDate = proposal?.asOfDate,
+} = {}) {
   assertActor(actor, tenantId)
+  if (!brain || !graph) throw new Error('brain and graph required for freshness evaluation')
   if (proposal?.tenantId !== tenantId) throw new Error('operating model tenant mismatch')
+  validateProposal(proposal)
   const activeGraph = graph.activeSnapshot({ actor, tenantId })
   return (
+    asOfDate !== proposal.asOfDate ||
     proposal.sourceState.knowledgeVersion !== brain.version(tenantId) ||
     !activeGraph ||
     proposal.sourceState.graphVersion !== activeGraph.id ||
@@ -462,11 +570,35 @@ export class OperatingModelProposalStore {
   }
 }
 
-export function persistOperatingModelProposal(store, { actor, tenantId, proposal } = {}) {
+export function persistOperatingModelProposal(store, {
+  actor, tenantId, proposal, brain, graph, asOfDate = proposal?.asOfDate,
+} = {}) {
   assertActor(actor, tenantId)
   if (!(store instanceof OperatingModelProposalStore)) throw new Error('operating model store required')
   if (proposal?.tenantId !== tenantId) throw new Error('operating model tenant mismatch')
   validateProposal(proposal)
+  const expectedStatus = proposal.blockers?.length
+    ? OPERATING_MODEL_STATUS.BLOCKED
+    : OPERATING_MODEL_STATUS.PROPOSED
+  if (proposal.status !== expectedStatus) throw new Error('current operating model status required')
+  if (isOperatingModelStale({ proposal, actor, tenantId, brain, graph, asOfDate })) {
+    const invalidatedAt = store.clock()
+    for (let index = 0; index < store.rows.length; index += 1) {
+      const row = store.rows[index]
+      if (
+        row.tenantId === tenantId &&
+        row.fingerprint === proposal.fingerprint &&
+        [OPERATING_MODEL_STATUS.PROPOSED, OPERATING_MODEL_STATUS.BLOCKED].includes(row.status)
+      ) {
+        store.rows[index] = freeze({
+          ...structuredClone(row),
+          status: OPERATING_MODEL_STATUS.STALE,
+          invalidatedAt,
+        })
+      }
+    }
+    throw new Error('stale operating model cannot be persisted as current')
+  }
   const existing = store.rows.find(
     (row) => row.tenantId === tenantId && row.fingerprint === proposal.fingerprint,
   )
@@ -507,15 +639,21 @@ export function getOperatingModelProposal(store, { actor, tenantId, proposalId =
   return store.rows.filter((row) => row.tenantId === tenantId).at(-1) || null
 }
 
-export function toOperatingModelReviewContext(proposal) {
+export function toOperatingModelReviewContext(proposal, {
+  actor, tenantId, brain, graph, asOfDate = proposal?.asOfDate,
+} = {}) {
   validateProposal(proposal)
+  const stale = isOperatingModelStale({ proposal, actor, tenantId, brain, graph, asOfDate })
   return freeze({
     kind: 'COMPANY_OPERATING_MODEL_REVIEW_CONTEXT_V0',
     tenantId: proposal.tenantId,
     proposalId: proposal.proposalId,
     revision: proposal.revision,
     sourceState: proposal.sourceState,
-    status: proposal.status,
+    asOfDate: proposal.asOfDate,
+    status: stale ? OPERATING_MODEL_STATUS.STALE : proposal.status,
+    stale,
+    reviewBlocked: stale,
     sections: {
       collections: proposal.collections,
       billing: proposal.billing,

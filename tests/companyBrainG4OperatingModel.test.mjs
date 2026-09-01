@@ -7,7 +7,13 @@ import { parse } from 'pgsql-parser'
 
 import { CompanyBrainDurableStore } from '../src/lib/companyBrain/durableStore.js'
 import { CompanyGraphStore, SEMANTIC_SCOPE } from '../src/lib/companyBrain/graphStore.js'
-import { CANDIDATE_STATUS, G3_RESOLUTION_STATUS, buildPolicyCandidates, resolvePolicy } from '../src/lib/companyBrain/policyIntelligence.js'
+import {
+  CANDIDATE_STATUS,
+  G3_RESOLUTION_STATUS,
+  TEMPORAL_STATE,
+  buildPolicyCandidates,
+  resolvePolicy,
+} from '../src/lib/companyBrain/policyIntelligence.js'
 import {
   OPERATING_MODEL_STATUS,
   OPERATING_STATEMENT_STATE,
@@ -97,6 +103,27 @@ function everyStatement(proposal) {
     proposal.rolesAndResponsibilities, proposal.communication, proposal.policyOperatingRules,
     proposal.clientOverrides.flatMap((entry) => entry.statements),
   ].flat().map((statement) => [statement.id, statement])).values()]
+}
+
+function persist(store, state, proposal = build(state), overrides = {}) {
+  return persistOperatingModelProposal(store, {
+    actor: founderA,
+    tenantId: tenantA,
+    proposal,
+    brain: state.brain,
+    graph: state.graph,
+    ...overrides,
+  })
+}
+
+function review(state, proposal = build(state), overrides = {}) {
+  return toOperatingModelReviewContext(proposal, {
+    actor: founderA,
+    tenantId: tenantA,
+    brain: state.brain,
+    graph: state.graph,
+    ...overrides,
+  })
 }
 
 function addAtlasDecision(state) {
@@ -276,16 +303,19 @@ test('G4-12 exact tenant isolation covers source, node, role, conflict, and pers
     brain.claims.some((claim) => claim.id === id && claim.tenantId === tenantA),
   ))
   const store = new OperatingModelProposalStore({ clock: now })
-  persistOperatingModelProposal(store, { actor: founderA, tenantId: tenantA, proposal: proposalA })
+  persistOperatingModelProposal(store, {
+    actor: founderA, tenantId: tenantA, proposal: proposalA, brain, graph,
+  })
   assert.equal(getOperatingModelProposal(store, { actor: founderB, tenantId: tenantB }), null)
   assert.throws(() => getOperatingModelProposal(store, { actor: founderB, tenantId: tenantA }), /tenant mismatch/)
 })
 
 test('G4-13 same fingerprint persists idempotently', () => {
-  const proposal = build(seeded())
+  const state = seeded()
+  const proposal = build(state)
   const store = new OperatingModelProposalStore({ clock: clock() })
-  const first = persistOperatingModelProposal(store, { actor: founderA, tenantId: tenantA, proposal })
-  const second = persistOperatingModelProposal(store, { actor: founderA, tenantId: tenantA, proposal })
+  const first = persist(store, state, proposal)
+  const second = persist(store, state, proposal)
   assert.equal(first, second)
   assert.equal(store.rows.length, 1)
 })
@@ -293,9 +323,9 @@ test('G4-13 same fingerprint persists idempotently', () => {
 test('G4-14 changed upstream state creates a new revision and supersedes prior proposal', () => {
   const state = seeded()
   const store = new OperatingModelProposalStore({ clock: clock() })
-  const before = persistOperatingModelProposal(store, { actor: founderA, tenantId: tenantA, proposal: build(state) })
+  const before = persist(store, state)
   addAtlasDecision(state)
-  const after = persistOperatingModelProposal(store, { actor: founderA, tenantId: tenantA, proposal: build(state) })
+  const after = persist(store, state)
   assert.notEqual(after.fingerprint, before.fingerprint)
   assert.ok(after.revision > before.revision)
   assert.equal(store.rows[0].status, OPERATING_MODEL_STATUS.SUPERSEDED)
@@ -346,15 +376,18 @@ test('G4-19 a proposal cannot self-approve during persistence', () => {
 })
 
 test('G4-20 provenance survives persistence round trip and review context stays review-only', () => {
-  const proposal = build(seeded())
+  const state = seeded()
+  const proposal = build(state)
   const store = new OperatingModelProposalStore({ clock: clock() })
-  persistOperatingModelProposal(store, { actor: founderA, tenantId: tenantA, proposal })
+  persist(store, state, proposal)
   const replay = getOperatingModelProposal(store, { actor: founderA, tenantId: tenantA, proposalId: proposal.proposalId })
   assert.deepEqual(replay.provenance, proposal.provenance)
   assert.deepEqual(replay.evidenceIndex, proposal.evidenceIndex)
-  const review = toOperatingModelReviewContext(replay)
-  assert.equal(review.reviewOnly, true)
-  assert.equal(review.approvalCapabilityAvailable, false)
+  const context = review(state, replay)
+  assert.equal(context.reviewOnly, true)
+  assert.equal(context.approvalCapabilityAvailable, false)
+  assert.equal(context.stale, false)
+  assert.equal(context.reviewBlocked, false)
 })
 
 test('G4-21 migration parses with the real PostgreSQL parser', async () => {
@@ -377,7 +410,7 @@ test('G4-22 migration enforces tenant RLS, exact evidence roots, and automatic s
   assert.match(sql, /company_operating_model_graph_staleness/)
   assert.match(sql, /company_operating_model_brain_staleness/)
   assert.match(sql, /model_payload ->> 'tenantid' = user_id::text/)
-  assert.match(sql, /source_state ->> 'fingerprint' = source_fingerprint/)
+  assert.match(sql, /coalesce\(source_state ->> 'fingerprint', ''\) = source_fingerprint/)
   assert.equal((sql.match(/coalesce\(\(model_payload #>> '\{boundaries,/g) || []).length, 6)
   assert.doesNotMatch(sql, /grant\s+(?:all|insert|update|delete)[\s\S]*?to\s+(?:anon|authenticated)/)
 })
@@ -388,4 +421,137 @@ test('G4-23 ambiguous and unresolved G2 identities become founder questions', ()
   assert.ok(identityQuestions.length > 0)
   assert.ok(identityQuestions.every((question) => question.conflictKeys[0].startsWith('ENTITY_')))
   assert.ok(identityQuestions.some((question) => /ambiguous|unresolved/i.test(question.whyUnresolved)))
+})
+
+test('G4-24 stale proposal cannot be persisted or replayed as current', () => {
+  const state = seeded()
+  const proposal = build(state)
+  const store = new OperatingModelProposalStore({ clock: clock() })
+  const current = persist(store, state, proposal)
+  state.brain.revokeSource({
+    actor: founderA, tenantId: tenantA, sourceId: state.receipts.collections.sourceId,
+    reason: 'G4 freshness closure persistence test',
+  })
+  assert.equal(isOperatingModelStale({
+    proposal, actor: founderA, tenantId: tenantA, brain: state.brain, graph: state.graph,
+  }), true)
+  assert.throws(() => persist(store, state, proposal), /stale operating model/)
+  assert.equal(store.rows.length, 1)
+  assert.equal(current.status === OPERATING_MODEL_STATUS.PROPOSED || current.status === OPERATING_MODEL_STATUS.BLOCKED, true)
+  assert.equal(store.rows[0].status, OPERATING_MODEL_STATUS.STALE)
+  assert.ok(store.rows[0].invalidatedAt)
+  assert.equal(store.rows.some((row) => [OPERATING_MODEL_STATUS.PROPOSED, OPERATING_MODEL_STATUS.BLOCKED].includes(row.status)), false)
+  assert.throws(() => persist(new OperatingModelProposalStore(), state, proposal), /stale operating model/)
+})
+
+test('G4-25 stale proposal review context is explicitly stale and blocked', () => {
+  const state = seeded()
+  const proposal = build(state)
+  state.brain.revokeSource({
+    actor: founderA, tenantId: tenantA, sourceId: state.receipts.collections.sourceId,
+    reason: 'G4 freshness closure review test',
+  })
+  const context = review(state, proposal)
+  assert.equal(context.status, OPERATING_MODEL_STATUS.STALE)
+  assert.equal(context.stale, true)
+  assert.equal(context.reviewBlocked, true)
+})
+
+test('G4-26 future and expired operating evidence are not current while current evidence remains usable', () => {
+  const now = clock()
+  const brain = new CompanyBrainDurableStore({ clock: now })
+  const contracts = [
+    ['future-contract.md', 'future-contract', '2030-01-01', null],
+    ['expired-contract.md', 'expired-contract', '2020-01-01', '2021-01-01'],
+    ['current-contract.md', 'current-contract', '2026-01-01', null],
+  ]
+  for (const [filename, contractId, from, to] of contracts) {
+    brain.ingestContent({
+      actor: workerA, tenantId: tenantA, filename,
+      content: `---\ndocument_type: contract\ncontract_id: ${contractId}\nscope: COMPANY\neffective_from: ${from}${to ? `\neffective_to: ${to}` : ''}\n---\nContract evidence.`,
+      sourceIdentity: contractId, idempotencyKey: `g4-26:${contractId}`,
+    })
+  }
+  const graph = new CompanyGraphStore({ brainStore: brain, clock: now })
+  graph.build({ actor: founderA, tenantId: tenantA })
+  const proposal = build({ brain, graph })
+  const byId = Object.fromEntries(proposal.billing.map((statement) => [statement.value.contract_id, statement]))
+  assert.deepEqual(byId['future-contract'].effectiveTime, { from: '2030-01-01', to: null })
+  assert.equal(byId['future-contract'].temporalState, TEMPORAL_STATE.FUTURE)
+  assert.equal(byId['future-contract'].currentApplicable, false)
+  assert.notEqual(byId['future-contract'].state, OPERATING_STATEMENT_STATE.CONFIRMED)
+  assert.ok([TEMPORAL_STATE.EXPIRED, TEMPORAL_STATE.HISTORICAL].includes(byId['expired-contract'].temporalState))
+  assert.equal(byId['expired-contract'].state, OPERATING_STATEMENT_STATE.HISTORICAL_ONLY)
+  assert.equal(byId['expired-contract'].currentApplicable, false)
+  assert.equal(byId['current-contract'].temporalState, TEMPORAL_STATE.CURRENT)
+  assert.equal(byId['current-contract'].state, OPERATING_STATEMENT_STATE.CONFIRMED)
+  assert.equal(byId['current-contract'].currentApplicable, true)
+})
+
+test('G4-27 identity and unsupported metadata do not route into collections', () => {
+  const proposal = build(seeded())
+  const forbidden = new Set(['entity_record', 'alias_record', 'orphan_reference_record'])
+  assert.equal(proposal.collections.some((statement) => forbidden.has(statement.topic)), false)
+  assert.equal(everyStatement(proposal).some((statement) => forbidden.has(statement.topic)), false)
+  assert.ok(proposal.unresolvedQuestions.some((question) => question.topic === 'entity_identity'))
+})
+
+test('G4-28 semantic tampering and nested client-override tampering are rejected', () => {
+  const state = seeded()
+  const proposal = build(state)
+  const topLevel = structuredClone(proposal)
+  const topStatement = Object.values(topLevel)
+    .filter(Array.isArray).flat()
+    .find((entry) => entry?.kind === 'OPERATING_MODEL_STATEMENT_V0')
+  assert.ok(topStatement)
+  topStatement.value = { tampered: true }
+  assert.throws(() => persist(new OperatingModelProposalStore(), state, topLevel), /semantic fingerprint/)
+
+  const nested = structuredClone(proposal)
+  const nestedStatement = nested.clientOverrides.flatMap((entry) => entry.statements)[0]
+  assert.ok(nestedStatement)
+  nestedStatement.value = { nestedTamper: true }
+  assert.throws(() => review(state, nested), /semantic fingerprint/)
+
+  const nestedProvenance = structuredClone(proposal)
+  const currentNested = nestedProvenance.clientOverrides
+    .flatMap((entry) => entry.statements)
+    .find((statement) => statement.state === OPERATING_STATEMENT_STATE.CONFIRMED)
+  assert.ok(currentNested)
+  currentNested.rootSourceVersionIds = []
+  assert.throws(() => review(state, nestedProvenance), /exact provenance/)
+})
+
+test('G4-29 SQL binds current rows to active exact Brain/graph lineage and source state', async () => {
+  const sql = fs.readFileSync(migrationPath, 'utf8')
+  const normalized = sql.toLowerCase()
+  await assert.doesNotReject(parse(sql))
+  assert.match(normalized, /new\.status in \('proposed','blocked'\)[\s\S]+not v_snapshot_active[\s\S]+not v_graph_active/)
+  assert.match(normalized, /v_graph_brain_snapshot_id <> new\.brain_snapshot_id/)
+  assert.match(normalized, /v_snapshot_knowledge_version <> new\.brain_knowledge_version/)
+  assert.match(normalized, /v_graph_fingerprint is distinct from new\.source_state ->> 'graphfingerprint'/)
+  assert.match(normalized, /coalesce\(source_state ->> 'brainsnapshotid', ''\) = brain_snapshot_id::text/)
+  assert.match(normalized, /coalesce\(source_state ->> 'graphversion', ''\) = graph_version_id::text/)
+  assert.match(normalized, /coalesce\(model_payload -> 'sourcestate', 'null'::jsonb\) = source_state/)
+  const corrupted = normalized.replace("not v_snapshot_active or not v_graph_active", 'false')
+  assert.doesNotMatch(corrupted, /new\.status in \('proposed','blocked'\)[\s\S]+not v_snapshot_active[\s\S]+not v_graph_active/)
+})
+
+test('G4-30 a different as-of date cannot masquerade as current', () => {
+  const state = seeded()
+  const proposal = build(state, { queryDate: '2026-08-31' })
+  assert.equal(proposal.asOfDate, '2026-08-31')
+  assert.equal(proposal.sourceState.asOfDate, '2026-08-31')
+  assert.equal(isOperatingModelStale({
+    proposal, actor: founderA, tenantId: tenantA, brain: state.brain, graph: state.graph,
+    asOfDate: '2026-09-01',
+  }), true)
+  const context = review(state, proposal, { asOfDate: '2026-09-01' })
+  assert.equal(context.status, OPERATING_MODEL_STATUS.STALE)
+  assert.equal(context.reviewBlocked, true)
+  assert.throws(
+    () => persist(new OperatingModelProposalStore(), state, proposal, { asOfDate: '2026-09-01' }),
+    /stale operating model/,
+  )
+  assert.notEqual(build(state, { queryDate: '2026-09-01' }).fingerprint, proposal.fingerprint)
 })

@@ -37,8 +37,14 @@ create table public.company_operating_model_proposals (
   check (model_payload ->> 'proposalId' = proposal_key),
   check ((model_payload ->> 'revision')::bigint = proposal_revision),
   check (model_payload ->> 'fingerprint' = model_fingerprint),
-  check ((source_state ->> 'knowledgeVersion')::bigint = brain_knowledge_version),
-  check (source_state ->> 'fingerprint' = source_fingerprint),
+  check (coalesce((source_state ->> 'knowledgeVersion')::bigint, -1) = brain_knowledge_version),
+  check (coalesce(source_state ->> 'fingerprint', '') = source_fingerprint),
+  check (coalesce(source_state ->> 'brainSnapshotId', '') = brain_snapshot_id::text),
+  check (coalesce(source_state ->> 'graphVersion', '') = graph_version_id::text),
+  check (source_state ->> 'asOfDate' is not null),
+  check ((source_state ->> 'asOfDate')::date::text = source_state ->> 'asOfDate'),
+  check (coalesce(source_state ->> 'asOfDate', '') = coalesce(model_payload ->> 'asOfDate', '')),
+  check (coalesce(model_payload -> 'sourceState', 'null'::jsonb) = source_state),
   check (coalesce((model_payload #>> '{boundaries,canonicalMoneyWritable}')::boolean, true) = false),
   check (coalesce((model_payload #>> '{boundaries,authorityGrantable}')::boolean, true) = false),
   check (coalesce((model_payload #>> '{boundaries,canActAutomatically}')::boolean, true) = false),
@@ -180,6 +186,62 @@ after insert or update of model_payload on public.company_operating_model_propos
 deferrable initially deferred
 for each row execute function private.validate_company_operating_model_payload_trigger();
 
+create or replace function private.validate_company_operating_model_source_state()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+declare
+  v_snapshot_active boolean;
+  v_snapshot_knowledge_version bigint;
+  v_graph_active boolean;
+  v_graph_brain_snapshot_id uuid;
+  v_graph_fingerprint text;
+begin
+  select active, knowledge_version
+    into v_snapshot_active, v_snapshot_knowledge_version
+  from public.company_brain_snapshots
+  where user_id = new.user_id and id = new.brain_snapshot_id;
+
+  if not found then
+    raise exception 'operating model Brain snapshot is missing for tenant';
+  end if;
+
+  select active, brain_snapshot_id, fingerprint
+    into v_graph_active, v_graph_brain_snapshot_id, v_graph_fingerprint
+  from public.company_graph_versions
+  where user_id = new.user_id and id = new.graph_version_id;
+
+  if not found then
+    raise exception 'operating model graph version is missing for tenant';
+  end if;
+
+  if v_graph_brain_snapshot_id <> new.brain_snapshot_id then
+    raise exception 'operating model graph and Brain snapshot lineage mismatch';
+  end if;
+
+  if v_snapshot_knowledge_version <> new.brain_knowledge_version then
+    raise exception 'operating model Brain knowledge version mismatch';
+  end if;
+
+  if v_graph_fingerprint is distinct from new.source_state ->> 'graphFingerprint' then
+    raise exception 'operating model graph fingerprint mismatch';
+  end if;
+
+  if new.status in ('PROPOSED','BLOCKED') and (not v_snapshot_active or not v_graph_active) then
+    raise exception 'current operating model requires active Brain and graph state';
+  end if;
+
+  return new;
+end;
+$$;
+
+create trigger company_operating_model_source_state_integrity
+before insert or update of user_id, brain_snapshot_id, graph_version_id,
+  brain_knowledge_version, source_state, model_payload, status
+on public.company_operating_model_proposals
+for each row execute function private.validate_company_operating_model_source_state();
+
 create or replace function private.stale_operating_models_for_graph()
 returns trigger
 language plpgsql
@@ -225,5 +287,6 @@ for each row execute function private.stale_operating_models_for_brain_snapshot(
 revoke all on function private.validate_company_operating_model_provenance(uuid, uuid) from public, anon, authenticated;
 revoke all on function private.validate_company_operating_model_provenance_trigger() from public, anon, authenticated;
 revoke all on function private.validate_company_operating_model_payload_trigger() from public, anon, authenticated;
+revoke all on function private.validate_company_operating_model_source_state() from public, anon, authenticated;
 revoke all on function private.stale_operating_models_for_graph() from public, anon, authenticated;
 revoke all on function private.stale_operating_models_for_brain_snapshot() from public, anon, authenticated;
