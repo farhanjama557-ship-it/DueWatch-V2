@@ -1,0 +1,130 @@
+M2G G4 Validation Report — Company Operating Model V0
+Branch: m2g/company-brain-bootstrap-g4
+Date: 2026-09-01
+Frozen G3 parent: 87e9bf9582836e023e01051beb04b9050ed3e15f
+
+== Architecture ==
+
+G4 consumes CompanyBrainDurableStore, CompanyGraphStore, and G3 resolvePolicy.
+It emits deterministic COMPANY_OPERATING_MODEL_PROPOSAL_V0 records with independently
+inspectable statements, exact provenance, client overrides, unresolved questions, blockers,
+freshness metadata, and immutable no-money/no-authority/no-automation/no-approval boundaries.
+
+G4 does not implement a second policy resolver. CONFLICTED and ABSTAIN G3 states remain blocked.
+Observed communication, behavior, roles, and delegation never become policy or DW authority.
+Historical evidence never becomes current. Client evidence never widens to company scope.
+
+== Persistence ==
+
+Runtime replay store:
+  deterministic idempotency by tenant + fingerprint; tenant-bound reads; supersession on changed
+  upstream state; exact evidence/provenance round trip.
+
+Repository migration:
+  supabase/migrations/20260901034230_company_operating_model_g4.sql
+  - exact tenant Brain-snapshot and graph-version foreign keys
+  - exact tenant-composite claim-root evidence relation
+  - deferred JSON/normalized provenance agreement checks
+  - automatic staleness on graph or Brain snapshot invalidation
+  - RLS, authenticated tenant read policy, read-only browser grant
+  - structural false checks for canonical money, authority, automation, approval, and delegation
+
+Qualification:
+  The G4 migration has not been applied in an isolated Postgres/Supabase runtime and is not
+  deployment-verified. No Supabase database was linked, reset, pushed, or deployed.
+
+== Validation Results ==
+
+npm run test:company-brain-g2:
+  tests 129 | pass 129 | fail 0 | skipped 0 | todo 0
+
+npm run test:company-brain-g3:
+  tests 226 | pass 226 | fail 0 | skipped 0 | todo 0
+
+npm run test:company-brain-g4:
+  tests 249 | pass 249 | fail 0 | skipped 0 | todo 0
+  The interrupted run reported 248. The final count is one higher because G4-23 now proves
+  ambiguous/unresolved G2 identities become founder questions rather than guessed links.
+
+npm test:
+  tests 1219 | pass 1219 | fail 0 | skipped 0 | todo 0
+
+npm run build:
+  PASS — Vite 5.4.21; 1978 modules transformed; production bundle built successfully.
+  Only the repository's existing large-chunk advisory remains.
+
+git diff --check:
+  PASS — no whitespace errors.
+
+PostgreSQL parser/migration structure:
+  PASS — the G4 migration parses with pgsql-parser; an intentionally corrupted variant fails.
+  Exact tenant graph/snapshot FKs, normalized claim-root evidence FK, deferred JSON/normalized
+  provenance checks, RLS, authenticated read-only grants, automatic graph/Brain staleness triggers,
+  payload/source identity binding, and fail-closed false boundary checks are structurally tested.
+
+Credential scan:
+  PASS — no Stripe live/restricted/webhook secrets, AWS access-key patterns, private-key headers,
+  Supabase service-role assignments, or Stripe secret-key assignments in G4 files.
+
+Canonical financial mutation scan:
+  PASS — no INSERT/UPDATE/DELETE/ALTER targets invoices, payments, payment_attempts,
+  payment_allocations, settlements, payouts, bank_transactions, or canonical AR balances.
+
+Tenant isolation review:
+  PASS — runtime entry points bind authenticated actor to tenant; every Brain/graph read is tenant
+  scoped; replay persistence filters by tenant; SQL uses user_id on all tables, policies, and
+  composite foreign keys. G4-12 proves Tenant A cannot incorporate or read Tenant B evidence/proposals.
+
+Authority-boundary scan:
+  PASS — canonicalMoneyWritable, authorityGrantable, canActAutomatically, operatingModelApproved,
+  observedDelegationIsAuthority, and dwAuthorityDerived are false in runtime and fail-closed SQL
+  checks. G4-18/G4-19 prove a payload cannot self-approve or grant authority.
+
+AR execution/scheduling scan:
+  PASS — no provider call, email sender, reminder scheduler, fee/waiver/write-off/settlement executor,
+  collection action, DW authority grant, or operating-model approval capability exists.
+
+Scope-creep scan:
+  PASS — no G5/G6/G7/G8/M2H or QuickBooks/Xero/Stripe/Gmail/Dropbox/CRM implementation exists in
+  the G4 runtime or migration.
+
+== Controlled Acme / Atlas Proof ==
+
+- Company workflow: actual fixture reminder cadence becomes a structured, provenance-backed statement;
+  G4 does not hardcode 7/14/30.
+- Company late-fee conflict: competing company policy/founder evidence remains CONFLICTED with null
+  value and a founder-review question.
+- Atlas: client terms and late-fee evidence remain in the Atlas override; widenedToCompany is false.
+- Founder instruction: the stopped-fees instruction remains explicit G3 conflict evidence.
+- Account-manager communication: “Give Atlas 20% off” remains OBSERVED communication, never policy
+  or settlement authority.
+- Human roles: founder/controller/account-manager participation remains observed responsibility;
+  observed delegation grants no DW authority.
+- History: old 10% policy and precedents remain HISTORICAL_ONLY and never become current.
+- Revocation: source revocation makes the prior proposal stale; deterministic regeneration removes
+  the affected statement and changes the fingerprint.
+- G3 decision change: an explicit scoped founder decision changes G3/model state and fingerprint
+  without approving the model or creating execution authority.
+- Tenant isolation: Tenant A output contains only Tenant A claims, graph evidence, roles, conflicts,
+  clients, and proposals.
+- Persistence round trip: fingerprint replay is idempotent; changed upstream state supersedes the old
+  proposal; exact evidence/provenance survives retrieval; review context remains review-only.
+
+== Changed Files ==
+
+- package.json
+- src/lib/companyBrain/operatingModel.js
+- tests/companyBrainG4OperatingModel.test.mjs
+- supabase/migrations/20260901034230_company_operating_model_g4.sql
+- docs/company-brain/M2G_G4_OPERATING_MODEL_V0.md
+- docs/company-brain/M2G_G4_ADVERSARIAL_PLAN.md
+- docs/company-brain/M2G_G4_VALIDATION.txt
+
+== Boundaries ==
+
+- No G2 or G3 implementation changed.
+- No canonical financial state mutation exists.
+- No AR action execution or scheduling exists.
+- No authority grant or operating-model approval exists.
+- G5, G6, G7, G8, and M2H were not started.
+- No merge to main and no deployment performed.
