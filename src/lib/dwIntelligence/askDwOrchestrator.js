@@ -1,3 +1,7 @@
+import { buildAskDwCompanyBrainContext } from './askDwCompanyBrainContext.js'
+import { classifyAskDwConversationalTurn } from './askDwConversationalTurn.js'
+import { buildAskDwDailyPriorities } from './askDwDailyPriorities.js'
+
 function freeze(value) {
   if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value
   Object.freeze(value)
@@ -61,6 +65,27 @@ function sanitizeCaseContext(value) {
   return freeze(cloned)
 }
 
+/**
+ * The Company Brain context is built and frozen here, from the G6 read model
+ * the caller supplies. It travels beside caseContext rather than inside it, so
+ * the existing "no money truth, no authority in conversational reference"
+ * split is preserved exactly. Its own builder rejects canonical-money fields.
+ */
+function buildConversationLayer({ tenantId, text, caseContext, context }) {
+  const turn = classifyAskDwConversationalTurn({ text, context, caseContext })
+  const companyBrain = buildAskDwCompanyBrainContext({
+    readModel: context.companyBrainReadModel ?? null,
+    tenantId,
+    focus: context.clientId ? { clientId: context.clientId } : null,
+  })
+  const priorities = buildAskDwDailyPriorities({
+    tenantId,
+    needsYouReadModel: context.needsYouReadModel ?? null,
+    companyBrainContext: companyBrain,
+  })
+  return freeze({ turn, companyBrain, priorities })
+}
+
 function toolRunId(index, request) {
   return `tool-${String(index + 1).padStart(2, '0')}-${request.name}`
 }
@@ -91,7 +116,7 @@ function lockTruth(core) {
   })
 }
 
-function buildPlannerInput({ text, context, core, caseContext = null }) {
+function buildPlannerInput({ text, context, core, caseContext = null, conversation = null }) {
   return {
     question: String(text || ''),
     requestedMode: core.policy?.requestedMode,
@@ -99,6 +124,9 @@ function buildPlannerInput({ text, context, core, caseContext = null }) {
     job: core.intent?.job,
     scope: core.intent?.scope,
     caseContext,
+    conversationalTurn: conversation?.turn ?? null,
+    companyBrainContext: conversation?.companyBrain ?? null,
+    dailyPriorities: conversation?.priorities ?? null,
     truthPacket: {
       canonicalFacts: core.packet?.canonicalFacts ?? null,
       arState: core.packet?.arState ?? null,
@@ -139,13 +167,16 @@ async function executeRequests({ requests, registry, context }) {
   return Object.freeze(runs)
 }
 
-function buildSynthesisInput({ text, core, plan, toolRuns, caseContext = null }) {
+function buildSynthesisInput({ text, core, plan, toolRuns, caseContext = null, conversation = null }) {
   return {
     question: String(text || ''),
     requestedMode: core.policy?.requestedMode,
     internalDepth: core.policy?.internalDepth,
     job: core.intent?.job,
     caseContext,
+    conversationalTurn: conversation?.turn ?? null,
+    companyBrainContext: conversation?.companyBrain ?? null,
+    dailyPriorities: conversation?.priorities ?? null,
     truthLock: lockTruth(core),
     claims: core.packet?.claims ?? [],
     uncertainty: core.packet?.uncertainty ?? null,
@@ -163,10 +194,12 @@ function buildSynthesisInput({ text, core, plan, toolRuns, caseContext = null })
   }
 }
 
-function buildVerificationInput({ core, candidate, plan, toolRuns, caseContext = null }) {
+function buildVerificationInput({ core, candidate, plan, toolRuns, caseContext = null, conversation = null }) {
   return {
     verificationMode: 'FRESH_CONTEXT',
     caseContext,
+    conversationalTurn: conversation?.turn ?? null,
+    companyBrainContext: conversation?.companyBrain ?? null,
     truthLock: lockTruth(core),
     candidate,
     hypotheses: plan.hypotheses,
@@ -183,6 +216,10 @@ function buildVerificationInput({ core, candidate, plan, toolRuns, caseContext =
       'contradiction_handling',
       'authority_non_escalation',
       'reconciliation_hold_respected',
+      // G7: a Company Brain claim must trace to the supplied read context, and
+      // conversational pressure is never a reason to move canonical truth.
+      'company_brain_claims_supported',
+      'founder_pressure_did_not_change_truth',
     ],
   }
 }
@@ -279,6 +316,10 @@ export function createAskDwOrchestrator({
         asOf: context.asOf ?? intelligenceInput.now ?? null,
       })
 
+      const conversation = buildConversationLayer({
+        tenantId, text, caseContext, context,
+      })
+
       const core = await deterministicCore({ mode, text, context, proposedIntent, intelligenceInput })
       const truthLock = lockTruth(core)
       const plan = await primaryModel.plan(buildPlannerInput({
@@ -286,6 +327,7 @@ export function createAskDwOrchestrator({
         context: scopedContext,
         core,
         caseContext,
+        conversation,
       }))
       const toolRuns = await executeRequests({
         requests: plan.toolRequests,
@@ -298,6 +340,7 @@ export function createAskDwOrchestrator({
         plan,
         toolRuns,
         caseContext,
+        conversation,
       }))
       const modelVerification = await verifierModel.verify(buildVerificationInput({
         core,
@@ -305,6 +348,7 @@ export function createAskDwOrchestrator({
         plan,
         toolRuns,
         caseContext,
+        conversation,
       }))
       const verification = hardenVerification({
         verification: modelVerification,
@@ -318,6 +362,7 @@ export function createAskDwOrchestrator({
 
       return freeze({
         core,
+        conversation,
         truthLock,
         plan,
         toolRuns,
@@ -334,6 +379,12 @@ export function createAskDwOrchestrator({
           verificationRequiredBeforeModelNarrative: true,
           caseContextReferenceOnly: caseContext != null,
           rawChainOfThoughtVisible: false,
+          // G7 additions. The Company Brain travels as read-only context and
+          // no conversational turn can create permission.
+          companyBrainReadOnly: true,
+          companyBrainMutableFromConversation: false,
+          conversationCanGrantAuthority: false,
+          prioritiesOrderedDeterministically: true,
         }),
       })
     },
