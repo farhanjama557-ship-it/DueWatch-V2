@@ -29,6 +29,13 @@
 21. The migration parses with the repository's real PostgreSQL parser and a corrupted variant fails.
 22. SQL structurally enforces tenant RLS, read-only browser grants, exact normalized claim-root provenance, and automatic proposal staleness.
 23. Ambiguous and unresolved G2 entity identities become explicit founder questions rather than guessed links.
+24. A proposal made stale by revocation cannot be persisted or idempotently replayed as current; an existing current replay row becomes explicitly stale.
+25. Review context reports stale material as `STALE` and `reviewBlocked`, never as apparently current founder-review material.
+26. Future descriptive evidence is non-current, expired/historical evidence stays non-current, and current evidence remains usable with exact effective-time metadata.
+27. Entity, alias, orphan-reference, and unsupported metadata do not fall through into collections statements.
+28. Top-level and nested client-override semantic tampering fail canonical fingerprint/integrity validation.
+29. Parser-backed SQL assertions prove current rows require active exact Brain/graph lineage, knowledge version, and graph fingerprint binding.
+30. A proposal built for one as-of date cannot masquerade as current for another date without regeneration.
 
 ## Controlled Acme/Atlas proof
 

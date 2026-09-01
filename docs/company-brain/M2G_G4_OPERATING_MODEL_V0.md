@@ -9,11 +9,11 @@ The public runtime is `src/lib/companyBrain/operatingModel.js`.
 ## Public APIs
 
 - `buildOperatingModelProposal({ actor, tenantId, brain, graph, queryDate, generatedAt })`
-- `isOperatingModelStale({ proposal, actor, tenantId, brain, graph })`
+- `isOperatingModelStale({ proposal, actor, tenantId, brain, graph, asOfDate })`
 - `OperatingModelProposalStore`
-- `persistOperatingModelProposal(store, { actor, tenantId, proposal })`
+- `persistOperatingModelProposal(store, { actor, tenantId, proposal, brain, graph, asOfDate })`
 - `getOperatingModelProposal(store, { actor, tenantId, proposalId })`
-- `toOperatingModelReviewContext(proposal)`
+- `toOperatingModelReviewContext(proposal, { actor, tenantId, brain, graph, asOfDate })`
 
 Reasoning is independently testable and does not require persistence.
 
@@ -21,7 +21,7 @@ Reasoning is independently testable and does not require persistence.
 
 `COMPANY_OPERATING_MODEL_PROPOSAL_V0` contains:
 
-- stable `proposalId`, `revision`, and semantic `fingerprint`;
+- stable `proposalId`, `revision`, semantic `fingerprint`, and explicit `asOfDate`;
 - exact upstream `knowledgeVersion`, graph version/fingerprint, and G3-relevant source fingerprint;
 - company, collections, billing, reminders, promises-to-pay, escalation, disputes, client handling, roles/responsibilities, communication, and policy-operating sections;
 - exact client overrides that never widen to company scope;
@@ -33,7 +33,7 @@ Generation time is metadata and is excluded from semantic identity.
 
 ## Statement semantics
 
-Every `OPERATING_MODEL_STATEMENT_V0` is independently inspectable and carries scope, evidence claims, graph nodes, root source versions, conflict keys, derivation/explicitness, and explanation.
+Every `OPERATING_MODEL_STATEMENT_V0` is independently inspectable and carries scope, evidence claims, graph nodes, root source versions, conflict keys, derivation/explicitness, `effectiveTime`, `temporalState`, `currentApplicable`, and explanation. G4 reuses G3's frozen temporal classifier. Missing dates remain `UNKNOWN`; they are never silently interpreted as current.
 
 - `CONFIRMED`: current explicit operating evidence or an applicable G3-resolved rule supports the statement.
 - `OBSERVED`: communication, role, responsibility, or behavior evidence is useful context but is not policy or authority.
@@ -55,25 +55,30 @@ Policy-backed statements call `resolvePolicy()` for each exact topic and scope. 
 
 ## Operating evidence
 
-Current explicit workflow, cadence, dispute, contract, and payment-terms claims can describe confirmed operating practice with exact provenance. Role and delegation claims remain `OBSERVED`; every role output preserves `observedDelegationIsAuthority:false` and `dwAuthorityDerived:false`. Communication and contextual financial statements remain observations, not policy or canonical money truth. Historical precedents remain `HISTORICAL_ONLY`.
+Current explicit workflow, cadence, dispute, contract, and payment-terms claims can describe confirmed operating practice with exact provenance. Future and unknown-time descriptive evidence is non-current and unresolved; expired or historical evidence is `HISTORICAL_ONLY`. Role and delegation claims remain `OBSERVED`; every role output preserves `observedDelegationIsAuthority:false` and `dwAuthorityDerived:false`. Communication and contextual financial statements remain observations, not policy or canonical money truth.
+
+Only explicitly mapped operating evidence types enter operating sections. Entity, alias, orphan-reference, and unsupported metadata never fall through into collections; G2 identity-resolution findings remain available as deterministic unresolved questions.
 
 Missing areas, such as promises-to-pay evidence, generate deterministic founder-review questions rather than guessed values.
 
 ## Freshness and determinism
 
-The proposal is bound to tenant, Company Brain knowledge version, graph version/fingerprint, source-version set, founder decisions, and scoped G3 results. `isOperatingModelStale()` is read-only and returns true when the Brain version changes or the referenced graph is no longer the active graph.
+The proposal is bound to tenant, Company Brain snapshot/knowledge version, graph version/fingerprint, source-version set, founder decisions, scoped G3 results, and as-of date. `isOperatingModelStale()` is read-only and returns true when the Brain version changes, the referenced graph is no longer active, or the requested as-of date differs.
+
+Persistence and review require current Brain/graph context. A stale proposal cannot be inserted or replayed as current; a formerly-current replay row is marked `STALE`. Review context always exposes `stale` and `reviewBlocked`, and cannot present stale material as a current `PROPOSED`/`BLOCKED` review.
 
 Building after revocation or another knowledge mutation deterministically rebuilds the graph and produces a different proposal fingerprint. Identical active evidence, graph state, and G3 state reproduce the same proposal identity.
 
 ## Persistence
 
-The runtime proposal store proves replay, idempotency, supersession, tenant isolation, and provenance round trips without coupling reasoning tests to a database.
+The runtime proposal store proves replay, idempotency, supersession, stale replay invalidation, tenant isolation, semantic-integrity checks, and provenance round trips without coupling reasoning tests to a database. Validation recomputes the canonical semantic fingerprint and proposal ID, binds revision to source state, recursively validates client-override statements, and requires exact evidence-index provenance for every current confirmed statement.
 
 Migration `20260901034230_company_operating_model_g4.sql` adds the smallest durable database projection:
 
 - `company_operating_model_proposals` binds each proposal to an exact tenant Brain snapshot and graph version;
 - `company_operating_model_proposal_evidence` normalizes every claim/source-version pair and references the exact tenant-composite `company_brain_claim_roots` key;
 - deferred validators require the JSON evidence projection and normalized provenance to agree in both directions;
+- an insert/update validator binds the graph to the exact Brain snapshot lineage, knowledge version, graph fingerprint, JSON source state, and active status for current rows;
 - graph or Brain snapshot invalidation marks current proposals stale;
 - RLS and grants expose authenticated tenant-bound reads only;
 - database checks permanently require all money, authority, automation, and approval boundaries to remain false.

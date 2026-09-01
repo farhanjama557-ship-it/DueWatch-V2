@@ -8,17 +8,39 @@ Frozen G3 parent: 87e9bf9582836e023e01051beb04b9050ed3e15f
 G4 consumes CompanyBrainDurableStore, CompanyGraphStore, and G3 resolvePolicy.
 It emits deterministic COMPANY_OPERATING_MODEL_PROPOSAL_V0 records with independently
 inspectable statements, exact provenance, client overrides, unresolved questions, blockers,
-freshness metadata, and immutable no-money/no-authority/no-automation/no-approval boundaries.
+freshness/as-of metadata, explicit statement temporal applicability, and immutable
+no-money/no-authority/no-automation/no-approval boundaries.
 
 G4 does not implement a second policy resolver. CONFLICTED and ABSTAIN G3 states remain blocked.
 Observed communication, behavior, roles, and delegation never become policy or DW authority.
 Historical evidence never becomes current. Client evidence never widens to company scope.
+Unknown evidence types never default into collections. Persistence and review both require the
+current Brain/graph/as-of context and cannot present stale proposals as current.
+
+== Final Trust / Freshness Closure ==
+
+- Runtime persistence recomputes proposal integrity before use, checks exact tenant and current
+  Brain/graph/as-of state before idempotency lookup, rejects stale persistence, and marks an
+  existing formerly-current replay row STALE.
+- Review context is current-state aware and always exposes stale/reviewBlocked; a changed as-of
+  date or upstream mutation cannot appear as current founder-review material.
+- Every operating statement carries effectiveTime, temporalState, and currentApplicable. G4 reuses
+  the frozen G3 classifier: FUTURE/UNKNOWN are non-current, EXPIRED/HISTORICAL are historical-only,
+  and only CURRENT descriptive evidence may be CONFIRMED.
+- The proposal and source state retain asOfDate. Temporal/as-of output participates in the semantic
+  fingerprint, so a proposal for date A cannot silently represent date B.
+- Semantic integrity validation recomputes the canonical SHA-256 fingerprint/proposal ID, binds
+  revision to source knowledge, recursively validates clientOverrides statements, and verifies
+  exact claim/node/root evidence-index provenance for every current confirmed statement.
+- G4 SQL validates current rows at INSERT/UPDATE time against active tenant Brain and graph rows,
+  exact graph-to-snapshot lineage, snapshot knowledge version, graph fingerprint, and JSON/source
+  binding. Existing AFTER invalidation triggers remain.
 
 == Persistence ==
 
 Runtime replay store:
   deterministic idempotency by tenant + fingerprint; tenant-bound reads; supersession on changed
-  upstream state; exact evidence/provenance round trip.
+  upstream state; stale replay invalidation; exact evidence/provenance round trip.
 
 Repository migration:
   supabase/migrations/20260901034230_company_operating_model_g4.sql
@@ -26,6 +48,8 @@ Repository migration:
   - exact tenant-composite claim-root evidence relation
   - deferred JSON/normalized provenance agreement checks
   - automatic staleness on graph or Brain snapshot invalidation
+  - fail-closed current-row validation for active Brain/graph state and exact shared lineage
+  - exact snapshot knowledge-version, graph-fingerprint, and JSON/source-state binding
   - RLS, authenticated tenant read policy, read-only browser grant
   - structural false checks for canonical money, authority, automation, approval, and delegation
 
@@ -42,15 +66,16 @@ npm run test:company-brain-g3:
   tests 226 | pass 226 | fail 0 | skipped 0 | todo 0
 
 npm run test:company-brain-g4:
-  tests 249 | pass 249 | fail 0 | skipped 0 | todo 0
-  The interrupted run reported 248. The final count is one higher because G4-23 now proves
-  ambiguous/unresolved G2 identities become founder questions rather than guessed links.
+  tests 256 | pass 256 | fail 0 | skipped 0 | todo 0
+  G4-24 through G4-30 close stale persistence/replay, stale review, descriptive temporal
+  applicability, unsupported claim routing, semantic tampering, SQL exact source binding, and
+  as-of freshness.
 
 npm test:
-  tests 1219 | pass 1219 | fail 0 | skipped 0 | todo 0
+  tests 1226 | pass 1226 | fail 0 | skipped 0 | todo 0
 
 npm run build:
-  PASS — Vite 5.4.21; 1978 modules transformed; production bundle built successfully.
+  PASS — Vite 5.4.21; 1978 modules transformed; production bundle built in 4.76s.
   Only the repository's existing large-chunk advisory remains.
 
 git diff --check:
@@ -60,7 +85,10 @@ PostgreSQL parser/migration structure:
   PASS — the G4 migration parses with pgsql-parser; an intentionally corrupted variant fails.
   Exact tenant graph/snapshot FKs, normalized claim-root evidence FK, deferred JSON/normalized
   provenance checks, RLS, authenticated read-only grants, automatic graph/Brain staleness triggers,
-  payload/source identity binding, and fail-closed false boundary checks are structurally tested.
+  current-insert active-state checks, exact graph/Brain lineage, knowledge-version/fingerprint
+  source binding, payload/source identity binding, and fail-closed false boundary checks are
+  structurally tested. Good SQL parses; intentionally syntax-corrupted SQL is rejected. This is
+  parser/static verification only, not runtime database verification.
 
 Credential scan:
   PASS — no Stripe live/restricted/webhook secrets, AWS access-key patterns, private-key headers,
@@ -103,6 +131,12 @@ Scope-creep scan:
 - History: old 10% policy and precedents remain HISTORICAL_ONLY and never become current.
 - Revocation: source revocation makes the prior proposal stale; deterministic regeneration removes
   the affected statement and changes the fingerprint.
+- Stale replay/review: current persistence is rejected and an existing replay row is marked STALE;
+  review context exposes STALE + reviewBlocked rather than current material.
+- Temporal proof: future contracts are non-current, historical/expired evidence stays non-current,
+  current evidence remains usable, and all statements preserve effective/as-of state.
+- Integrity proof: top-level and nested client-override semantic tampering is rejected even when
+  safety boundaries remain false.
 - G3 decision change: an explicit scoped founder decision changes G3/model state and fingerprint
   without approving the model or creating execution authority.
 - Tenant isolation: Tenant A output contains only Tenant A claims, graph evidence, roles, conflicts,
