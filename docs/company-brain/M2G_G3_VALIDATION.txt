@@ -1,8 +1,9 @@
-M2G G3 Validation Report — G3 Hardening + Exit-Gate Closure + G3 Consistency Patch + TRUE FINAL EXIT PATCH
+M2G G3 Validation Report — G3 Hardening + Exit-Gate Closure + G3 Consistency Patch + TRUE FINAL EXIT PATCH + FINAL SEMANTIC CLOSURE
 Branch: m2g/company-brain-bootstrap-g3
 Date: 2026-09-01
 Starting SHA (exit-gate work): f2a533dc902d00b2106c1dd8ef770f8fdca01fbd
 Starting SHA (consistency patch): 7dbfa3efcf65488cb5934c8f240744d21960438c
+Starting SHA (FINAL SEMANTIC CLOSURE): f182d060ca7661d29132a934eaf76389c7a28844
 
 == Test Results ==
 
@@ -10,10 +11,10 @@ npm run test:company-brain-g2 (G0+G1+G2 suite):
   tests 129 | pass 129 | fail 0 | todo 0
 
 npm run test:company-brain-g3 (G0+G1+G2+G3 suite):
-  tests 218 | pass 218 | fail 0 | todo 0
+  tests 223 | pass 223 | fail 0 | todo 0
 
 npm test (full suite):
-  tests 1188 | pass 1188 | fail 0 | todo 0
+  tests 1193 | pass 1193 | fail 0 | todo 0
 
 npm run build:
   ✓ built in ~13s — no errors, no new warnings
@@ -21,7 +22,7 @@ npm run build:
 git diff --check:
   (no output — no whitespace errors)
 
-== G3-Specific Tests (39 total: 10 from G3 runtime + 12 from hardening + 10 from exit-gate closure + 4 from consistency patch + 3 from TRUE FINAL EXIT PATCH [net: replaced 1, added 4]) ==
+== G3-Specific Tests (44 total: 10 from G3 runtime + 12 from hardening + 10 from exit-gate closure + 4 from consistency patch + 3 from TRUE FINAL EXIT PATCH [net: replaced 1, added 4] + 5 from FINAL SEMANTIC CLOSURE) ==
 
   ok 180 - G3-temporal: classify UNKNOWN/CURRENT/EXPIRED/FUTURE from effectiveTime and queryDate
   ok 181 - G3-temporal: UNKNOWN temporal state prevents automatic resolution — canActAutomatically:false
@@ -64,6 +65,11 @@ git diff --check:
   ok 217 - test-217: CONTRACT_VS_COMPANY_POLICY does NOT fire when client evidence is CSV-based (not contract-derived)
   ok 218 - test-218: resolvePolicy and buildG3DwIntelligenceContext agree on CONTRACT_VS_COMPANY_POLICY for atlas
   ok 219 - test-219: revoked and out-of-scope founder decisions absent from buildG3DwIntelligenceContext.founderDecisions
+  ok 220 - test-220: governingClaimId:null does not resolve, not in founderDecisions, does not suppress conflicts
+  ok 221 - test-221: cross-topic winner rejected — decision.target=late_fee_policy with payment_terms candidate claimId
+  ok 222 - test-222: 3-way conflict — decision picks A; B-vs-C conflict remains because A not in its candidateKeys
+  ok 223 - test-223: buildG3DwIntelligenceContext policyConflicts per-topic invariant — no cross-topic candidate pairings
+  ok 224 - test-224: newer malformed decision (null governingClaimId) does not mask older valid decision
 
 == Hardening Fixes Applied (G3 Hardening) ==
 
@@ -337,12 +343,84 @@ Tenant isolation scan (tenantId checks):
          founder decisions both absent from buildG3DwIntelligenceContext.founderDecisions;
          both appear in invalidatedFounderDecisions with explaining invalidReason (Issue 5).
 
+== FINAL SEMANTIC CLOSURE — Issues 1–5 (M2G-G3 FINAL SEMANTIC CLOSURE) ==
+
+  Issue 1 — Strict winner validation (evaluateFounderDecision Phase 3):
+    When candidates !== null, Phase 3 now requires:
+      (a) governingClaimId exists and is non-null/non-empty — returns {valid:false, reason:'missing governingClaimId'} if absent
+      (b) governingClaimId maps to an ACTIVE candidate in the provided list
+      (c) candidate.topic === decision.target — cross-topic winner rejected even when candidate is ACTIVE
+    Existing tests all use non-null governingClaimId for valid decisions → unaffected.
+    Null-governingClaimId decision (decision-219-oos) fails Phase 2 before reaching Phase 3 → unaffected.
+
+  Issue 2 — doesDecisionCoverConflict binds winner to conflict candidateKeys:
+    (a) Returns false immediately when governingClaimId is null (no winner → cannot cover any conflict)
+    (b) Added: winner.graphNodeKey must appear in pc.candidateKeys for the conflict to be covered
+    Topic+scope alone are insufficient — the winner must participate in the specific conflict's candidate set.
+    G3-consistency-3: still passes because pairwise conflicts between atlas-exception and COMPANY candidates
+    include atlas-exception's graphNodeKey in their candidateKeys; the atlas decision covers those.
+
+  Issue 3 — buildG3DwIntelligenceContext per-topic conflict resolution:
+    Replaced single resolvePolicy(topic:null) for policyConflicts with a per-topic resolution loop:
+      - Enumerate distinct topics from all candidates
+      - Call resolvePolicy(scope, topic) for each topic
+      - Merge/deduplicate conflicts by (conflictClass, sorted candidateKeys)
+    Invariant enforced: for every scope+topic, DW Intelligence conflict state ===
+      resolvePolicy(scope, topic).detectedConflicts. Cross-topic CONTRACT pairings eliminated.
+
+  Issue 4 — applyFounderDecisions picks newest fully valid decision:
+    Previously: filtered by Phase 1+2, sorted, picked newest, ran Phase 3 on that one.
+    A newer malformed decision (null/wrong-topic governingClaimId) masked a valid older one.
+    Fix: evaluate Phase 3 on ALL Phase-1+2-valid decisions; keep only fully valid; sort; pick newest.
+    Older-but-valid decisions are no longer masked by newer-but-malformed ones.
+    Malformed decisions remain in result.decisions (auditable) but do not govern.
+
+  Issue 5 — CONTRACT provenance fix not regressed:
+    rootSourceVersionIds overlap check, DERIVED_FROM edge scan, topic-specific behavior, and
+    non-contract CSV negative case (test-217) all verified unchanged via full test suite.
+
+== FINAL SEMANTIC CLOSURE — Deterministic Regression Tests (5 new: 220–224) ==
+
+[x] 220. test-220 (A): governingClaimId:null — applyFounderDecisions applied:false, resolvePolicy not
+         RESOLVED, decision NOT in buildG3DwIntelligenceContext.founderDecisions, unresolvedPolicyConflicts
+         not suppressed. R0, R9 confirmed.
+
+[x] 221. test-221 (B): cross-topic winner — decision.target='late_fee_policy', governingClaimId = ACTIVE
+         payment_terms candidate claimId. Explicit pre-check confirms candidate IS found and IS active.
+         applyFounderDecisions applied:false because candidate.topic !== decision.target. R9 confirmed.
+
+[x] 222. test-222 (C): 3-way COMPANY conflict — decision picks A. Explicit pre-check: A's graphNodeKey
+         NOT in B-vs-C conflict candidateKeys. After decision, B-vs-C conflict remains in
+         unresolvedPolicyConflicts; explicit confirm A's key NOT in remaining conflict's candidateKeys.
+         R0, R9 confirmed.
+
+[x] 223. test-223 (D): per-topic invariant — no conflict in buildG3DwIntelligenceContext.policyConflicts
+         pairs candidates from different topics. Verified across all policyConflicts for atlas context.
+         Positive regression guard: CONTRACT_VS_COMPANY_POLICY for late_fee_policy still present (atlas).
+         R0, R9 confirmed.
+
+[x] 224. test-224 (E): newer malformed (null governingClaimId, later timestamp) + older valid (earlier
+         timestamp) → applyFounderDecisions winner = candidateA from older valid; latestDecision =
+         older valid. Both decisions in result.decisions (auditable). resolvePolicy RESOLVED with
+         candidateA as winner. R0, R9 confirmed.
+
+== Files Changed (FINAL SEMANTIC CLOSURE, relative to TRUE FINAL EXIT PATCH at f182d060) ==
+
+  src/lib/companyBrain/policyIntelligence.js  (Issues 1–4: evaluateFounderDecision Phase 3 strict winner
+                                               validation + cross-topic guard; doesDecisionCoverConflict
+                                               null-guard + candidateKeys binding; applyFounderDecisions
+                                               evaluate-all-then-pick-newest-fully-valid;
+                                               buildG3DwIntelligenceContext per-topic policyConflicts loop)
+  tests/companyBrainG3Policy.test.mjs         (5 new regression tests: 220–224)
+  docs/company-brain/M2G_G3_VALIDATION.txt    (this file, updated)
+
 == Boundary Conditions Confirmed ==
 
   - No supabase db push, no Edge deploy, no Vercel deploy
   - No modifications to converge/legacy-live-baseline (PR #45)
   - No merge of PR #44 or PR #45
   - No G4 or M2H work begun
+  - No redesign of G3; no G2 behavior touched
   - All changes isolated to m2g/company-brain-bootstrap-g3
   - G2 contracts unmodified; hardening reads G2 APIs without changing them
   - Stayed on m2g/company-brain-bootstrap-g3; no rebase onto another lineage

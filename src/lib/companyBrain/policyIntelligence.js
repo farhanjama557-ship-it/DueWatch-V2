@@ -150,7 +150,10 @@ function evaluateFounderDecision(d, { brain, tenantId, topic = null, scope = nul
 
   // Phase 3: winner-candidate validation (only when candidates provided)
   const governingClaimId = d.newState?.governingClaimId ?? null
-  if (candidates !== null && governingClaimId !== null) {
+  if (candidates !== null) {
+    if (!governingClaimId) {
+      return { valid: false, winner: null, reason: 'missing governingClaimId' }
+    }
     const candidate = candidates.find(
       (c) => c.claimId === governingClaimId && c.candidateStatus === CANDIDATE_STATUS.ACTIVE,
     )
@@ -158,6 +161,12 @@ function evaluateFounderDecision(d, { brain, tenantId, topic = null, scope = nul
       return {
         valid: false, winner: null,
         reason: `governingClaimId '${governingClaimId}' does not resolve to an active candidate`,
+      }
+    }
+    if (d.target && candidate.topic !== d.target) {
+      return {
+        valid: false, winner: null,
+        reason: `governingClaimId '${governingClaimId}' resolves to topic '${candidate.topic}' but decision.target is '${d.target}'`,
       }
     }
     return { valid: true, winner: candidate, reason: 'ok' }
@@ -188,14 +197,15 @@ function isFounderDecisionValid(d, { brain, tenantId, topic = null, scope = null
  * @returns {boolean}
  */
 function doesDecisionCoverConflict(decision, pc, allCandidates) {
-  // Winner check: governingClaimId must map to an active candidate (Issue 1)
+  // Winner must be present and map to an active candidate
   const governingClaimId = decision.newState?.governingClaimId ?? null
-  if (governingClaimId !== null) {
-    const winnerCandidate = allCandidates.find(
-      (c) => c.claimId === governingClaimId && c.candidateStatus === CANDIDATE_STATUS.ACTIVE,
-    )
-    if (!winnerCandidate) return false
-  }
+  if (!governingClaimId) return false
+  const winnerCandidate = allCandidates.find(
+    (c) => c.claimId === governingClaimId && c.candidateStatus === CANDIDATE_STATUS.ACTIVE,
+  )
+  if (!winnerCandidate) return false
+  // Winner must participate in this specific conflict's candidate set
+  if (!pc.candidateKeys.includes(winnerCandidate.graphNodeKey)) return false
 
   const conflictCandidates = pc.candidateKeys
     .map((k) => allCandidates.find((ca) => ca.graphNodeKey === k))
@@ -521,26 +531,29 @@ export function applyFounderDecisions(candidates, { brain, tenantId, topic, scop
   )
 
   if (relevantDecisions.length === 0) {
-    return { applied: false, decisions: [], winner: null, authorityGrantable: false }
+    return { applied: false, decisions: relevantDecisions, winner: null, authorityGrantable: false }
   }
 
-  // Most recent decision wins (sorted descending by decidedAt)
-  const sorted = [...relevantDecisions].sort(
-    (a, b) => new Date(b.decidedAt) - new Date(a.decidedAt),
-  )
-  const latestDecision = sorted[0]
+  // Evaluate Phase 3 on ALL relevant decisions; keep only fully valid ones.
+  // A newer malformed decision (null/wrong-topic governingClaimId) must not mask an older valid one.
+  const fullyValidDecisions = relevantDecisions
+    .map((d) => ({
+      d,
+      result: evaluateFounderDecision(d, { brain, tenantId, topic, scope: requestedScope, candidates }),
+    }))
+    .filter(({ result }) => result.valid)
+    .sort((a, b) => new Date(b.d.decidedAt) - new Date(a.d.decidedAt))
 
-  // Use evaluateFounderDecision Phase 3 for winner validation:
-  // governingClaimId must map to an ACTIVE candidate (Issue 1).
-  const evalResult = evaluateFounderDecision(latestDecision, {
-    brain, tenantId, topic, scope: requestedScope, candidates,
-  })
-  const winner = evalResult.valid ? evalResult.winner : null
+  if (fullyValidDecisions.length === 0) {
+    return { applied: false, decisions: relevantDecisions, winner: null, authorityGrantable: false }
+  }
+
+  const { d: latestDecision, result: latestResult } = fullyValidDecisions[0]
 
   return {
-    applied: winner !== null,
+    applied: true,
     decisions: relevantDecisions,
-    winner,
+    winner: latestResult.winner,
     latestDecision,
     authorityGrantable: false, // R9: policy decision ≠ DW execution authority
   }
@@ -1273,9 +1286,24 @@ export function buildG3DwIntelligenceContext(graph, brain, {
     (c) => c.tenantId === tenantId && c.status === 'CONFLICTED',
   )
 
-  // G3 policy conflicts: from resolvePolicy(topic=null) — same CONTRACT detection and
-  // SUPERSEDES application as resolvePolicy (Issue 4)
-  const policyConflicts = policyResolution.detectedConflicts
+  // G3 policy conflicts: per-topic resolution to prevent cross-topic CONTRACT pairings
+  // (e.g., COMPANY late_fee_policy vs CLIENT contract payment_terms). For every scope+topic,
+  // DW Intelligence conflict state === resolvePolicy(scope, topic).detectedConflicts.
+  const distinctTopics = [...new Set(allCandidates.map((c) => c.topic).filter(Boolean))]
+  const seenConflictKeys = new Set()
+  const policyConflicts = []
+  for (const t of distinctTopics) {
+    const topicRes = resolvePolicy(graph, brain, {
+      actor, tenantId, scope: contextScope, topic: t, queryDate,
+    })
+    for (const conflict of topicRes.detectedConflicts) {
+      const key = `${conflict.conflictClass}:${[...conflict.candidateKeys].sort().join(',')}`
+      if (!seenConflictKeys.has(key)) {
+        seenConflictKeys.add(key)
+        policyConflicts.push(conflict)
+      }
+    }
+  }
 
   // Valid founder decisions for conflict coverage — no scope filter here;
   // doesDecisionCoverConflict handles scope isolation per conflict (Issue 3).

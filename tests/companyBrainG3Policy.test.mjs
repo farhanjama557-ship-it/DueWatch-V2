@@ -2511,3 +2511,358 @@ test('test-219: revoked and out-of-scope founder decisions absent from buildG3Dw
   assert.equal(afterRevoke.boundaries.canonicalMoneyWritable, false, 'R0')
   assert.equal(afterRevoke.authorityBoundary.canActAutomatically, false, 'R9')
 })
+
+// ── Test 220 (A): null governingClaimId is rejected by Phase 3 ────────────────
+
+test('test-220: governingClaimId:null does not resolve, not in founderDecisions, does not suppress conflicts', () => {
+  const brain = new CompanyBrainDurableStore({ clock: clocks() })
+  ingestContent(brain, workerA, 'sop-220a.md', 'Charge a 5% late fee on all overdue invoices.', 'sop-220a')
+  ingestContent(brain, workerA, 'sop-220b.md', 'Charge a 3% late fee on all overdue invoices.', 'sop-220b')
+  ingestContent(brain, workerA, 'reg-220.csv', 'entity_type,entity_id,name\nCOMPANY,duewatch-company,DueWatch', 'reg-220')
+
+  const graph = new CompanyGraphStore({ brainStore: brain, clock: clocks() })
+  graph.build({ actor: founderA, tenantId: tenantA })
+
+  const candidates = buildPolicyCandidates(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    scope: { level: SEMANTIC_SCOPE.COMPANY }, queryDate: '2026-08-31',
+  }).filter((c) => c.candidateStatus === CANDIDATE_STATUS.ACTIVE && c.topic === 'late_fee_policy')
+  assert.ok(candidates.length >= 2, 'precondition: need at least 2 ACTIVE late_fee_policy candidates')
+
+  brain.decisions.push({
+    id: 'decision-220-null',
+    tenantId: tenantA,
+    actorId: founderA.id, actorRole: 'FOUNDER',
+    decidedAt: '2026-08-31T12:00:00Z',
+    decisionType: 'RESOLVE_CONFLICT',
+    target: 'late_fee_policy',
+    scope: { level: SEMANTIC_SCOPE.COMPANY },
+    oldState: { status: 'CONFLICTED' },
+    newState: { governingClaimId: null },
+    evidenceClaimIds: [],
+    reason: 'null governingClaimId — must not govern',
+    revocable: true,
+    idempotencyKey: 'idem-220',
+    requestFingerprint: 'test',
+    supersedesDecisionId: null,
+    status: 'RECORDED',
+  })
+
+  // applyFounderDecisions: null governingClaimId → not applied
+  const applyResult = applyFounderDecisions(candidates, {
+    brain, tenantId: tenantA, topic: 'late_fee_policy',
+  })
+  assert.equal(applyResult.applied, false, 'null governingClaimId must not be applied')
+  assert.equal(applyResult.winner, null, 'no winner for null governingClaimId')
+
+  // resolvePolicy: not RESOLVED
+  const resolution = resolvePolicy(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    scope: { level: SEMANTIC_SCOPE.COMPANY },
+    topic: 'late_fee_policy', queryDate: '2026-08-31',
+  })
+  assert.notEqual(resolution.status, G3_RESOLUTION_STATUS.RESOLVED,
+    'resolvePolicy must NOT resolve when governingClaimId is null')
+  assert.equal(resolution.winner, null, 'resolvePolicy winner must be null')
+
+  // buildG3DwIntelligenceContext: not in founderDecisions, conflict not suppressed
+  const dwCtx = buildG3DwIntelligenceContext(graph, brain, {
+    actor: founderA, tenantId: tenantA, queryDate: '2026-08-31',
+  })
+  assert.ok(
+    !dwCtx.founderDecisions.some((d) => d.id === 'decision-220-null'),
+    'null-governingClaimId decision must NOT appear in founderDecisions',
+  )
+  assert.ok(
+    dwCtx.unresolvedPolicyConflicts.length > 0,
+    'null-governingClaimId decision must NOT suppress unresolvedPolicyConflicts',
+  )
+  assert.equal(dwCtx.authorityBoundary.canActAutomatically, false, 'R9')
+  assert.equal(dwCtx.boundaries.canonicalMoneyWritable, false, 'R0')
+})
+
+// ── Test 221 (B): cross-topic winner rejected even if candidate is ACTIVE ─────
+
+test('test-221: cross-topic winner rejected — decision.target=late_fee_policy with payment_terms candidate claimId', () => {
+  // A decision whose governingClaimId resolves to an ACTIVE candidate of the WRONG topic
+  // must be rejected by Phase 3's cross-topic guard (candidate.topic !== decision.target).
+  const brain = new CompanyBrainDurableStore({ clock: clocks() })
+  ingestContent(brain, workerA, 'sop-221.md', 'Charge a 5% late fee on all overdue invoices.', 'sop-221')
+  ingestContent(brain, workerA, 'reg-221.csv', 'entity_type,entity_id,name\nCOMPANY,duewatch-company,DueWatch', 'reg-221')
+
+  const graph = new CompanyGraphStore({ brainStore: brain, clock: clocks() })
+  graph.build({ actor: founderA, tenantId: tenantA })
+
+  const lateFeeCandidate = buildPolicyCandidates(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    scope: { level: SEMANTIC_SCOPE.COMPANY }, queryDate: '2026-08-31',
+  }).find((c) => c.candidateStatus === CANDIDATE_STATUS.ACTIVE && c.topic === 'late_fee_policy')
+  assert.ok(lateFeeCandidate, 'precondition: need an ACTIVE late_fee_policy candidate')
+
+  // Synthetic payment_terms claim and candidate (different topic, ACTIVE)
+  const ptClaimId = 'synthetic-pt-claim-221'
+  brain.claims.push({
+    id: ptClaimId, tenantId: tenantA, active: true,
+    claimType: 'payment_terms', claimClass: CLAIM_CLASS.COMPANY_POLICY,
+    value: { netDays: 30 }, confidence: 1, derived: false,
+    sourceVersionId: 'sv-pt-221', provenanceRootIds: [],
+  })
+  const ptCandidate = {
+    claimId: ptClaimId,
+    topic: 'payment_terms',
+    graphNodeKey: 'node:policy-candidate:synthetic-pt-221',
+    candidateStatus: CANDIDATE_STATUS.ACTIVE,
+    claimClass: CLAIM_CLASS.COMPANY_POLICY,
+    scopeLevel: SEMANTIC_SCOPE.COMPANY,
+    temporalState: TEMPORAL_STATE.CURRENT,
+    clientId: null,
+  }
+
+  // Mixed candidate list: late_fee_policy + payment_terms (both ACTIVE)
+  const mixedCandidates = [lateFeeCandidate, ptCandidate]
+
+  // Confirm the payment_terms candidate IS in the list and IS active — it is found,
+  // but the cross-topic guard must reject it because candidate.topic !== decision.target
+  const foundPt = mixedCandidates.find(
+    (c) => c.claimId === ptClaimId && c.candidateStatus === CANDIDATE_STATUS.ACTIVE,
+  )
+  assert.ok(foundPt, 'pre-check: payment_terms candidate IS in the list and IS active')
+  assert.equal(foundPt.topic, 'payment_terms', 'pre-check: its topic is payment_terms, not late_fee_policy')
+
+  // Decision targets late_fee_policy but picks the payment_terms candidate
+  brain.decisions.push({
+    id: 'decision-221-cross-topic',
+    tenantId: tenantA,
+    actorId: founderA.id, actorRole: 'FOUNDER',
+    decidedAt: '2026-08-31T12:00:00Z',
+    decisionType: 'RESOLVE_CONFLICT',
+    target: 'late_fee_policy',
+    scope: { level: SEMANTIC_SCOPE.COMPANY },
+    oldState: { status: 'CONFLICTED' },
+    newState: { governingClaimId: ptClaimId },
+    evidenceClaimIds: [ptClaimId],
+    reason: 'cross-topic test — must be rejected',
+    revocable: true,
+    idempotencyKey: 'idem-221',
+    requestFingerprint: 'test',
+    supersedesDecisionId: null,
+    status: 'RECORDED',
+  })
+
+  // applyFounderDecisions with mixed candidates: cross-topic → rejected
+  const result = applyFounderDecisions(mixedCandidates, {
+    brain, tenantId: tenantA, topic: 'late_fee_policy',
+  })
+  assert.equal(result.applied, false, 'cross-topic winner must be rejected')
+  assert.equal(result.winner, null, 'no winner for cross-topic decision')
+  assert.equal(result.authorityGrantable, false, 'R9')
+})
+
+// ── Test 222 (C): 3 COMPANY candidates — A wins, B-vs-C remains unresolved ───
+
+test('test-222: 3-way conflict — decision picks A; B-vs-C conflict remains because A not in its candidateKeys', () => {
+  const brain = new CompanyBrainDurableStore({ clock: clocks() })
+  ingestContent(brain, workerA, 'sop-222a.md', 'Charge a 5% late fee on all overdue invoices.', 'sop-222a')
+  ingestContent(brain, workerA, 'sop-222b.md', 'Charge a 3% late fee on all overdue invoices.', 'sop-222b')
+  ingestContent(brain, workerA, 'sop-222c.md', 'Charge a 9% late fee on all overdue invoices.', 'sop-222c')
+  ingestContent(brain, workerA, 'reg-222.csv', 'entity_type,entity_id,name\nCOMPANY,duewatch-company,DueWatch', 'reg-222')
+
+  const graph = new CompanyGraphStore({ brainStore: brain, clock: clocks() })
+  graph.build({ actor: founderA, tenantId: tenantA })
+
+  const candidates = buildPolicyCandidates(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    scope: { level: SEMANTIC_SCOPE.COMPANY }, queryDate: '2026-08-31',
+  }).filter((c) => c.candidateStatus === CANDIDATE_STATUS.ACTIVE && c.topic === 'late_fee_policy')
+  assert.ok(candidates.length >= 3, 'precondition: need at least 3 ACTIVE late_fee_policy candidates')
+
+  const [candidateA, candidateB, candidateC] = candidates
+
+  // Verify B-vs-C pairwise conflict exists and does NOT contain A's key
+  const preRes = resolvePolicy(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    scope: { level: SEMANTIC_SCOPE.COMPANY },
+    topic: 'late_fee_policy', queryDate: '2026-08-31',
+  })
+  assert.ok(preRes.detectedConflicts.length >= 3, 'precondition: at least 3 pairwise conflicts (A-B, A-C, B-C)')
+
+  const bcConflict = preRes.detectedConflicts.find((pc) =>
+    pc.candidateKeys.includes(candidateB.graphNodeKey) &&
+    pc.candidateKeys.includes(candidateC.graphNodeKey) &&
+    !pc.candidateKeys.includes(candidateA.graphNodeKey),
+  )
+  assert.ok(bcConflict, 'precondition: must find B-vs-C pairwise conflict (A NOT in its candidateKeys)')
+  // Explicit assertion per spec: A's key is NOT in B-vs-C candidateKeys
+  assert.ok(
+    !bcConflict.candidateKeys.includes(candidateA.graphNodeKey),
+    'explicit: candidateA.graphNodeKey must NOT be in B-vs-C conflict candidateKeys',
+  )
+
+  // Decision picks A
+  brain.decisions.push({
+    id: 'decision-222-picks-a',
+    tenantId: tenantA,
+    actorId: founderA.id, actorRole: 'FOUNDER',
+    decidedAt: '2026-08-31T12:00:00Z',
+    decisionType: 'RESOLVE_CONFLICT',
+    target: 'late_fee_policy',
+    scope: { level: SEMANTIC_SCOPE.COMPANY },
+    oldState: { status: 'CONFLICTED' },
+    newState: { governingClaimId: candidateA.claimId },
+    evidenceClaimIds: [candidateA.claimId],
+    reason: 'A governs',
+    revocable: true,
+    idempotencyKey: 'idem-222',
+    requestFingerprint: 'test',
+    supersedesDecisionId: null,
+    status: 'RECORDED',
+  })
+
+  // After decision picks A, B-vs-C must remain in unresolvedPolicyConflicts
+  const dwCtx = buildG3DwIntelligenceContext(graph, brain, {
+    actor: founderA, tenantId: tenantA, queryDate: '2026-08-31',
+  })
+  const remainingBvC = dwCtx.unresolvedPolicyConflicts.find((pc) =>
+    pc.candidateKeys.includes(candidateB.graphNodeKey) &&
+    pc.candidateKeys.includes(candidateC.graphNodeKey),
+  )
+  assert.ok(
+    remainingBvC,
+    'B-vs-C conflict must remain in unresolvedPolicyConflicts — A is not in its candidateKeys so winner does not bind',
+  )
+  assert.ok(
+    !remainingBvC.candidateKeys.includes(candidateA.graphNodeKey),
+    'confirm: winner A is NOT in B-vs-C candidateKeys — this is why the conflict is not covered by A\'s win',
+  )
+  assert.equal(dwCtx.authorityBoundary.canActAutomatically, false, 'R9')
+  assert.equal(dwCtx.boundaries.canonicalMoneyWritable, false, 'R0')
+})
+
+// ── Test 223 (D): per-topic conflict invariant — no cross-topic pairings ──────
+
+test('test-223: buildG3DwIntelligenceContext policyConflicts per-topic invariant — no cross-topic candidate pairings', () => {
+  // Issue 3 fix: DW Intelligence derives policyConflicts via per-topic resolvePolicy.
+  // Invariant: no conflict in policyConflicts may pair candidates from different topics.
+  // Positive guard: CONTRACT_VS_COMPANY_POLICY for late_fee_policy (atlas) must still appear.
+  const { graph, brain } = seeded()
+
+  const atlasCtx = buildG3DwIntelligenceContext(graph, brain, {
+    actor: founderA, tenantId: tenantA, clientId: 'atlas', queryDate: '2026-08-31',
+  })
+
+  // Build full candidate map for topic lookup (all statuses, not just applicable)
+  const allCandRes = resolvePolicy(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    scope: { level: SEMANTIC_SCOPE.CLIENT, clientId: 'atlas' },
+    topic: null, queryDate: '2026-08-31',
+  })
+  const candByKey = Object.fromEntries(allCandRes.candidates.map((c) => [c.graphNodeKey, c]))
+
+  // Every policyConflict must have all participating candidates share the same topic
+  for (const pc of atlasCtx.policyConflicts) {
+    const topics = [...new Set(
+      pc.candidateKeys.map((k) => candByKey[k]?.topic).filter(Boolean),
+    )]
+    assert.ok(
+      topics.length <= 1,
+      `policyConflict (${pc.conflictClass}) must not mix topics; got: [${topics.join(', ')}] for keys [${pc.candidateKeys.join(', ')}]`,
+    )
+  }
+
+  // Positive regression guard: atlas CONTRACT_VS_COMPANY_POLICY for late_fee_policy must still appear
+  assert.ok(
+    atlasCtx.policyConflicts.some((pc) => pc.conflictClass === CONFLICT_CLASS.CONTRACT_VS_COMPANY_POLICY),
+    'atlas positive case: CONTRACT_VS_COMPANY_POLICY must appear in policyConflicts (regression guard)',
+  )
+  assert.equal(atlasCtx.boundaries.canonicalMoneyWritable, false, 'R0')
+  assert.equal(atlasCtx.authorityBoundary.canActAutomatically, false, 'R9')
+})
+
+// ── Test 224 (E): newer malformed decision does not mask older valid decision ──
+
+test('test-224: newer malformed decision (null governingClaimId) does not mask older valid decision', () => {
+  // Issue 4 fix: applyFounderDecisions evaluates Phase 3 on ALL relevant decisions and picks
+  // the newest FULLY VALID one — a newer malformed decision must not mask a valid older one.
+  const brain = new CompanyBrainDurableStore({ clock: clocks() })
+  ingestContent(brain, workerA, 'sop-224a.md', 'Charge a 5% late fee on all overdue invoices.', 'sop-224a')
+  ingestContent(brain, workerA, 'sop-224b.md', 'Charge a 3% late fee on all overdue invoices.', 'sop-224b')
+  ingestContent(brain, workerA, 'reg-224.csv', 'entity_type,entity_id,name\nCOMPANY,duewatch-company,DueWatch', 'reg-224')
+
+  const graph = new CompanyGraphStore({ brainStore: brain, clock: clocks() })
+  graph.build({ actor: founderA, tenantId: tenantA })
+
+  const candidates = buildPolicyCandidates(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    scope: { level: SEMANTIC_SCOPE.COMPANY }, queryDate: '2026-08-31',
+  }).filter((c) => c.candidateStatus === CANDIDATE_STATUS.ACTIVE && c.topic === 'late_fee_policy')
+  assert.ok(candidates.length >= 2, 'precondition: need at least 2 ACTIVE late_fee_policy candidates')
+
+  const candidateA = candidates[0]
+
+  // Older decision: fully valid — picks candidate A (earlier timestamp)
+  brain.decisions.push({
+    id: 'decision-224-older-valid',
+    tenantId: tenantA,
+    actorId: founderA.id, actorRole: 'FOUNDER',
+    decidedAt: '2026-08-30T10:00:00Z',
+    decisionType: 'RESOLVE_CONFLICT',
+    target: 'late_fee_policy',
+    scope: { level: SEMANTIC_SCOPE.COMPANY },
+    oldState: { status: 'CONFLICTED' },
+    newState: { governingClaimId: candidateA.claimId },
+    evidenceClaimIds: [candidateA.claimId],
+    reason: 'older valid decision',
+    revocable: true,
+    idempotencyKey: 'idem-224-older',
+    requestFingerprint: 'test',
+    supersedesDecisionId: null,
+    status: 'RECORDED',
+  })
+
+  // Newer decision: malformed (null governingClaimId) — later timestamp, Phase 3 must reject it
+  brain.decisions.push({
+    id: 'decision-224-newer-malformed',
+    tenantId: tenantA,
+    actorId: founderA.id, actorRole: 'FOUNDER',
+    decidedAt: '2026-08-31T10:00:00Z',
+    decisionType: 'RESOLVE_CONFLICT',
+    target: 'late_fee_policy',
+    scope: { level: SEMANTIC_SCOPE.COMPANY },
+    oldState: { status: 'CONFLICTED' },
+    newState: { governingClaimId: null },
+    evidenceClaimIds: [],
+    reason: 'malformed newer decision — must not mask older valid',
+    revocable: true,
+    idempotencyKey: 'idem-224-newer',
+    requestFingerprint: 'test',
+    supersedesDecisionId: null,
+    status: 'RECORDED',
+  })
+
+  // applyFounderDecisions: newer malformed decision must not mask older valid one
+  const result = applyFounderDecisions(candidates, {
+    brain, tenantId: tenantA, topic: 'late_fee_policy',
+  })
+  assert.equal(result.applied, true, 'older valid decision must be applied despite newer malformed one')
+  assert.equal(result.winner?.claimId, candidateA.claimId,
+    'winner must be candidateA from the older valid decision')
+  assert.equal(result.latestDecision?.id, 'decision-224-older-valid',
+    'latestDecision must be the older valid one (newest fully valid), not the newer malformed')
+
+  // Both decisions are auditable
+  assert.ok(result.decisions.some((d) => d.id === 'decision-224-older-valid'), 'older valid in decisions list')
+  assert.ok(result.decisions.some((d) => d.id === 'decision-224-newer-malformed'), 'newer malformed in decisions list (auditable)')
+
+  // resolvePolicy also resolves using the older valid decision
+  const resolution = resolvePolicy(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    scope: { level: SEMANTIC_SCOPE.COMPANY },
+    topic: 'late_fee_policy', queryDate: '2026-08-31',
+  })
+  assert.equal(resolution.status, G3_RESOLUTION_STATUS.RESOLVED,
+    'resolvePolicy must be RESOLVED by the older valid decision')
+  assert.equal(resolution.winner?.claimId, candidateA.claimId,
+    'resolvePolicy winner must be candidateA')
+  assert.equal(resolution.canActAutomatically, false, 'R9')
+  assert.equal(resolution.canonicalMoneyWritable, false, 'R0')
+})
