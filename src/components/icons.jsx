@@ -56,6 +56,15 @@ export function CashFlowIcon(props) {
   )
 }
 
+export function CompanyBrainIcon(props) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M9 3a3 3 0 0 0-3 3 3 3 0 0 0-1 5.83A3 3 0 0 0 7 17a3 3 0 0 0 5 2.24A3 3 0 0 0 17 17a3 3 0 0 0 2-5.17A3 3 0 0 0 18 6a3 3 0 0 0-3-3 3 3 0 0 0-3 1.5A3 3 0 0 0 9 3Z" />
+      <line x1="12" y1="4.5" x2="12" y2="19.5" />
+    </svg>
+  )
+}
+
 export function ActivityIcon(props) {
   return (
     <svg {...base} {...props}>

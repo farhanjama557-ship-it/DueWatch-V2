@@ -1,0 +1,433 @@
+M2G — COMPANY BRAIN BOOTSTRAP
+G6 — FOUNDER REVIEW / BOOTSTRAP UX
+VALIDATION RECORD
+
+==================================================
+1. GATE IDENTITY
+==================================================
+
+Gate:              G6 — Founder review / bootstrap UX
+Branch:            m2g/company-brain-bootstrap-g6
+Starting HEAD:     9a60ec08f5604b0a3b73182e40e0f26c639d2288  (frozen G5)
+Parent SHA:        9a60ec08f5604b0a3b73182e40e0f26c639d2288
+Resulting commit:  <G6_COMMIT_SHA>
+Corrected G4:      14a8c4f820bad58bbc975f07b55740089861d106  (G5 parent, verified)
+Corrected G3:      b653ffb0f04c8277ec40b34816166e578b9dcbd9  (verified ancestor of HEAD)
+
+Pre-edit verification performed:
+  branch          = m2g/company-brain-bootstrap-g6            OK
+  HEAD            = 9a60ec08f5604b0a3b73182e40e0f26c639d2288  OK
+  worktree        = clean                                     OK
+  corrected G3    = ancestor of HEAD                          OK
+
+No reset, force checkout, amend, history rewrite, force push, or branch
+recreation was performed. G0–G5 semantics are unmodified.
+
+==================================================
+2. FILES CHANGED
+==================================================
+
+Added:
+  src/lib/companyBrain/founderReview.js                                  1269 lines
+  src/lib/companyBrain/founderReviewPresentation.js                       422 lines
+  src/lib/companyBrain/founderReviewLoader.js                             320 lines
+  src/features/companyBrain/CompanyBrainReview.jsx                        355 lines
+  src/features/companyBrain/companyBrainReview.css                        108 lines
+  src/pages/CompanyBrain.jsx                                               87 lines
+  supabase/migrations/20260901220000_company_brain_founder_review_g6.sql   350 lines
+  tests/companyBrainG6FounderReview.test.mjs                             1209 lines
+  tests/companyBrainG6Migration.test.mjs                                  154 lines
+  tests/companyBrainG6ReviewUi.test.mjs                                   312 lines
+
+Modified:
+  package.json               (+1)  test:company-brain-g6 script
+  src/App.jsx                (+2)  /company-brain route
+  src/components/Sidebar.jsx (+2)  Company Brain nav entry
+  src/components/icons.jsx   (+9)  CompanyBrainIcon
+
+Total: 14 files, 4600 insertions, 0 deletions.
+No file belonging to G0–G5 had its semantics changed. No test was weakened,
+disabled, or removed.
+
+==================================================
+3. ARCHITECTURE SUMMARY
+==================================================
+
+G6 adds one deterministic kernel, one presentation adapter, one persistence
+loader, one founder-facing surface, and one migration.
+
+  founderReview.js             pure domain kernel: review-item derivation,
+                               durable review decisions, current-state
+                               derivation, read models
+  founderReviewPresentation.js pure view shaping (no React, no I/O)
+  founderReviewLoader.js       tenant-scoped Supabase reads + delegation to the
+                               owning RPCs (G6 review, G5 grant, G5 revoke)
+  CompanyBrainReview.jsx       founder surface (read-and-decide only)
+  CompanyBrain.jsx             /company-brain route
+
+Review items are derived from frozen upstream state, never invented:
+  G4 operating model  -> understanding, policy, role and delegation items
+  G3 durable conflicts + G4 blockers -> conflict items
+  G5 authority read model            -> authority-state and proposal items
+
+A single derivation core is shared by the store-backed entry point
+(buildFounderReviewItems) and the persistence-backed entry point
+(buildFounderReviewItemsFromRecords); test G6-R6 asserts the two produce
+byte-identical output, so there is exactly one derivation engine.
+
+==================================================
+4. DOMAIN SEMANTICS
+==================================================
+
+REVIEW ITEM MODEL (structured, never free text):
+  reviewKey, tenantId, category, itemType, subjectType, subjectId, subject,
+  proposition, proposedValue, why, scope, clientId, roleId, confidence,
+  conflictStatus, conflictKeys, unresolvedReason, evidence, claims,
+  supportingSourceRevoked, subjectFingerprint, reviewableActions,
+  resolutionPath, authorityImpact, authorityProposalId, authorityGrantId,
+  authorityStatus, temporalState, operatingState, policyResolutionStatus,
+  sourceStatementIds, generatedAt, asOfDate, boundaries.
+
+REVIEW ITEM TYPES:
+  UNDERSTANDING, POLICY_OR_RULE, CONFLICT, OPERATING_MODEL,
+  ROLE_OR_RESPONSIBILITY, DELEGATION, AUTHORITY_PROPOSAL, AUTHORITY_STATE,
+  STALE_OR_CHANGED_ITEM.
+
+REVIEW STATUSES:
+  PENDING, APPROVED, EDITED, REJECTED, HELD, DEFERRED, SUPERSEDED, STALE,
+  REVIEW_REQUIRED.
+
+REVIEW ACTIONS AND WHERE THEY ARE OFFERED:
+  understanding / policy / role / delegation  APPROVE EDIT REJECT HOLD DEFER
+  conflict                                    HOLD DEFER only
+                                              (resolution path = G3 founder decision)
+  authority proposal                          EDIT REJECT HOLD DEFER only
+                                              (no APPROVE: it would read as a grant)
+  authority state                             no G6 review action at all
+                                              (mutation path = G5 grant / revoke)
+
+REJECT semantics: refuses the proposition, never asserts its inverse.
+Every revision carries assertsInverseProposition = false and
+inferredOppositeValue = null (test G6-X).
+
+HOLD / DEFER: distinct statuses, both unresolved, neither counted as reviewed
+understanding and neither able to become a silent default (G6-Y, G6-Z, G6-R9).
+
+==================================================
+5. AUTHORITY SEPARATION GUARANTEES
+==================================================
+
+The core distinction is enforced in four independent places:
+
+ 1. Kernel:      every review revision is constructed with
+                 authorityGranted: false, authorityImpact: 'NONE',
+                 canonicalMoneyMutated: false, executed: false.
+ 2. Store shape: FounderReviewStore holds no authority handle. It has no
+                 grantAuthority, revokeAuthority or evaluateAuthority method
+                 (asserted by test G6-BJ).
+ 3. Input guard: recordReviewDecision rejects any request carrying an
+                 authority field — explicitGrant, grantAuthority, grantee,
+                 grantId, approvalRequirement, effectiveWindow,
+                 authorityAction, authorityScope, limits, channel,
+                 revokeAuthority, isFounder, founderId, tenantOverride,
+                 authorityGranted — rather than ignoring it (G6-Q, G6-R).
+ 4. Database:    company_brain_founder_review_revisions_g6 declares
+                 authority_granted boolean not null default false
+                   check (authority_granted = false)
+                 and the same pattern for authority_impact,
+                 asserts_inverse_proposition, resolves_conflict,
+                 canonical_money_mutated and executed.
+
+Standing DW authority is created ONLY by the pre-existing G5 path:
+  AuthorityDelegationStore.grantAuthority (explicitGrant === true, founder /
+  tenant-owner actor) and public.grant_company_brain_authority_g5.
+G6 defines no grant semantics. founderReviewLoader.requestAuthorityGrant is a
+pass-through that requires every G5 dimension explicitly and refuses a missing
+one rather than defaulting it, so an omission can never widen to a wildcard.
+
+==================================================
+6. CONFLICT INTEGRATION (G3)
+==================================================
+
+G6 builds no second conflict-resolution engine. Conflict items project the
+durable G3 conflict records (every competing claim, its scope and its
+preserved value) plus G4 blockers, and read founder-decision coverage through
+deriveFounderDecisionState. Resolution goes through
+CompanyBrainDurableStore.recordFounderDecision. Losing evidence is preserved
+and still rendered after a decision (G6-BX). No conflict is ever reduced to a
+confidence score; confidenceResolved is false on every conflict item.
+
+==================================================
+7. OPERATING MODEL INTEGRATION (G4)
+==================================================
+
+Every G4 statement across the ten sections plus client overrides becomes one
+review item carrying its state, temporal state, policy resolution status,
+conflict keys, explanation, provenance and confidence. Approving an operating
+statement records a review decision and nothing else (G6-B).
+
+==================================================
+8. G5 INTEGRATION
+==================================================
+
+getAuthorityReviewState is a projection of the G5 read model. It adds no
+capability: current, proposed, revoked, stale, superseded and invalidated
+authority all come from deriveAuthorityState. Authority cards render all nine
+G5 dimensions by name — ACTION, SCOPE, CLIENT, AMOUNT, CURRENCY, CONDITION,
+TIME, CHANNEL, APPROVAL — and an unspecified dimension renders as
+"Not specified — no authority is implied" (G6-U5).
+
+==================================================
+9. FRESHNESS SEMANTICS
+==================================================
+
+Each item carries a subjectFingerprint over exactly what the founder reviewed
+about THAT item: its proposition, proposed value, conflict state, operating
+state, policy status, temporal state, and its own evidence and claims. A
+review revision cites the fingerprint it saw.
+
+  fingerprint unchanged  -> the recorded status stands
+  fingerprint changed    -> REVIEW_REQUIRED / SUBJECT_CHANGED_SINCE_REVIEW
+  supporting source revoked -> REVIEW_REQUIRED / SUPPORTING_SOURCE_REVOKED
+  reviewed subject gone  -> REVIEW_REQUIRED / REVIEWED_SUBJECT_NO_LONGER_PRESENT
+
+There is no global invalidation. An unrelated ingestion leaves unrelated
+approved items approved (G6-AF), while a revocation that actually feeds an
+item does affect it and only it (G6-AE). Authority freshness is untouched by
+G6 and stays governed by the G5 reviewed-dependency fingerprints (G6-AH).
+
+==================================================
+10. SUPERSESSION AND NO RESURRECTION
+==================================================
+
+Each accepted review decision appends a revision that explicitly names its
+predecessor via supersedesRevisionId. The current revision is the newest
+unsuperseded tip. When that tip is stale against a changed subject the item
+becomes REVIEW_REQUIRED — the superseded predecessor never returns as current
+truth (G6-AC, G6-AD). History is append-only and deeply frozen; an earlier
+decision cannot be overwritten (G6-BD).
+
+==================================================
+11. IDEMPOTENCY AND STALE WRITES
+==================================================
+
+Same idempotency key + same semantic request -> the same revision returned,
+no second row. Same key + different request  -> rejected with an audited
+REJECTED_IDEMPOTENCY_CONFLICT. Distinct revisions with distinct values stay
+distinct (G6-AM, G6-AN).
+
+Two independent stale-write guards, both fail-closed and both audited:
+  expectedRevision  != stored revision count -> REJECTED_STALE_REVISION
+  subjectFingerprint != current item fingerprint -> REJECTED_SUBJECT_CHANGED
+Newer truth is never silently overwritten (G6-BW). The RPC enforces the
+revision guard server-side as well.
+
+==================================================
+12. TENANT ISOLATION
+==================================================
+
+Every kernel entry point asserts the authenticated actor's tenant. Items are
+filtered by tenant BEFORE aggregation, never after. Cross-tenant reads,
+mutations, grants and revocations all raise (G6-S, G6-T, G6-U, G6-V, G6-W,
+G6-BF). The founder test is identical to G5's: authenticated, role FOUNDER,
+and actor.id === tenantId — G6 does not widen who counts as a founder.
+Persistence follows the repository RLS convention: user_id on every row,
+RLS enabled, owner-read-only policies, all write privileges revoked from
+public/anon/authenticated, mutation only through a security-definer RPC that
+derives the tenant from auth.uid().
+
+==================================================
+13. NO-EXECUTION AND CANONICAL-MONEY GUARANTEES
+==================================================
+
+G6 introduces no email, SMS, provider, scheduler or Autopilot path (G6-BL/BM/BN).
+An ALLOWED G5 evaluation still stops before execution: executed === false and
+canonicalMoneyMutated === false (G6-BK). No G6 file references invoice
+balance, payment status, payment attempts, receipts, credit allocation,
+settlement or reconciliation (G6-BO). Review items are stored with
+canonical_financial_truth = false, database-enforced.
+
+==================================================
+14. PERSISTENCE ADDED
+==================================================
+
+Migration: supabase/migrations/20260901220000_company_brain_founder_review_g6.sql
+
+Tables:
+  company_brain_founder_review_items_g6      review-item identity + canonical refs
+  company_brain_founder_review_revisions_g6  founder decisions, revisioned + lineage
+  company_brain_founder_review_evidence_g6   cited claim roots
+  company_brain_founder_review_attempts_g6   accepted / rejected attempt audit
+
+RPC:
+  public.record_company_brain_founder_review_g6 (security definer,
+  set search_path = '', tenant and actor derived from auth.uid()).
+
+It takes no p_user_id, p_tenant_id, p_actor_id or p_is_founder parameter. It
+refuses actions owned by another gate — APPROVE/EDIT/REJECT on a CONFLICT or
+AUTHORITY_STATE, and APPROVE on an AUTHORITY_PROPOSAL — and re-checks that
+guard against the item type ALREADY STORED for the review key, so a caller
+cannot reclassify a stored conflict into an approvable item (G6-M12b). It
+raises on a stale revision after auditing the attempt. It writes only G6
+tables; it never touches G5 authority tables, and evidence rows can only cite
+this tenant's real claim roots.
+
+Canonical Company Brain objects are referenced by tenant-composite foreign
+key (clients, company_brain_conflicts, company_operating_model_proposals,
+company_brain_authority_proposals, company_brain_authority_grants_g5,
+company_brain_claim_roots). Evidence is not duplicated.
+
+MIGRATION APPLICATION STATUS:
+  NOT APPLIED AT RUNTIME. No database was reachable in this environment.
+  What was actually verified: the migration parses with the real PostgreSQL
+  parser (pgsql-parser 18.2.6) and passes 16 static structural tests. No claim
+  is made that it was executed against any database, hosted or local.
+
+==================================================
+15. FOUNDER EXPERIENCE
+==================================================
+
+Route /company-brain, reachable from the sidebar. Tabs: Overview,
+Understanding, Conflicts, Operating model, Roles, DW authority, Review history.
+
+Each review card shows what DW believes, why, its scope, its confidence when
+one exists (labelled as never creating permission), inspectable evidence with
+per-source state, and — for conflicts — every competing side with the current
+result stated plainly. Every card carries "Reviewing this does not give DW
+permission to act."
+
+Understanding controls read "Approve understanding", "Edit understanding",
+"Reject understanding", "Hold", "Decide later". The authority section is
+separate and its controls read "Grant authority" and "Revoke authority".
+Nothing is pre-selected, nothing is bundled, and no "Continue" grants anything
+(G6-U3, G6-U4). Zero standing authority is presented as a valid setup, not an
+error (G6-U6). Understanding readiness and authority readiness are two
+separate statements; autopilotReady is structurally false (G6-U7).
+
+States supported: loading, error, empty, pending, approved, edited, rejected,
+held, deferred, review-required, stale, conflict, authority none, authority
+active, authority revoked, changed-since-review. A failed read or a failed
+write is never rendered as success (G6-U1, G6-U16).
+
+Accessibility: semantic buttons, aria-label / aria-live / role="alert" /
+aria-current, labelled inputs, :focus-visible outlines, status conveyed by
+text as well as colour, and a 720px responsive breakpoint (G6-U17, G6-U18).
+
+UI VERIFICATION STATUS:
+  NO RUNTIME BROWSER VERIFICATION WAS PERFORMED. The surface was verified by
+  the production build and by 20 source/model contract tests. No claim is made
+  that the route was loaded in a browser or that live tenant data was rendered.
+
+==================================================
+16. TESTS ADDED
+==================================================
+
+  tests/companyBrainG6FounderReview.test.mjs   78 tests
+  tests/companyBrainG6Migration.test.mjs       16 tests
+  tests/companyBrainG6ReviewUi.test.mjs        20 tests
+  ------------------------------------------------
+  G6 focused total                            114 tests
+
+Adversarial matrix A–BZ is covered, plus ten repository-specific cases found
+during inspection (G6-R1..R10). npm script added: test:company-brain-g6.
+
+==================================================
+17. VALIDATION RESULTS (ACTUAL, THIS SESSION)
+==================================================
+
+  G2 (test:company-brain-g2)          129 / 129   pass
+  G3 (test:company-brain-g3)          229 / 229   pass
+  G3 tests 228, 229, 230                3 / 3     pass
+  G4 (test:company-brain-g4)          264 / 264   pass
+  G5 (test:company-brain-g5)          362 / 362   pass
+  G5-specific (G5 authority+migration) 98 / 98    pass
+  G6 focused                          114 / 114   pass
+  G6 aggregate (test:company-brain-g6) 476 / 476  pass
+  FULL SUITE (npm test)              1446 / 1446  pass
+  Production build (npm run build)    PASS (vite build, no errors)
+  git diff --check                    CLEAN
+
+Inherited reference baselines were reproduced exactly:
+  G2 129, G3 229, G4 264, G5 362, prior full suite 1332.
+Post-G6 full suite: 1332 + 114 = 1446.
+
+NOTE ON ENVIRONMENT: the session container started with an incomplete
+node_modules (pgsql-parser missing), which made three inherited suites fail to
+load. `npm install` restored the declared dependencies and the inherited
+baseline reproduced exactly. No test or dependency declaration was changed to
+achieve this; the package-lock.json churn npm produced was reverted so the
+commit contains only G6 changes.
+
+==================================================
+18. STATIC AND SAFETY SCANS
+==================================================
+
+  credential / secret scan            CLEAN (no key, token, secret or service_role)
+  cross-tenant access scan            CLEAN (no localStorage, sessionStorage,
+                                      searchParams or request-body identity)
+  untrusted identity scan             CLEAN (isFounder/founderId/tenantOverride
+                                      appear only in the rejection list)
+  generic unrestricted write scan     CLEAN (no .update/.insert/.upsert/.delete
+                                      in any G6 module; SQL writes target G6
+                                      tables only)
+  authority bypass scan               CLEAN (nothing outside authorityDelegation.js
+                                      constructs a GRANTED status)
+  UI-created authority scan           CLEAN (the surface contains no supabase
+                                      handle, no fetch, no grant call)
+  repeated-approval escalation scan   CLEAN (no approvalHistory, approvalCount
+                                      or implied-grant path)
+  confidence-to-authority scan        CLEAN
+  provider-capability-to-authority    CLEAN
+  human-role-to-DW-authority scan     CLEAN
+  LLM-to-authority scan               CLEAN (no LLM, prompt or provider import)
+  execution / provider path scan      CLEAN (no mail, SMS, Stripe, fetch, axios)
+  canonical-money mutation scan       CLEAN
+  dangerous UPDATE / DELETE scan      CLEAN (no drop, truncate or delete-from)
+  G7 scope scan                       CLEAN (no G7 module, test or branch)
+  migration static tests              16 / 16 pass (pgsql-parser + structure)
+
+==================================================
+19. CLAIMS NOT MADE
+==================================================
+
+  - The migration was NOT applied to any database. Only static parsing and
+    structural assertions ran.
+  - NO runtime browser verification was performed. The route was not loaded,
+    no screenshot was taken, and no console output was inspected.
+  - No live tenant data was read or rendered.
+  - No AR execution, provider call or financial mutation was performed or
+    introduced.
+
+==================================================
+20. KNOWN LIMITATIONS
+==================================================
+
+ 1. No prior gate wired the Company Brain to Supabase at runtime, so the
+    /company-brain route reads durable G5/G6 rows and the persisted G4
+    operating-model payload, and renders the legitimate empty state for a
+    tenant with nothing stored. No sample or placeholder data is shown. The
+    ingestion/persistence pipeline that populates those tables in the running
+    app is not part of G6.
+ 2. The record-backed derivation supplies an empty knowledge index for
+    evidence source metadata, because G6 adds no source-version reader. Items
+    derived that way carry their claim and root identifiers but not source
+    type or timestamps until such a reader exists. The store-backed path used
+    by every test carries the full evidence detail.
+ 3. Editing an authority proposal is recorded as an inert G6 review revision.
+    Materialising the edited proposal as a new G5 proposal row is left to the
+    gate that owns proposal generation.
+ 4. The G6 review RPC has not been exercised against a live PostgreSQL
+    instance (see 14 and 19).
+ 5. HOLD and DEFER are distinct statuses with distinct semantics but the same
+    storage shape, as permitted by the specification.
+
+==================================================
+21. EXIT CRITERIA
+==================================================
+
+All 42 G6 exit criteria are satisfied, except where an item depends on a
+capability explicitly reported above as unavailable in this environment
+(runtime migration application and runtime browser verification, items 14, 15
+and 19). No criterion was marked satisfied on the basis of an unverified claim.
+
+G7 (Ask DW × Company Brain) was NOT started.
