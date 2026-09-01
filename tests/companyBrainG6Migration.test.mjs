@@ -109,32 +109,78 @@ test('G6-M10 the review RPC is authenticated, tenant-derived and server validate
   assert.doesNotMatch(reviewRpc, /p_user_id|p_tenant_id|p_actor_id|p_is_founder/)
 })
 
-test('G6-M11 the review RPC fails closed on a stale revision', () => {
-  assert.match(reviewRpc, /p_expected_revision <> v_actual_revision/)
+test('G6-M11 a rejected review is audited and returned, never raised away', () => {
+  // `raise` after an audit insert would roll that audit row back. Rejections
+  // therefore RETURN an outcome. Executed proof lives in
+  // tests/companyBrainG6RpcRuntime.test.mjs (G6-RT3); this only pins the shape.
   assert.match(reviewRpc, /'rejected_stale_revision'/)
-  assert.match(reviewRpc, /raise exception 'company_brain_founder_review_stale_revision'/)
+  assert.match(reviewRpc, /'outcome', 'rejected_stale_revision'/)
+  assert.doesNotMatch(reviewRpc, /raise exception 'company_brain_founder_review_stale_revision'/)
+  assert.doesNotMatch(reviewRpc, /raise exception 'company_brain_founder_review_action_unavailable'/)
+  assert.doesNotMatch(reviewRpc, /raise exception 'company_brain_founder_review_subject_changed'/)
+  // Only malformed or unauthenticated calls raise; they write nothing.
+  const raises = [...reviewRpc.matchAll(/raise exception '([a-z_]+)'/g)].map((match) => match[1]).sort()
+  assert.deepEqual(raises, [
+    'company_brain_founder_review_auth_required',
+    'company_brain_founder_review_derivation_binding_required',
+    'company_brain_founder_review_malformed',
+    'company_brain_founder_review_malformed',
+    'company_brain_founder_review_value_malformed',
+  ])
+})
+
+test('G6-M11b a concurrent revision collision is caught and stays auditable', () => {
+  assert.match(reviewRpc, /exception when unique_violation then/)
+  const handler = reviewRpc.slice(reviewRpc.indexOf('exception when unique_violation then'))
+  assert.match(handler, /insert into public\.company_brain_founder_review_attempts_g6/)
+  assert.match(handler, /'rejected_stale_revision'/)
 })
 
 test('G6-M12 the review RPC refuses actions that belong to G3 or G5', () => {
-  assert.match(reviewRpc, /p_item_type in \('conflict','authority_state'\) and p_review_action in \('approve','edit','reject'\)/)
-  assert.match(reviewRpc, /p_item_type = 'authority_proposal' and p_review_action = 'approve'/)
-  assert.match(reviewRpc, /company_brain_founder_review_action_unavailable/)
+  assert.match(reviewRpc, /v_effective_item_type in \('conflict','authority_state'\) and p_review_action in \('approve','edit','reject'\)/)
+  assert.match(reviewRpc, /v_effective_item_type = 'authority_proposal' and p_review_action = 'approve'/)
+  assert.match(reviewRpc, /'rejected_action_unavailable'/)
 })
 
-test('G6-M12b the action guard re-checks the stored item type, not the caller claim', () => {
+test('G6-M12b the action guard prefers the stored item type over the caller claim', () => {
   // A caller must not be able to reclassify a stored conflict or authority
   // item into an approvable one by passing a different p_item_type.
-  assert.match(reviewRpc, /returning id, item_type into v_item_id, v_stored_item_type/)
-  assert.match(reviewRpc, /v_stored_item_type in \('conflict','authority_state'\) and p_review_action in \('approve','edit','reject'\)/)
-  assert.match(reviewRpc, /v_stored_item_type = 'authority_proposal' and p_review_action = 'approve'/)
+  assert.match(reviewRpc, /v_effective_item_type := coalesce\(v_stored_item_type, p_item_type\)/)
+  // The item row is read, not upserted, before the guards run, so a rejected
+  // attempt cannot bring a review item into existence.
+  const guardIndex = reviewRpc.indexOf('v_effective_item_type :=')
+  const insertIndex = reviewRpc.indexOf('insert into public.company_brain_founder_review_items_g6')
+  assert.ok(guardIndex > 0 && insertIndex > guardIndex, 'guards must run before the item row is created')
 })
 
-test('G6-M13 the review RPC creates no authority and mutates no canonical money', () => {
+test('G6-M12c staleness is decided by the server from its own tables', () => {
+  // The caller's fingerprint is never accepted on its own: the server re-reads
+  // the cited G4 model, G3 conflict revision and G5 grant.
+  assert.match(reviewRpc, /from public\.company_operating_model_proposals/)
+  assert.match(reviewRpc, /v_model_fingerprint <> p_source_model_fingerprint/)
+  assert.match(reviewRpc, /v_model_status not in \('proposed','blocked'\)/)
+  assert.match(reviewRpc, /from public\.company_brain_conflicts/)
+  assert.match(reviewRpc, /v_conflict_revision is distinct from p_conflict_revision/)
+  assert.match(reviewRpc, /v_grant_status is distinct from 'granted'/)
+  assert.match(reviewRpc, /v_stored_subject_fingerprint is distinct from p_subject_fingerprint/)
+  assert.match(reviewRpc, /'rejected_subject_changed'/)
+  // An unbound review would have nothing server-owned to check against.
+  assert.match(reviewRpc, /company_brain_founder_review_derivation_binding_required/)
+})
+
+test('G6-M13 the review RPC reads G5 state but never writes it, and mutates no money', () => {
+  // Reading a grant's status is how staleness is decided; writing one is not
+  // something this function may ever do.
+  assert.match(reviewRpc, /select status into v_grant_status\s+from public\.company_brain_authority_grants_g5/)
   assert.match(reviewRpc, /'authority_granted', false/)
-  for (const forbidden of [
-    /company_brain_authority_grants_g5/, /grant_company_brain_authority_g5/,
-    /update public\.invoices/, /update public\.payments/, /amount_paid/,
-  ]) {
+  const writes = [...reviewRpc.matchAll(/(insert into|update|delete from)\s+public\.([a-z_0-9]+)/g)]
+    .map((match) => match[2])
+  assert.ok(writes.length > 0)
+  for (const table of new Set(writes)) {
+    assert.match(table, /^company_brain_founder_review_(items|revisions|evidence|attempts)_g6$/,
+      `the review RPC must not write ${table}`)
+  }
+  for (const forbidden of [/grant_company_brain_authority_g5/, /amount_paid/, /invoice/, /payment/]) {
     assert.doesNotMatch(reviewRpc, forbidden)
   }
 })

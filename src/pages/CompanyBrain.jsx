@@ -16,6 +16,7 @@ import {
  */
 export default function CompanyBrain() {
   const [readModel, setReadModel] = useState(null)
+  const [derivation, setDerivation] = useState({ operatingModelRowId: null, operatingModelFingerprint: null })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [busyKey, setBusyKey] = useState(null)
@@ -26,9 +27,14 @@ export default function CompanyBrain() {
     try {
       const result = await loadFounderReviewReadModel({})
       setReadModel(result.readModel)
+      setDerivation({
+        operatingModelRowId: result.operatingModelRowId ?? null,
+        operatingModelFingerprint: result.operatingModelFingerprint ?? null,
+      })
     } catch (loadError) {
       // Fail closed: a read that did not succeed is never shown as reviewed.
       setReadModel(null)
+      setDerivation({ operatingModelRowId: null, operatingModelFingerprint: null })
       setError(loadError.message || 'Company Brain review could not be loaded.')
     } finally {
       setLoading(false)
@@ -49,16 +55,25 @@ export default function CompanyBrain() {
         expectedRevision,
         subjectFingerprint,
         reviewedValue,
+        // The derivation the surface was built from, so the server can check
+        // staleness against its own tables rather than trusting this call.
+        operatingModelRowId: derivation.operatingModelRowId,
+        operatingModelFingerprint: derivation.operatingModelFingerprint,
         // Same decision retried is the same decision; a different one is distinct.
         idempotencyKey: `${reviewKey}:${expectedRevision}:${action}`,
       })
       await load()
     } catch (actionError) {
-      setError(actionError.message || 'Your review decision was not saved.')
+      const message = actionError.message || 'Your review decision was not saved.'
+      // Refresh so the founder sees current truth instead of a decision that
+      // was never recorded, then explain the refusal. Order matters: load()
+      // clears the banner, so the message is set after it, not before.
+      await load()
+      setError(message)
     } finally {
       setBusyKey(null)
     }
-  }, [readModel, load])
+  }, [readModel, load, derivation])
 
   const onRevokeAuthority = useCallback(async (grantId) => {
     setError(null)

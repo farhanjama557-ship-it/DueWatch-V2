@@ -10,7 +10,8 @@ Gate:              G6 — Founder review / bootstrap UX
 Branch:            m2g/company-brain-bootstrap-g6
 Starting HEAD:     9a60ec08f5604b0a3b73182e40e0f26c639d2288  (frozen G5)
 Parent SHA:        9a60ec08f5604b0a3b73182e40e0f26c639d2288
-Resulting commit:  531510371f723c076d1e4d7ff5a44ceb4054ad0c
+G6 commit:         531510371f723c076d1e4d7ff5a44ceb4054ad0c
+Audit-fix commit:  <G6_AUDIT_COMMIT_SHA>   (this record describes the fixed state)
 Corrected G4:      14a8c4f820bad58bbc975f07b55740089861d106  (G5 parent, verified)
 Corrected G3:      b653ffb0f04c8277ec40b34816166e578b9dcbd9  (verified ancestor of HEAD)
 
@@ -38,6 +39,11 @@ Added:
   tests/companyBrainG6FounderReview.test.mjs                             1209 lines
   tests/companyBrainG6Migration.test.mjs                                  154 lines
   tests/companyBrainG6ReviewUi.test.mjs                                   312 lines
+
+Added by the audit-fix pass:
+  tests/companyBrainG6RpcRuntime.test.mjs      executable RPC behaviour (real PostgreSQL)
+  tests/companyBrainG6LoaderWiring.test.mjs    loader/derivation parity regression tests
+  tests/helpers/g6Postgres.mjs                 temporary-cluster + psql harness
 
 Modified:
   package.json               (+1)  test:company-brain-g6 script
@@ -223,6 +229,83 @@ Newer truth is never silently overwritten (G6-BW). The RPC enforces the
 revision guard server-side as well.
 
 ==================================================
+11b. INDEPENDENT AUDIT FIX PASS
+==================================================
+
+An independent review of the first G6 commit raised three findings. All three
+were real. This is what was wrong and what changed.
+
+FINDING 1 — the stale-subject guarantee trusted the caller.
+  Confirmed. record_company_brain_founder_review_g6 only regex-checked the
+  FORMAT of p_subject_fingerprint and then stored it. It never compared it
+  against anything, so at the database layer a caller could assert any subject
+  state it liked. Only the in-process JS kernel compared fingerprints.
+  Fixed: staleness is now decided by the server from its own tables.
+    - The review item row carries a server-owned current_subject_fingerprint
+      and the upstream derivation it was built from.
+    - Every review must cite an upstream binding (G4 operating model row, G3
+      conflict, G5 proposal or grant); an unbound review is refused, because
+      there would be nothing server-owned to check against.
+    - The server re-reads the cited G4 row and rejects the write unless its
+      model_fingerprint matches AND its status is still PROPOSED or BLOCKED.
+    - It re-reads the cited G3 conflict and rejects a moved revision.
+    - It re-reads the cited G5 grant and rejects one no longer GRANTED.
+    - Under an unchanged derivation, the stored subject fingerprint is the only
+      acceptable one; a caller claiming a different subject state is refused.
+  Proven by execution: G6-RT4, RT5, RT6, RT7, RT8.
+
+FINDING 2 — rejected attempts were rolled back by the raise that followed them.
+  Confirmed, and it is exactly the PostgreSQL semantics the reviewer suspected:
+  the REJECTED_STALE_REVISION audit row was inserted and then destroyed by the
+  `raise exception` in the same transaction, so rejected stale writes left no
+  trace at all.
+  Fixed: rejections now RETURN an outcome instead of raising, which is also the
+  pattern the existing idempotency-conflict path and the G5 RPC already used.
+  The audit row commits; the mutation still fails closed because no revision
+  row is written and the client treats any outcome other than ACCEPTED or
+  IDEMPOTENT_REPLAY as an error (submitFounderReviewDecision throws).
+  `raise` is kept only for unauthenticated and malformed calls, which write
+  nothing and have no founder decision to audit.
+  A concurrent revision collision is caught by an `exception when
+  unique_violation` handler that audits from inside the handler, which runs
+  after the failed statement is rolled back, so that audit row also survives.
+  Guards were also reordered so a rejected call can no longer bring a review
+  item row into existence: the item is read, not upserted, before the checks.
+  Proven by execution: G6-RT3, RT9, and the shape pinned by G6-M11/M11b.
+
+FINDING 3 — the production surface lost conflicts and evidence.
+  Confirmed, and worse than a metadata gap: loadFounderReviewReadModel passed
+  conflicts: [] and empty knowledge, so /company-brain would have rendered ZERO
+  conflicts for a tenant with unresolved ones, and every item's evidence would
+  have looked absent — which the derivation reads as revoked support.
+  Fixed by wiring the reads that were missing. Every required table already
+  exists and is already owner-readable by `authenticated`, so no dependency was
+  missing and nothing had to be invented:
+    company_brain_conflicts, company_brain_conflict_members,
+    company_brain_claims, company_brain_claim_roots, company_brain_sources,
+    company_brain_source_versions, company_brain_source_tombstones.
+  A conflict is treated as resolved only when the conflict row itself says so
+  and names the founder decision that resolved it; G6 does not re-derive
+  founder-decision validity, which remains G3's to decide.
+  A read that fails now fails the whole load, because rendering a partial
+  Company Brain would understate conflicts and overstate freshness.
+  Proven by G6-L1..L11, which reproduce the store-backed items from persisted
+  row shapes and assert the two derivations agree exactly. G6-L3 and G6-L5 pin
+  the regression itself by showing what the empty inputs used to erase.
+
+THREE DEFECTS FOUND BY THIS PASS THAT THE REVIEW DID NOT RAISE:
+  a. Competing conflict positions were ordered by store insertion order, which
+     persisted rows cannot reproduce (conflict_members has no ordering column).
+     They are now ordered by claim id so both derivations agree.
+  b. Tombstones were keyed by source id while evidence is keyed by source
+     version id, so the tombstone check could never match. It now accepts
+     either keying and the loader resolves a tombstoned source to its versions.
+  c. The authority-proposal mapper read row.scope and row.proposed_configuration,
+     neither of which exists on company_brain_authority_proposals. It now reads
+     action_class and authority_scope, and leaves the dimensions it has no
+     column for as "not specified" rather than inventing them.
+
+==================================================
 12. TENANT ISOLATION
 ==================================================
 
@@ -278,10 +361,21 @@ company_brain_authority_proposals, company_brain_authority_grants_g5,
 company_brain_claim_roots). Evidence is not duplicated.
 
 MIGRATION APPLICATION STATUS:
-  NOT APPLIED AT RUNTIME. No database was reachable in this environment.
-  What was actually verified: the migration parses with the real PostgreSQL
-  parser (pgsql-parser 18.2.6) and passes 16 static structural tests. No claim
-  is made that it was executed against any database, hosted or local.
+  APPLIED AND EXECUTED ON A LOCAL POSTGRESQL 16.13 INSTANCE, NOT ON THE HOSTED
+  DATABASE. Precisely what ran:
+    - tests/helpers/g6Postgres.mjs creates a temporary cluster with initdb,
+      starts it, and creates a minimal stub of the upstream objects the
+      migration references (auth.users, auth.uid(), clients, the G1/G4/G5
+      tables) together with the anon/authenticated roles Supabase provides.
+    - The G6 migration file is then applied VERBATIM. It is never rewritten,
+      trimmed or adapted for the test.
+    - record_company_brain_founder_review_g6 is called for real, and its
+      behaviour asserted, by the 14 tests in companyBrainG6RpcRuntime.
+  NOT claimed: that the migration was applied to the hosted Supabase database,
+  or that the real G1/G2/G4/G5 migrations were applied alongside it. The
+  upstream objects are a stub, so this validates G6's own DDL, RPC logic, RLS
+  and constraints — not the end-to-end integration with the real upstream
+  schema. The suite skips loudly if no PostgreSQL server can be created.
 
 ==================================================
 15. FOUNDER EXPERIENCE
@@ -341,15 +435,29 @@ during inspection (G6-R1..R10). npm script added: test:company-brain-g6.
   G4 (test:company-brain-g4)          264 / 264   pass
   G5 (test:company-brain-g5)          362 / 362   pass
   G5-specific (G5 authority+migration) 98 / 98    pass
-  G6 focused                          114 / 114   pass
-  G6 aggregate (test:company-brain-g6) 476 / 476  pass
-  FULL SUITE (npm test)              1446 / 1446  pass
+  G6 focused                          141 / 141   pass
+    companyBrainG6FounderReview         78
+    companyBrainG6Migration             18
+    companyBrainG6ReviewUi              20
+    companyBrainG6LoaderWiring          11
+    companyBrainG6RpcRuntime            14   (executed against PostgreSQL 16.13)
+  G6 aggregate (test:company-brain-g6) 503 / 503  pass
+  FULL SUITE (npm test)              1473 / 1473  pass
   Production build (npm run build)    PASS (vite build, no errors)
   git diff --check                    CLEAN
 
 Inherited reference baselines were reproduced exactly:
   G2 129, G3 229, G4 264, G5 362, prior full suite 1332.
-Post-G6 full suite: 1332 + 114 = 1446.
+Post-audit-fix full suite: 1332 + 141 = 1473.
+
+MUTATION CHECKS (run to prove the new tests actually catch their regressions,
+then reverted; neither mutant is in the committed tree):
+  reinstating `raise exception` after the stale-revision audit insert
+    -> G6-RT3 FAILS ("the rejected stale attempt must survive the rejection")
+  disabling the server-owned subject-fingerprint comparison
+    -> G6-RT4, RT6, RT7, RT11 FAIL
+  These confirm the runtime suite is a real regression guard rather than a
+  test that passes regardless.
 
 NOTE ON ENVIRONMENT: the session container started with an incomplete
 node_modules (pgsql-parser missing), which made three inherited suites fail to
@@ -384,17 +492,22 @@ commit contains only G6 changes.
   canonical-money mutation scan       CLEAN
   dangerous UPDATE / DELETE scan      CLEAN (no drop, truncate or delete-from)
   G7 scope scan                       CLEAN (no G7 module, test or branch)
-  migration static tests              16 / 16 pass (pgsql-parser + structure)
+  migration static tests              18 / 18 pass (pgsql-parser + structure)
+  migration executed tests            14 / 14 pass (real PostgreSQL 16.13)
 
 ==================================================
 19. CLAIMS NOT MADE
 ==================================================
 
-  - The migration was NOT applied to any database. Only static parsing and
-    structural assertions ran.
+  - The migration was NOT applied to the hosted Supabase database. It was
+    applied to a temporary local PostgreSQL 16.13 cluster against a STUB of
+    its upstream objects (see 14). End-to-end integration with the real
+    G1/G2/G4/G5 schema is therefore still unproven.
   - NO runtime browser verification was performed. The route was not loaded,
     no screenshot was taken, and no console output was inspected.
-  - No live tenant data was read or rendered.
+  - No live tenant data was read or rendered. The loader's Supabase reads are
+    covered by row-shape parity tests against the real table definitions, not
+    by a live query.
   - No AR execution, provider call or financial mutation was performed or
     introduced.
 
@@ -408,16 +521,25 @@ commit contains only G6 changes.
     tenant with nothing stored. No sample or placeholder data is shown. The
     ingestion/persistence pipeline that populates those tables in the running
     app is not part of G6.
- 2. The record-backed derivation supplies an empty knowledge index for
-    evidence source metadata, because G6 adds no source-version reader. Items
-    derived that way carry their claim and root identifiers but not source
-    type or timestamps until such a reader exists. The store-backed path used
-    by every test carries the full evidence detail.
+ 2. RESOLVED by the audit-fix pass. The loader now reads the G2 sources,
+    source versions, claims, claim roots and tombstones, and the G3 conflicts
+    and conflict members, so the record-backed derivation carries the same
+    evidence, freshness and conflicts as the store-backed one (G6-L1..L11).
  3. Editing an authority proposal is recorded as an inert G6 review revision.
     Materialising the edited proposal as a new G5 proposal row is left to the
-    gate that owns proposal generation.
- 4. The G6 review RPC has not been exercised against a live PostgreSQL
-    instance (see 14 and 19).
+    gate that owns proposal generation. Relatedly,
+    company_brain_authority_proposals has no proposed-configuration column, so
+    a proposal's amount, currency, condition, time, channel and approval
+    dimensions render as "not specified" rather than being invented. Storing a
+    full proposed configuration belongs to the gate that generates proposals.
+
+ 6. The runtime RPC suite needs a PostgreSQL server it can create (initdb plus
+    a `postgres` user, or G6_TEST_PG_SOCKET pointing at one). Where neither is
+    available it skips and prints a warning, and the executed guarantees in
+    section 11b are then unverified for that run.
+ 4. The G6 review RPC IS now exercised against a live PostgreSQL 16.13
+    instance, but only against a stub of its upstream schema (see 14 and 19).
+    Its behaviour against the real G1/G4/G5 tables is still unproven.
  5. HOLD and DEFER are distinct statuses with distinct semantics but the same
     storage shape, as permitted by the specification.
 

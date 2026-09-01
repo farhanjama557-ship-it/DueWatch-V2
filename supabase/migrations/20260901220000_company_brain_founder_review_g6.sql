@@ -30,6 +30,14 @@ create table public.company_brain_founder_review_items_g6 (
   operating_model_id uuid,
   authority_proposal_id uuid,
   authority_grant_id uuid,
+  -- The subject state the founder actually reviewed, owned by the server.
+  -- A later review write is compared against this rather than being trusted.
+  current_subject_fingerprint text not null check (current_subject_fingerprint ~ '^[0-9a-f]{64}$'),
+  -- The upstream derivation this item was built from. It is what makes the
+  -- staleness check server-owned: the server re-reads the cited G4 model, G3
+  -- conflict revision or G5 grant and decides for itself whether it is current.
+  source_model_fingerprint text check (source_model_fingerprint is null or source_model_fingerprint ~ '^[0-9a-f]{64}$'),
+  source_conflict_revision integer check (source_conflict_revision is null or source_conflict_revision >= 0),
   -- Company Brain understanding is never canonical financial truth.
   canonical_financial_truth boolean not null default false check (canonical_financial_truth = false),
   created_at timestamptz not null default now(),
@@ -50,7 +58,12 @@ create table public.company_brain_founder_review_items_g6 (
   check ((scope_level = 'CLIENT') or client_id is null),
   -- An authority item is a projection of G5 state; it is never reviewable here.
   check ((item_type in ('AUTHORITY_PROPOSAL','AUTHORITY_STATE'))
-    or (authority_proposal_id is null and authority_grant_id is null))
+    or (authority_proposal_id is null and authority_grant_id is null)),
+  -- Every review item must name the upstream object it was derived from, so
+  -- there is always something server-owned to check staleness against.
+  check (operating_model_id is not null or conflict_id is not null
+    or authority_proposal_id is not null or authority_grant_id is not null),
+  check ((operating_model_id is null) = (source_model_fingerprint is null))
 );
 
 create table public.company_brain_founder_review_revisions_g6 (
@@ -174,9 +187,26 @@ create schema if not exists private;
 revoke all on schema private from public, anon, authenticated;
 
 -- Records exactly one founder review decision. Tenant and actor are derived
--- from the authenticated session, never from the request body. The call fails
--- closed on a stale revision or a changed subject rather than overwriting
--- newer truth, and it can create no authority of any kind.
+-- from the authenticated session, never from the request body.
+--
+-- Two properties this function must hold, and how it holds them:
+--
+--  1. STALENESS IS SERVER-OWNED. The caller's p_subject_fingerprint is never
+--     trusted on its own. The server re-reads the upstream object the item was
+--     derived from -- the G4 operating model row, the G3 conflict revision,
+--     the G5 grant -- and decides for itself whether that derivation is still
+--     current. It also compares the claimed subject fingerprint against the
+--     one it already stored for this review key. A review written against a
+--     derivation that has moved on is refused.
+--
+--  2. REJECTIONS STAY AUDITABLE. A rejected attempt RETURNS a rejection
+--     outcome instead of raising, because `raise` would roll back the audit
+--     row inserted moments earlier in the same transaction and the rejected
+--     attempt would vanish. Returning keeps the audit durable while still
+--     failing closed: no revision row is written, and every caller must treat
+--     any outcome other than ACCEPTED or IDEMPOTENT_REPLAY as a failure.
+--     `raise` is kept only for malformed or unauthenticated calls, which
+--     write nothing and have no founder decision to audit.
 create or replace function public.record_company_brain_founder_review_g6(
   p_review_key text,
   p_category text,
@@ -187,7 +217,9 @@ create or replace function public.record_company_brain_founder_review_g6(
   p_review_scope jsonb,
   p_client_id uuid,
   p_conflict_id uuid,
+  p_conflict_revision integer,
   p_operating_model_id uuid,
+  p_source_model_fingerprint text,
   p_authority_proposal_id uuid,
   p_authority_grant_id uuid,
   p_review_action text,
@@ -214,6 +246,13 @@ declare
   v_request_fingerprint text;
   v_status text;
   v_stored_item_type text;
+  v_stored_subject_fingerprint text;
+  v_stored_model_fingerprint text;
+  v_model_fingerprint text;
+  v_model_status text;
+  v_conflict_revision integer;
+  v_grant_status text;
+  v_effective_item_type text;
 begin
   if v_user_id is null then raise exception 'COMPANY_BRAIN_FOUNDER_REVIEW_AUTH_REQUIRED'; end if;
   if p_review_key is null or p_review_key !~ '^review-[0-9a-f]{32}$'
@@ -228,13 +267,15 @@ begin
     or (p_review_action <> 'EDIT' and p_reviewed_value is not null) then
     raise exception 'COMPANY_BRAIN_FOUNDER_REVIEW_VALUE_MALFORMED';
   end if;
-  -- A conflict is decided through the G3 founder-decision path, and current
-  -- authority is mutated through the G5 path. Neither is reviewable here.
-  if p_item_type in ('CONFLICT','AUTHORITY_STATE') and p_review_action in ('APPROVE','EDIT','REJECT') then
-    raise exception 'COMPANY_BRAIN_FOUNDER_REVIEW_ACTION_UNAVAILABLE';
+  -- Without an upstream binding there would be nothing server-owned to check
+  -- staleness against, so an unbound review is refused outright.
+  if p_operating_model_id is null and p_conflict_id is null
+    and p_authority_proposal_id is null and p_authority_grant_id is null then
+    raise exception 'COMPANY_BRAIN_FOUNDER_REVIEW_DERIVATION_BINDING_REQUIRED';
   end if;
-  if p_item_type = 'AUTHORITY_PROPOSAL' and p_review_action = 'APPROVE' then
-    raise exception 'COMPANY_BRAIN_FOUNDER_REVIEW_ACTION_UNAVAILABLE';
+  if (p_operating_model_id is null) <> (p_source_model_fingerprint is null)
+    or (p_source_model_fingerprint is not null and p_source_model_fingerprint !~ '^[0-9a-f]{64}$') then
+    raise exception 'COMPANY_BRAIN_FOUNDER_REVIEW_MALFORMED';
   end if;
 
   v_status := case p_review_action
@@ -264,26 +305,86 @@ begin
     return jsonb_build_object('outcome', 'IDEMPOTENT_REPLAY', 'revision_id', v_existing_id);
   end if;
 
-  insert into public.company_brain_founder_review_items_g6 (
-    user_id, review_key, category, item_type, subject_type, subject_id,
-    scope_level, review_scope, client_id, conflict_id, operating_model_id,
-    authority_proposal_id, authority_grant_id
-  ) values (
-    v_user_id, p_review_key, p_category, p_item_type, p_subject_type, p_subject_id,
-    p_scope_level, coalesce(p_review_scope, '{}'::jsonb), p_client_id, p_conflict_id,
-    p_operating_model_id, p_authority_proposal_id, p_authority_grant_id
-  )
-  on conflict (user_id, review_key) do update set updated_at = now()
-  returning id, item_type into v_item_id, v_stored_item_type;
+  -- Read the stored item WITHOUT creating it: a rejected attempt must not be
+  -- able to bring a review item row into existence. The row lock serialises
+  -- concurrent reviews of the same item.
+  select id, item_type, current_subject_fingerprint, source_model_fingerprint
+    into v_item_id, v_stored_item_type, v_stored_subject_fingerprint, v_stored_model_fingerprint
+  from public.company_brain_founder_review_items_g6
+  where user_id = v_user_id and review_key = p_review_key
+  for update;
 
-  -- Re-check the action against the item type ALREADY STORED for this review
-  -- key, not the one the caller claimed: a caller must not be able to
-  -- reclassify a conflict or an authority item into an approvable one.
-  if v_stored_item_type in ('CONFLICT','AUTHORITY_STATE') and p_review_action in ('APPROVE','EDIT','REJECT') then
-    raise exception 'COMPANY_BRAIN_FOUNDER_REVIEW_ACTION_UNAVAILABLE';
+  -- The action guard uses the STORED item type when the item exists, so a
+  -- caller cannot reclassify a stored conflict or authority item into an
+  -- approvable one by passing a different p_item_type.
+  v_effective_item_type := coalesce(v_stored_item_type, p_item_type);
+  if (v_effective_item_type in ('CONFLICT','AUTHORITY_STATE') and p_review_action in ('APPROVE','EDIT','REJECT'))
+    or (v_effective_item_type = 'AUTHORITY_PROPOSAL' and p_review_action = 'APPROVE') then
+    insert into public.company_brain_founder_review_attempts_g6
+      (user_id, actor_id, review_item_id, idempotency_key, request_fingerprint, outcome)
+    values (v_user_id, v_user_id, v_item_id, p_idempotency_key, v_request_fingerprint,
+      'REJECTED_ACTION_UNAVAILABLE');
+    return jsonb_build_object('outcome', 'REJECTED_ACTION_UNAVAILABLE', 'review_item_id', v_item_id);
   end if;
-  if v_stored_item_type = 'AUTHORITY_PROPOSAL' and p_review_action = 'APPROVE' then
-    raise exception 'COMPANY_BRAIN_FOUNDER_REVIEW_ACTION_UNAVAILABLE';
+
+  -- Server-owned staleness, part 1: the cited G4 operating model must still be
+  -- this tenant's current derivation, with the exact fingerprint claimed.
+  if p_operating_model_id is not null then
+    select model_fingerprint, status into v_model_fingerprint, v_model_status
+    from public.company_operating_model_proposals
+    where user_id = v_user_id and id = p_operating_model_id;
+    if v_model_fingerprint is null
+      or v_model_fingerprint <> p_source_model_fingerprint
+      or v_model_status not in ('PROPOSED','BLOCKED') then
+      insert into public.company_brain_founder_review_attempts_g6
+        (user_id, actor_id, review_item_id, idempotency_key, request_fingerprint, outcome)
+      values (v_user_id, v_user_id, v_item_id, p_idempotency_key, v_request_fingerprint,
+        'REJECTED_SUBJECT_CHANGED');
+      return jsonb_build_object('outcome', 'REJECTED_SUBJECT_CHANGED', 'reason', 'OPERATING_MODEL_NOT_CURRENT');
+    end if;
+  end if;
+
+  -- Server-owned staleness, part 2: the cited G3 conflict revision must match
+  -- the revision the server currently holds.
+  if p_conflict_id is not null then
+    select revision into v_conflict_revision
+    from public.company_brain_conflicts
+    where user_id = v_user_id and id = p_conflict_id;
+    if v_conflict_revision is null or v_conflict_revision is distinct from p_conflict_revision then
+      insert into public.company_brain_founder_review_attempts_g6
+        (user_id, actor_id, review_item_id, idempotency_key, request_fingerprint, outcome)
+      values (v_user_id, v_user_id, v_item_id, p_idempotency_key, v_request_fingerprint,
+        'REJECTED_SUBJECT_CHANGED');
+      return jsonb_build_object('outcome', 'REJECTED_SUBJECT_CHANGED', 'reason', 'CONFLICT_REVISION_NOT_CURRENT');
+    end if;
+  end if;
+
+  -- Server-owned staleness, part 3: a review of an authority projection is
+  -- refused once that grant is no longer the current standing authority.
+  if p_authority_grant_id is not null then
+    select status into v_grant_status
+    from public.company_brain_authority_grants_g5
+    where user_id = v_user_id and id = p_authority_grant_id;
+    if v_grant_status is distinct from 'GRANTED' then
+      insert into public.company_brain_founder_review_attempts_g6
+        (user_id, actor_id, review_item_id, idempotency_key, request_fingerprint, outcome)
+      values (v_user_id, v_user_id, v_item_id, p_idempotency_key, v_request_fingerprint,
+        'REJECTED_SUBJECT_CHANGED');
+      return jsonb_build_object('outcome', 'REJECTED_SUBJECT_CHANGED', 'reason', 'AUTHORITY_GRANT_NOT_CURRENT');
+    end if;
+  end if;
+
+  -- Server-owned staleness, part 4: under an unchanged upstream derivation the
+  -- subject fingerprint the server already stored is the only acceptable one.
+  -- A caller claiming a different subject state is refused rather than trusted.
+  if v_item_id is not null
+    and v_stored_model_fingerprint is not distinct from p_source_model_fingerprint
+    and v_stored_subject_fingerprint is distinct from p_subject_fingerprint then
+    insert into public.company_brain_founder_review_attempts_g6
+      (user_id, actor_id, review_item_id, idempotency_key, request_fingerprint, outcome)
+    values (v_user_id, v_user_id, v_item_id, p_idempotency_key, v_request_fingerprint,
+      'REJECTED_SUBJECT_CHANGED');
+    return jsonb_build_object('outcome', 'REJECTED_SUBJECT_CHANGED', 'reason', 'SUBJECT_FINGERPRINT_NOT_CURRENT');
   end if;
 
   select count(*) into v_actual_revision
@@ -296,24 +397,62 @@ begin
        outcome, expected_revision, actual_revision)
     values (v_user_id, v_user_id, v_item_id, p_idempotency_key, v_request_fingerprint,
       'REJECTED_STALE_REVISION', p_expected_revision, v_actual_revision);
-    raise exception 'COMPANY_BRAIN_FOUNDER_REVIEW_STALE_REVISION';
+    return jsonb_build_object(
+      'outcome', 'REJECTED_STALE_REVISION',
+      'expected_revision', p_expected_revision,
+      'actual_revision', v_actual_revision
+    );
   end if;
+
+  -- Every guard has passed: only now may the item row exist, and only now do
+  -- the server's stored fingerprints move to the state just reviewed.
+  insert into public.company_brain_founder_review_items_g6 (
+    user_id, review_key, category, item_type, subject_type, subject_id,
+    scope_level, review_scope, client_id, conflict_id, operating_model_id,
+    authority_proposal_id, authority_grant_id, current_subject_fingerprint,
+    source_model_fingerprint, source_conflict_revision
+  ) values (
+    v_user_id, p_review_key, p_category, p_item_type, p_subject_type, p_subject_id,
+    p_scope_level, coalesce(p_review_scope, '{}'::jsonb), p_client_id, p_conflict_id,
+    p_operating_model_id, p_authority_proposal_id, p_authority_grant_id,
+    p_subject_fingerprint, p_source_model_fingerprint, p_conflict_revision
+  )
+  on conflict (user_id, review_key) do update set
+    updated_at = now(),
+    current_subject_fingerprint = excluded.current_subject_fingerprint,
+    source_model_fingerprint = excluded.source_model_fingerprint,
+    source_conflict_revision = excluded.source_conflict_revision
+  returning id into v_item_id;
 
   select id into v_predecessor_id
   from public.company_brain_founder_review_revisions_g6
   where user_id = v_user_id and review_item_id = v_item_id
-  order by revision desc limit 1
-  for update;
+  order by revision desc limit 1;
 
-  insert into public.company_brain_founder_review_revisions_g6 (
-    id, user_id, review_item_id, actor_id, actor_role, revision, review_action,
-    review_status, subject_fingerprint, proposed_value, reviewed_value, reason,
-    idempotency_key, request_fingerprint, supersedes_revision_id
-  ) values (
-    v_revision_id, v_user_id, v_item_id, v_user_id, 'FOUNDER', v_actual_revision + 1,
-    p_review_action, v_status, p_subject_fingerprint, p_proposed_value, p_reviewed_value,
-    p_reason, p_idempotency_key, v_request_fingerprint, v_predecessor_id
-  );
+  begin
+    insert into public.company_brain_founder_review_revisions_g6 (
+      id, user_id, review_item_id, actor_id, actor_role, revision, review_action,
+      review_status, subject_fingerprint, proposed_value, reviewed_value, reason,
+      idempotency_key, request_fingerprint, supersedes_revision_id
+    ) values (
+      v_revision_id, v_user_id, v_item_id, v_user_id, 'FOUNDER', v_actual_revision + 1,
+      p_review_action, v_status, p_subject_fingerprint, p_proposed_value, p_reviewed_value,
+      p_reason, p_idempotency_key, v_request_fingerprint, v_predecessor_id
+    );
+  exception when unique_violation then
+    -- A concurrent review took this revision number first. The handler runs
+    -- after the failed statement is rolled back, so this audit row survives.
+    insert into public.company_brain_founder_review_attempts_g6
+      (user_id, actor_id, review_item_id, idempotency_key, request_fingerprint,
+       outcome, expected_revision, actual_revision)
+    values (v_user_id, v_user_id, v_item_id, p_idempotency_key, v_request_fingerprint,
+      'REJECTED_STALE_REVISION', p_expected_revision, v_actual_revision + 1);
+    return jsonb_build_object(
+      'outcome', 'REJECTED_STALE_REVISION',
+      'expected_revision', p_expected_revision,
+      'actual_revision', v_actual_revision + 1
+    );
+  end;
 
   insert into public.company_brain_founder_review_evidence_g6
     (user_id, revision_id, claim_id, source_version_id)
@@ -343,8 +482,8 @@ end;
 $$;
 
 revoke all on function public.record_company_brain_founder_review_g6(
-  text,text,text,text,text,text,jsonb,uuid,uuid,uuid,uuid,uuid,text,integer,text,jsonb,jsonb,text,jsonb,text
+  text,text,text,text,text,text,jsonb,uuid,uuid,integer,uuid,text,uuid,uuid,text,integer,text,jsonb,jsonb,text,jsonb,text
 ) from public, anon, authenticated;
 grant execute on function public.record_company_brain_founder_review_g6(
-  text,text,text,text,text,text,jsonb,uuid,uuid,uuid,uuid,uuid,text,integer,text,jsonb,jsonb,text,jsonb,text
+  text,text,text,text,text,text,jsonb,uuid,uuid,integer,uuid,text,uuid,uuid,text,integer,text,jsonb,jsonb,text,jsonb,text
 ) to authenticated;

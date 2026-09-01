@@ -60,18 +60,107 @@ function grantFromRow(row) {
   })
 }
 
+/**
+ * company_brain_authority_proposals stores an action class, a scope and its
+ * evidence claims. It carries no proposed-configuration column, so the
+ * remaining G5 dimensions render as "not specified" rather than being invented
+ * — an unspecified dimension must never read as an implied permission.
+ */
 function proposalFromRow(row) {
   return freeze({
     kind: 'DW_AUTHORITY_PROPOSAL_V0',
     id: row.id,
     tenantId: row.user_id,
-    action: row.action_class ?? row.action ?? null,
-    scope: row.scope || {},
-    proposedConfiguration: row.proposed_configuration || {},
+    action: row.action_class ?? null,
+    scope: row.authority_scope || {},
+    proposedConfiguration: {},
+    evidence: { claimIds: row.evidence_claim_ids || [] },
     status: row.status,
     authorityGranted: false,
     boundaries: { canExecute: false },
   })
+}
+
+/** Domain source shape, keyed by source version id exactly as G1 records it. */
+function knowledgeFromRows({ tenantId, sourceRows, versionRows, claimRows, rootRows, tombstoneRows }) {
+  const sourceById = new Map(sourceRows.map((row) => [row.id, row]))
+  const tombstonedSourceIds = new Set(tombstoneRows.map((row) => row.source_id))
+  const rootsByClaim = new Map()
+  for (const row of rootRows) {
+    if (!rootsByClaim.has(row.claim_id)) rootsByClaim.set(row.claim_id, [])
+    rootsByClaim.get(row.claim_id).push(row.source_version_id)
+  }
+  const sources = versionRows
+    .filter((row) => row.status === 'ACTIVE')
+    .map((row) => {
+      const parent = sourceById.get(row.source_id) || null
+      return freeze({
+        id: row.id,
+        tenantId,
+        sourceType: parent?.source_type ?? null,
+        trustZone: parent?.trust_zone ?? null,
+        sourceTimestamp: row.source_timestamp ?? row.created_at ?? null,
+        sourceVersion: String(row.version_number),
+        contentHash: `sha256:${row.content_hash}`,
+        active: parent ? parent.active !== false : false,
+        revokedAt: parent?.revoked_at ?? null,
+        revocationReason: parent?.revocation_reason ?? null,
+      })
+    })
+  const claims = claimRows.map((row) => freeze({
+    id: row.id,
+    tenantId,
+    claimType: row.claim_type,
+    claimClass: row.claim_class,
+    value: row.claim_value,
+    active: row.active === true,
+    derived: row.derived === true,
+    explicit: row.explicit === true,
+    confidence: row.confidence ?? null,
+    provenanceRootIds: rootsByClaim.get(row.id) || [],
+  }))
+  // Resolve each tombstoned source to the exact source versions it covers, so
+  // revoked material is recognised wherever evidence cites a version id.
+  const tombstones = versionRows
+    .filter((row) => tombstonedSourceIds.has(row.source_id))
+    .map((row) => freeze({ tenantId, sourceId: row.source_id, sourceVersionId: row.id }))
+  return freeze({ sources, claims, tombstones })
+}
+
+/**
+ * Durable G3 conflicts with every competing side preserved, built from the
+ * conflict rows, their members and those members' claims. Nothing is inferred:
+ * a conflict is resolved only when the conflict row itself says so and names
+ * the founder decision that resolved it.
+ */
+function conflictsFromRows({ tenantId, conflictRows, memberRows, claimRows }) {
+  const claimById = new Map(claimRows.map((row) => [row.id, row]))
+  const membersByConflict = new Map()
+  for (const row of memberRows) {
+    if (!membersByConflict.has(row.conflict_id)) membersByConflict.set(row.conflict_id, [])
+    membersByConflict.get(row.conflict_id).push(row.claim_id)
+  }
+  return conflictRows
+    // An INVALIDATED conflict is not a live disagreement; presenting one as
+    // unresolved would overstate what actually needs the founder.
+    .filter((row) => row.status === 'CONFLICTED' || row.status === 'RESOLVED')
+    .map((row) => {
+      const competingClaimIds = (membersByConflict.get(row.id) || []).slice().sort()
+      return freeze({
+        kind: 'COMPANY_BRAIN_CONFLICT_V0',
+        id: row.id,
+        tenantId,
+        topic: row.topic,
+        status: row.status,
+        revision: row.revision ?? 0,
+        competingClaimIds,
+        scopes: competingClaimIds.map((claimId) => claimById.get(claimId)?.semantic_scope || {}),
+        preservedValues: competingClaimIds.map((claimId) => claimById.get(claimId)?.claim_value ?? null),
+        resolutionDecisionId: row.resolution_decision_id ?? null,
+        winnerClaimId: null,
+        confidenceResolved: false,
+      })
+    })
 }
 
 /**
@@ -149,63 +238,98 @@ export async function loadFounderReviewReadModel({ client = defaultClient, now =
   const tenantId = actor.tenantId
   const generatedAt = now.toISOString()
 
-  const [operatingModel, grants, proposals, items, revisions, decisions] = await Promise.all([
-    client.from('company_operating_model_proposals')
-      .select('id, model_payload, source_state, status')
+  const reads = {
+    operatingModel: client.from('company_operating_model_proposals')
+      .select('id, model_payload, source_state, model_fingerprint, status')
       .in('status', ['PROPOSED', 'BLOCKED'])
       .order('created_at', { ascending: false })
       .limit(1),
-    client.from('company_brain_authority_grants_g5').select('*'),
-    client.from('company_brain_authority_proposals').select('*'),
-    client.from('company_brain_founder_review_items_g6').select('*'),
-    client.from('company_brain_founder_review_revisions_g6').select('*'),
-    client.from('company_brain_founder_decisions').select('*'),
-  ])
-
-  for (const result of [operatingModel, grants, proposals, items, revisions, decisions]) {
-    if (result?.error) throw new Error(result.error.message || 'company brain review read failed')
+    grants: client.from('company_brain_authority_grants_g5').select('*'),
+    proposals: client.from('company_brain_authority_proposals').select('*'),
+    items: client.from('company_brain_founder_review_items_g6').select('*'),
+    revisions: client.from('company_brain_founder_review_revisions_g6').select('*'),
+    decisions: client.from('company_brain_founder_decisions').select('*'),
+    // G3 conflict intelligence and G2 evidence: without these the surface
+    // would silently show zero conflicts and unattributed evidence.
+    conflicts: client.from('company_brain_conflicts').select('*'),
+    conflictMembers: client.from('company_brain_conflict_members').select('*'),
+    claims: client.from('company_brain_claims').select('*'),
+    claimRoots: client.from('company_brain_claim_roots').select('*'),
+    sources: client.from('company_brain_sources').select('*'),
+    sourceVersions: client.from('company_brain_source_versions').select('*'),
+    tombstones: client.from('company_brain_source_tombstones').select('*'),
+  }
+  const names = Object.keys(reads)
+  const settled = await Promise.all(names.map((name) => reads[name]))
+  const rows = {}
+  for (let index = 0; index < names.length; index += 1) {
+    const result = settled[index]
+    // A read that did not succeed fails the whole load. Rendering a partial
+    // Company Brain would understate conflicts and overstate freshness.
+    if (result?.error) {
+      throw new Error(`company brain review read failed (${names[index]}): ${result.error.message || 'unknown error'}`)
+    }
+    rows[names[index]] = result?.data || []
   }
 
-  const modelRow = (operatingModel.data || [])[0] || null
+  const modelRow = rows.operatingModel[0] || null
   const authorityReadModel = authorityReadModelFromRows({
     tenantId,
-    grantRows: grants.data || [],
-    proposalRows: proposals.data || [],
+    grantRows: rows.grants,
+    proposalRows: rows.proposals,
     evaluatedAt: generatedAt,
   })
 
-  if (!modelRow && authorityReadModel.currentAuthorityGrants.length === 0 &&
-      authorityReadModel.proposedAuthority.length === 0 && (items.data || []).length === 0) {
-    return freeze({ readModel: null, actor, empty: true })
-  }
+  const nothingStored = !modelRow &&
+    authorityReadModel.currentAuthorityGrants.length === 0 &&
+    authorityReadModel.proposedAuthority.length === 0 &&
+    rows.conflicts.length === 0 &&
+    rows.items.length === 0
+  if (nothingStored) return freeze({ readModel: null, actor, empty: true })
 
   const asOfDate = modelRow?.source_state?.asOfDate || today(now)
-  const derivedItems = modelRow
-    ? buildFounderReviewItemsFromRecords({
-      actor,
+  const knowledge = knowledgeFromRows({
+    tenantId,
+    sourceRows: rows.sources,
+    versionRows: rows.sourceVersions,
+    claimRows: rows.claims,
+    rootRows: rows.claimRoots,
+    tombstoneRows: rows.tombstones,
+  })
+  const conflicts = conflictsFromRows({
+    tenantId,
+    conflictRows: rows.conflicts,
+    memberRows: rows.conflictMembers,
+    claimRows: rows.claims,
+  })
+  // Only a decision a conflict row itself names as its resolution counts. G6
+  // does not re-derive founder-decision validity; that is G3's to decide.
+  const resolutionDecisionIds = new Set(conflicts.map((row) => row.resolutionDecisionId).filter(Boolean))
+  const founderDecisions = rows.decisions
+    .filter((row) => resolutionDecisionIds.has(row.id))
+    .map((row) => freeze({
       tenantId,
-      knowledge: { sources: [], claims: [], tombstones: [] },
-      operatingModel: modelRow.model_payload,
-      conflicts: [],
-      founderDecisions: (decisions.data || []).map((row) => ({
-        tenantId, targetId: row.target_id, id: row.id, decidedAt: row.created_at,
-      })),
-      authorityReadModel,
-      asOfDate,
-      generatedAt,
-    })
-    : buildFounderReviewItemsFromRecords({
-      actor,
-      tenantId,
-      knowledge: { sources: [], claims: [], tombstones: [] },
-      operatingModel: { tenantId, blockers: [], clientOverrides: [] },
-      authorityReadModel,
-      asOfDate,
-      generatedAt,
-    })
+      id: row.id,
+      targetId: row.target_id,
+      decidedAt: row.created_at,
+      decisionType: row.decision_type,
+      reason: row.reason,
+    }))
+
+  const derivedItems = buildFounderReviewItemsFromRecords({
+    actor,
+    tenantId,
+    knowledge,
+    operatingModel: modelRow?.model_payload || { tenantId, blockers: [], clientOverrides: [] },
+    conflicts,
+    founderDecisions,
+    authorityReadModel,
+    asOfDate,
+    generatedAt,
+  })
 
   const store = reviewStoreFromRows({
-    tenantId, itemRows: items.data || [], revisionRows: revisions.data || [],
+    tenantId, itemRows: rows.items, revisionRows: rows.revisions,
   })
   const state = deriveFounderReviewState({
     actor, tenantId, store, items: derivedItems, generatedAt, asOfDate,
@@ -215,20 +339,41 @@ export async function loadFounderReviewReadModel({ client = defaultClient, now =
       actor, tenantId, state, authorityReadModel, store, consumer: 'FOUNDER_REVIEW_UI',
     }),
     actor,
+    // The row id of the derivation the items were built from. A review write
+    // must cite it so the server can check staleness against its own tables.
+    operatingModelRowId: modelRow?.id ?? null,
+    operatingModelFingerprint: modelRow?.model_fingerprint ?? null,
     empty: false,
   })
 }
 
+/** Outcomes the review RPC returns that are NOT a recorded founder decision. */
+export const REVIEW_REJECTION_OUTCOMES = Object.freeze([
+  'REJECTED_IDEMPOTENCY_CONFLICT',
+  'REJECTED_STALE_REVISION',
+  'REJECTED_SUBJECT_CHANGED',
+  'REJECTED_ACTION_UNAVAILABLE',
+])
+
 /**
  * Records one founder review decision. It calls only the G6 review RPC, and so
  * cannot create, widen or refresh DW authority under any action.
+ *
+ * The RPC returns a rejection outcome rather than raising, so that a rejected
+ * attempt stays durably auditable. That makes it this function's job to fail
+ * closed: any outcome that is not an accepted or replayed decision is turned
+ * into an error, so a refused write can never be rendered as approved.
  */
 export async function submitFounderReviewDecision({
   client = defaultClient, item, action, expectedRevision, subjectFingerprint,
   reviewedValue, reason = null, idempotencyKey,
+  operatingModelRowId = null, operatingModelFingerprint = null,
 } = {}) {
   if (!item) throw new Error('founder review item required')
   if (!Object.values(REVIEW_ACTION).includes(action)) throw new Error('unknown founder review action')
+  // The item must cite the upstream derivation it was built from; the server
+  // re-reads that object to decide staleness for itself.
+  const bindsOperatingModel = Boolean(item.sourceModelFingerprint)
   const { data, error } = await client.rpc('record_company_brain_founder_review_g6', {
     p_review_key: item.reviewKey,
     p_category: item.category,
@@ -239,7 +384,9 @@ export async function submitFounderReviewDecision({
     p_review_scope: item.scope || {},
     p_client_id: item.clientId ?? null,
     p_conflict_id: item.conflictId ?? null,
-    p_operating_model_id: item.operatingModelId ?? null,
+    p_conflict_revision: item.conflictId ? (item.conflictRevision ?? 0) : null,
+    p_operating_model_id: bindsOperatingModel ? operatingModelRowId : null,
+    p_source_model_fingerprint: bindsOperatingModel ? operatingModelFingerprint : null,
     p_authority_proposal_id: item.authorityProposalId ?? null,
     p_authority_grant_id: item.authorityGrantId ?? null,
     p_review_action: action,
@@ -256,6 +403,16 @@ export async function submitFounderReviewDecision({
   })
   // A failed write is reported as a failure; it is never rendered as approved.
   if (error) throw new Error(error.message || 'founder review decision failed')
+  const outcome = data?.outcome ?? null
+  if (REVIEW_REJECTION_OUTCOMES.includes(outcome)) {
+    const rejection = new Error(`founder review decision refused: ${outcome}`)
+    rejection.outcome = outcome
+    rejection.detail = data
+    throw rejection
+  }
+  if (outcome !== 'ACCEPTED' && outcome !== 'IDEMPOTENT_REPLAY') {
+    throw new Error('founder review decision returned an unrecognised outcome')
+  }
   return freeze({ ...data, authorityGranted: false })
 }
 

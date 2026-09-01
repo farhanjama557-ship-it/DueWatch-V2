@@ -233,7 +233,11 @@ function reviewKeyFor({ tenantId, category, itemType, subjectType, subjectId }) 
 
 function buildEvidenceIndex(snapshot) {
   const sourceById = new Map((snapshot.sources || []).map((source) => [source.id, source]))
-  const tombstonedSourceIds = new Set((snapshot.tombstones || []).map((row) => row.sourceId))
+  // A tombstone identifies its source; the persistence path resolves it to the
+  // exact source versions, so accept either keying.
+  const tombstonedSourceIds = new Set(
+    (snapshot.tombstones || []).flatMap((row) => [row.sourceVersionId, row.sourceId].filter(Boolean)),
+  )
   const claimById = new Map((snapshot.claims || []).map((claim) => [claim.id, claim]))
   return { sourceById, tombstonedSourceIds, claimById }
 }
@@ -474,6 +478,10 @@ function buildReviewItemsCore({
       generatedAt: at,
       asOfDate,
       extra: {
+        // The upstream derivation this item came from. The review RPC re-reads
+        // it server-side to decide staleness for itself.
+        sourceModelProposalId: operatingModel.proposalId ?? null,
+        sourceModelFingerprint: operatingModel.fingerprint ?? null,
         operatingSections: freeze([...sections].sort()),
         founderReviewRequiredByG4: statement.founderReviewRequired === true,
         // Human participation described here never becomes DW permission.
@@ -502,11 +510,17 @@ function buildReviewItemsCore({
       proposition: freeze({
         topic: conflict.topic,
         // Every side is preserved and shown; nothing is flattened into a score.
-        competingPositions: (conflict.competingClaimIds || []).map((claimId, position) => freeze({
-          claimId,
-          scope: scopeIdentity((conflict.scopes || [])[position] || {}),
-          value: structuredClone((conflict.preservedValues || [])[position] ?? null),
-        })),
+        // Ordered by claim id so the derivation is identical whether the
+        // conflict came from the in-process store or from persisted rows,
+        // whose membership table carries no ordering of its own.
+        competingPositions: (conflict.competingClaimIds || [])
+          .map((claimId, position) => ({
+            claimId,
+            scope: scopeIdentity((conflict.scopes || [])[position] || {}),
+            value: structuredClone((conflict.preservedValues || [])[position] ?? null),
+          }))
+          .sort((a, b) => String(a.claimId).localeCompare(String(b.claimId)))
+          .map((entry) => freeze(entry)),
         currentResult: resolved ? 'FOUNDER_DECIDED' : 'NO_SAFE_CURRENT_INSTRUCTION',
       }),
       proposedValue: null,
@@ -556,7 +570,13 @@ function buildReviewItemsCore({
       resolutionPath: REVIEW_RESOLUTION_PATH.G3_FOUNDER_DECISION,
       generatedAt: at,
       asOfDate,
-      extra: { blockerId: blocker.id, currentSafeInstructionAvailable: false, confidenceResolved: false },
+      extra: {
+        blockerId: blocker.id,
+        sourceModelProposalId: operatingModel.proposalId ?? null,
+        sourceModelFingerprint: operatingModel.fingerprint ?? null,
+        currentSafeInstructionAvailable: false,
+        confidenceResolved: false,
+      },
     }))
   }
 
