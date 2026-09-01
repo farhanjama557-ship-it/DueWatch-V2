@@ -36,6 +36,11 @@
 28. Top-level and nested client-override semantic tampering fail canonical fingerprint/integrity validation.
 29. Parser-backed SQL assertions prove current rows require active exact Brain/graph lineage, knowledge version, and graph fingerprint binding.
 30. A proposal built for one as-of date cannot masquerade as current for another date without regeneration.
+31. A real seeded proposal uses the actual G2 runtime 64-character graph fingerprint as its persistence anchor, matches G2 SQL's fingerprint format, carries no undefined/fabricated Brain snapshot ID, and retains the runtime graph-version string only as debug metadata.
+32. Freshness, persistence, and review fail closed when current `asOfDate` is omitted; the explicit proposal date remains usable.
+33. A direct normal replay after revocation marks and returns the row `STALE` without requiring another persistence or review call.
+34. A date rollover changes currentness without any Brain/graph mutation and blocks both review and replay of the old-date proposal.
+35. Parser-backed SQL assertions prove the exact `(user_id, graph_fingerprint)` proposal→graph foreign key, graph→Brain lineage, current active/version/fingerprint checks, and graph/Brain invalidation through fingerprint joins.
 
 ## Controlled Acme/Atlas proof
 

@@ -12,7 +12,7 @@ The public runtime is `src/lib/companyBrain/operatingModel.js`.
 - `isOperatingModelStale({ proposal, actor, tenantId, brain, graph, asOfDate })`
 - `OperatingModelProposalStore`
 - `persistOperatingModelProposal(store, { actor, tenantId, proposal, brain, graph, asOfDate })`
-- `getOperatingModelProposal(store, { actor, tenantId, proposalId })`
+- `getOperatingModelProposal(store, { actor, tenantId, proposalId, brain, graph, asOfDate })`
 - `toOperatingModelReviewContext(proposal, { actor, tenantId, brain, graph, asOfDate })`
 
 Reasoning is independently testable and does not require persistence.
@@ -63,9 +63,9 @@ Missing areas, such as promises-to-pay evidence, generate deterministic founder-
 
 ## Freshness and determinism
 
-The proposal is bound to tenant, Company Brain snapshot/knowledge version, graph version/fingerprint, source-version set, founder decisions, scoped G3 results, and as-of date. `isOperatingModelStale()` is read-only and returns true when the Brain version changes, the referenced graph is no longer active, or the requested as-of date differs.
+The proposal is bound to tenant, Company Brain knowledge version, graph version/fingerprint, source-version set, founder decisions, scoped G3 results, and as-of date. The pure builder does not claim a durable Brain snapshot ID: frozen G1 `prepareSnapshot()` does not expose one, and G4 does not mutate G1 merely to manufacture it. Durable persistence uses the actual G2 runtime 64-character graph fingerprint with tenant ID to resolve the exact persisted G2 graph row, then derives the exact Brain snapshot through that row. The runtime `graphVersion` string remains debug metadata and is never represented as the persisted graph UUID.
 
-Persistence and review require current Brain/graph context. A stale proposal cannot be inserted or replayed as current; a formerly-current replay row is marked `STALE`. Review context always exposes `stale` and `reviewBlocked`, and cannot present stale material as a current `PROPOSED`/`BLOCKED` review.
+All currentness operations—freshness evaluation, persistence, review, and normal get/replay—require current Brain/graph context plus an explicit canonical `asOfDate`. None defaults to the proposal's old date. A stale proposal cannot be inserted or replayed as current; a formerly-current replay row is marked `STALE` with `invalidatedAt`. Review context always exposes `stale` and `reviewBlocked`, and cannot present stale material as a current `PROPOSED`/`BLOCKED` review. Superseded history is not rewritten.
 
 Building after revocation or another knowledge mutation deterministically rebuilds the graph and produces a different proposal fingerprint. Identical active evidence, graph state, and G3 state reproduce the same proposal identity.
 
@@ -75,11 +75,11 @@ The runtime proposal store proves replay, idempotency, supersession, stale repla
 
 Migration `20260901034230_company_operating_model_g4.sql` adds the smallest durable database projection:
 
-- `company_operating_model_proposals` binds each proposal to an exact tenant Brain snapshot and graph version;
+- `company_operating_model_proposals` binds each proposal to one exact graph row through the composite foreign key `(user_id, graph_fingerprint) → company_graph_versions(user_id, fingerprint)`; it does not coerce the runtime graph-version string into a UUID or redundantly accept a caller-supplied Brain snapshot ID;
 - `company_operating_model_proposal_evidence` normalizes every claim/source-version pair and references the exact tenant-composite `company_brain_claim_roots` key;
 - deferred validators require the JSON evidence projection and normalized provenance to agree in both directions;
-- an insert/update validator binds the graph to the exact Brain snapshot lineage, knowledge version, graph fingerprint, JSON source state, and active status for current rows;
-- graph or Brain snapshot invalidation marks current proposals stale;
+- an insert/update validator loads that tenant graph row, follows its `brain_snapshot_id` to the exact tenant Brain snapshot, and binds knowledge version, graph fingerprint, JSON source state, and active status for current rows;
+- graph invalidation marks directly referenced proposals stale; Brain snapshot invalidation marks proposals stale by joining through `company_graph_versions.brain_snapshot_id`;
 - RLS and grants expose authenticated tenant-bound reads only;
 - database checks permanently require all money, authority, automation, and approval boundaries to remain false.
 

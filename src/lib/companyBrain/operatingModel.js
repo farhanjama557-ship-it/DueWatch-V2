@@ -89,6 +89,11 @@ function isCanonicalDate(value) {
   return !Number.isNaN(parsed.valueOf()) && parsed.toISOString().slice(0, 10) === value
 }
 
+function requireCurrentAsOfDate(value) {
+  if (!isCanonicalDate(value)) throw new Error('current operating model as-of date required')
+  return value
+}
+
 function scopeOf(claim) {
   return freeze({ ...(claim.semanticScope || { level: SEMANTIC_SCOPE.COMPANY }) })
 }
@@ -501,7 +506,6 @@ export function buildOperatingModelProposal({
     generatedAt,
     asOfDate: queryDate,
     sourceState: freeze({
-      brainSnapshotId: brainSnapshot.id,
       knowledgeVersion: brainSnapshot.knowledgeVersion,
       graphVersion: graphSnapshot.id,
       graphFingerprint: graphSnapshot.fingerprint,
@@ -547,11 +551,12 @@ export function buildOperatingModelProposal({
 
 /** Read-only freshness check. It never rebuilds a graph or mutates persistence. */
 export function isOperatingModelStale({
-  proposal, actor, tenantId, brain, graph, asOfDate = proposal?.asOfDate,
+  proposal, actor, tenantId, brain, graph, asOfDate,
 } = {}) {
   assertActor(actor, tenantId)
   if (!brain || !graph) throw new Error('brain and graph required for freshness evaluation')
   if (proposal?.tenantId !== tenantId) throw new Error('operating model tenant mismatch')
+  requireCurrentAsOfDate(asOfDate)
   validateProposal(proposal)
   const activeGraph = graph.activeSnapshot({ actor, tenantId })
   return (
@@ -571,7 +576,7 @@ export class OperatingModelProposalStore {
 }
 
 export function persistOperatingModelProposal(store, {
-  actor, tenantId, proposal, brain, graph, asOfDate = proposal?.asOfDate,
+  actor, tenantId, proposal, brain, graph, asOfDate,
 } = {}) {
   assertActor(actor, tenantId)
   if (!(store instanceof OperatingModelProposalStore)) throw new Error('operating model store required')
@@ -630,17 +635,35 @@ export function persistOperatingModelProposal(store, {
   return persisted
 }
 
-export function getOperatingModelProposal(store, { actor, tenantId, proposalId = null } = {}) {
+export function getOperatingModelProposal(store, {
+  actor, tenantId, proposalId = null, brain, graph, asOfDate,
+} = {}) {
   assertActor(actor, tenantId)
   if (!(store instanceof OperatingModelProposalStore)) throw new Error('operating model store required')
-  if (proposalId) {
-    return store.rows.find((row) => row.tenantId === tenantId && row.proposalId === proposalId) || null
+  if (!brain || !graph) throw new Error('brain and graph required for current operating model replay')
+  requireCurrentAsOfDate(asOfDate)
+  const index = proposalId
+    ? store.rows.findIndex((row) => row.tenantId === tenantId && row.proposalId === proposalId)
+    : store.rows.findLastIndex((row) => row.tenantId === tenantId)
+  if (index < 0) return null
+  const row = store.rows[index]
+  if (
+    [OPERATING_MODEL_STATUS.PROPOSED, OPERATING_MODEL_STATUS.BLOCKED].includes(row.status) &&
+    isOperatingModelStale({ proposal: row, actor, tenantId, brain, graph, asOfDate })
+  ) {
+    const stale = freeze({
+      ...structuredClone(row),
+      status: OPERATING_MODEL_STATUS.STALE,
+      invalidatedAt: store.clock(),
+    })
+    store.rows[index] = stale
+    return stale
   }
-  return store.rows.filter((row) => row.tenantId === tenantId).at(-1) || null
+  return row
 }
 
 export function toOperatingModelReviewContext(proposal, {
-  actor, tenantId, brain, graph, asOfDate = proposal?.asOfDate,
+  actor, tenantId, brain, graph, asOfDate,
 } = {}) {
   validateProposal(proposal)
   const stale = isOperatingModelStale({ proposal, actor, tenantId, brain, graph, asOfDate })
