@@ -251,6 +251,7 @@ function buildVerificationInput({ core, candidate, plan, toolRuns, caseContext =
       // conversational pressure is never a reason to move canonical truth.
       'company_brain_claims_supported',
       'founder_pressure_did_not_change_truth',
+      'conversation_memory_not_treated_as_evidence',
     ],
   }
 }
@@ -427,6 +428,8 @@ export function createAskDwOrchestrator({
           companyBrainReadOnly: true,
           companyBrainMutableFromConversation: false,
           conversationCanGrantAuthority: false,
+          conversationMemoryIsEvidence: false,
+          conversationMemoryCanOverrideLiveReads: false,
           prioritiesOrderedDeterministically: true,
           deterministicGroundingEnforced: true,
         }),

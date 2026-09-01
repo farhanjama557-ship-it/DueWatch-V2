@@ -1,5 +1,9 @@
 import { normalizeClientText } from '../clientIdentity.js'
 import { ASK_DW_CASE_EVENT } from './askDwCaseState.js'
+import {
+  findAskDwConversationNickname,
+  isAskDwConversationNicknameDeclaration,
+} from './askDwConversationMemory.js'
 
 const MAX_CLIENT_TERM_QUERIES = 4
 const MAX_CLIENT_MATCHES_PER_TERM = 20
@@ -505,7 +509,15 @@ async function resolveExplicitInvoice({ supabase, tenantId, lookup }) {
     })
   }
 
-  const invoice = matches[0]
+  return resolveVerifiedInvoice({
+    supabase,
+    tenantId,
+    invoice: matches[0],
+    term: normalizedText(lookup.term),
+  })
+}
+
+async function resolveVerifiedInvoice({ supabase, tenantId, invoice, term }) {
   const client = await readClientById(supabase, tenantId, invoice.client_id)
   if (!client) {
     return outcome({
@@ -528,7 +540,7 @@ async function resolveExplicitInvoice({ supabase, tenantId, lookup }) {
     ...clientEvents({ client, term: null }),
     candidateEvent(candidateInvoices),
     selectInvoiceEvent(invoice),
-    resolveInvoiceBindingEvent(normalizedText(lookup.term), invoice),
+    resolveInvoiceBindingEvent(term, invoice),
   ]
 
   return outcome({
@@ -540,6 +552,123 @@ async function resolveExplicitInvoice({ supabase, tenantId, lookup }) {
     reason: clientInvoiceRead.truncated
       ? 'The invoice was resolved exactly, but the client has more invoice references than the bounded case candidate set can safely carry.'
       : null,
+  })
+}
+
+async function resolveVerifiedClient({
+  supabase,
+  tenantId,
+  client,
+  term,
+  activeClientRef,
+  activeInvoiceRef,
+}) {
+  const invoiceRead = await readClientInvoices(supabase, tenantId, client.id)
+  const baseEvents = clientEvents({ client, term })
+  const sameActiveClient = sameId(activeClientRef, client.id)
+
+  if (invoiceRead.truncated) {
+    if (sameActiveClient && activeInvoiceRef) {
+      const activeInvoice = await readInvoiceById(supabase, tenantId, activeInvoiceRef.id)
+
+      if (activeInvoice?.client_id === client.id) {
+        return outcome({
+          status: ASK_DW_ENTITY_RESOLUTION_STATUS.RESOLVED_WITH_LIMITATION,
+          events: [...baseEvents, candidateEvent([activeInvoice])],
+          reason: 'The active invoice reference was re-verified exactly, but the client has more invoices than the bounded case candidate set can safely carry. Other-invoice switching requires an explicit invoice reference.',
+        })
+      }
+    }
+
+    return outcome({
+      status: ASK_DW_ENTITY_RESOLUTION_STATUS.NEEDS_INVOICE_RESOLUTION,
+      events: [...baseEvents, candidateEvent([])],
+      blocked: true,
+      reason: 'The client has more invoice references than the bounded case candidate set can safely carry; an explicit invoice number is required.',
+    })
+  }
+
+  const invoices = invoiceRead.invoices
+  const events = [...baseEvents, candidateEvent(invoices)]
+
+  if (invoices.length === 0) {
+    return outcome({
+      status: ASK_DW_ENTITY_RESOLUTION_STATUS.CLIENT_HAS_NO_INVOICES,
+      events,
+      blocked: true,
+      reason: 'The resolved client has no invoice references for the authenticated tenant.',
+    })
+  }
+
+  if (sameActiveClient && activeInvoiceRef) {
+    if (!invoices.some((invoice) => invoice.id === activeInvoiceRef.id)) {
+      return outcome({
+        status: ASK_DW_ENTITY_RESOLUTION_STATUS.NEEDS_INVOICE_RESOLUTION,
+        events,
+        blocked: true,
+        reason: 'The active invoice reference is no longer present in the resolved client invoice set.',
+      })
+    }
+    return outcome({ status: ASK_DW_ENTITY_RESOLUTION_STATUS.RESOLVED, events })
+  }
+
+  if (invoices.length === 1) {
+    events.push(selectInvoiceEvent(invoices[0]))
+    return outcome({ status: ASK_DW_ENTITY_RESOLUTION_STATUS.RESOLVED, events })
+  }
+
+  return outcome({
+    status: ASK_DW_ENTITY_RESOLUTION_STATUS.NEEDS_INVOICE_RESOLUTION,
+    events,
+    blocked: true,
+    reason: 'The client has more than one resolved invoice; explicit invoice selection is required.',
+  })
+}
+
+async function resolveConversationNickname({ supabase, tenantId, nickname, caseContext }) {
+  if (nickname.ambiguous) {
+    return outcome({
+      status: ASK_DW_ENTITY_RESOLUTION_STATUS.NEEDS_REFERENCE_RESOLUTION,
+      blocked: true,
+      reason: 'The conversational nickname maps to more than one reference; explicit selection is required.',
+    })
+  }
+
+  if (nickname.ref.kind === 'invoice') {
+    const invoice = await readInvoiceById(supabase, tenantId, nickname.ref.id)
+    if (!invoice) {
+      return outcome({
+        status: ASK_DW_ENTITY_RESOLUTION_STATUS.INVOICE_NOT_FOUND,
+        blocked: true,
+        reason: 'The conversation nickname points to an invoice that is no longer available for the authenticated tenant.',
+      })
+    }
+    return resolveVerifiedInvoice({ supabase, tenantId, invoice, term: nickname.term })
+  }
+
+  if (nickname.ref.kind !== 'client') {
+    return outcome({
+      status: ASK_DW_ENTITY_RESOLUTION_STATUS.NEEDS_REFERENCE_RESOLUTION,
+      blocked: true,
+      reason: 'The conversation nickname does not identify a supported live reference.',
+    })
+  }
+
+  const client = await readClientById(supabase, tenantId, nickname.ref.id)
+  if (!client) {
+    return outcome({
+      status: ASK_DW_ENTITY_RESOLUTION_STATUS.CLIENT_NOT_FOUND,
+      blocked: true,
+      reason: 'The conversation nickname points to a client that is no longer available for the authenticated tenant.',
+    })
+  }
+  return resolveVerifiedClient({
+    supabase,
+    tenantId,
+    client,
+    term: nickname.term,
+    activeClientRef: caseContext?.focus?.clientRef ?? null,
+    activeInvoiceRef: caseContext?.focus?.invoiceRef ?? null,
   })
 }
 
@@ -608,82 +737,13 @@ async function resolveClientText({
     })
   }
 
-  const client = picked.selected
-  const invoiceRead = await readClientInvoices(supabase, tenantId, client.id)
-  const baseEvents = clientEvents({ client, term: picked.term })
-  const sameActiveClient = sameId(activeClientRef, client.id)
-
-  if (invoiceRead.truncated) {
-    if (sameActiveClient && activeInvoiceRef) {
-      const activeInvoice = await readInvoiceById(
-        supabase,
-        tenantId,
-        activeInvoiceRef.id,
-      )
-
-      if (activeInvoice?.client_id === client.id) {
-        return outcome({
-          status: ASK_DW_ENTITY_RESOLUTION_STATUS.RESOLVED_WITH_LIMITATION,
-          events: [
-            ...baseEvents,
-            candidateEvent([activeInvoice]),
-          ],
-          reason: 'The active invoice reference was re-verified exactly, but the client has more invoices than the bounded case candidate set can safely carry. Other-invoice switching requires an explicit invoice reference.',
-        })
-      }
-    }
-
-    return outcome({
-      status: ASK_DW_ENTITY_RESOLUTION_STATUS.NEEDS_INVOICE_RESOLUTION,
-      events: [
-        ...baseEvents,
-        candidateEvent([]),
-      ],
-      blocked: true,
-      reason: 'The client has more invoice references than the bounded case candidate set can safely carry; an explicit invoice number is required.',
-    })
-  }
-
-  const invoices = invoiceRead.invoices
-  const events = [...baseEvents, candidateEvent(invoices)]
-
-  if (invoices.length === 0) {
-    return outcome({
-      status: ASK_DW_ENTITY_RESOLUTION_STATUS.CLIENT_HAS_NO_INVOICES,
-      events,
-      blocked: true,
-      reason: 'The resolved client has no invoice references for the authenticated tenant.',
-    })
-  }
-
-  if (sameActiveClient && activeInvoiceRef) {
-    if (!invoices.some((invoice) => invoice.id === activeInvoiceRef.id)) {
-      return outcome({
-        status: ASK_DW_ENTITY_RESOLUTION_STATUS.NEEDS_INVOICE_RESOLUTION,
-        events,
-        blocked: true,
-        reason: 'The active invoice reference is no longer present in the resolved client invoice set.',
-      })
-    }
-    return outcome({
-      status: ASK_DW_ENTITY_RESOLUTION_STATUS.RESOLVED,
-      events,
-    })
-  }
-
-  if (invoices.length === 1) {
-    events.push(selectInvoiceEvent(invoices[0]))
-    return outcome({
-      status: ASK_DW_ENTITY_RESOLUTION_STATUS.RESOLVED,
-      events,
-    })
-  }
-
-  return outcome({
-    status: ASK_DW_ENTITY_RESOLUTION_STATUS.NEEDS_INVOICE_RESOLUTION,
-    events,
-    blocked: true,
-    reason: 'The client has more than one resolved invoice; explicit invoice selection is required.',
+  return resolveVerifiedClient({
+    supabase,
+    tenantId,
+    client: picked.selected,
+    term: picked.term,
+    activeClientRef,
+    activeInvoiceRef,
   })
 }
 
@@ -706,12 +766,26 @@ export function createAskDwEntityResolver({ supabase } = {}) {
     const tenant = required(tenantId, 'Ask DW entity resolver tenantId')
     await assertAuthenticatedTenant(supabase, tenant)
 
+    if (isAskDwConversationNicknameDeclaration(text)) {
+      return revalidateActiveFocus({ supabase, tenantId: tenant, caseContext: caseContext || {} })
+    }
+
     const lookup = explicitInvoiceLookup(text)
     if (lookup) {
       return resolveExplicitInvoice({
         supabase,
         tenantId: tenant,
         lookup,
+      })
+    }
+
+    const nickname = findAskDwConversationNickname(caseContext, text)
+    if (nickname) {
+      return resolveConversationNickname({
+        supabase,
+        tenantId: tenant,
+        nickname,
+        caseContext: caseContext || {},
       })
     }
 

@@ -214,6 +214,42 @@ test('G7-O7 a greeting still carries no invented AR subject', async () => {
   assert.equal(captured.plan.scopedContext.clientId, null)
 })
 
+test('G7-CP6 structured conversation memory reaches every model stage only as non-evidence', async () => {
+  const captured = {}
+  const memory = {
+    recentTurns: [{ turnId: 't1', turnType: 'FOLLOW_UP', mode: 'normal' }],
+    recentTopics: [{ topic: 'FOLLOW_UP', lastTurnId: 't1' }],
+    recentSubjects: [{
+      caseId: 'primary', clientRef: { kind: 'client', id: 'atlas' },
+      invoiceRef: null, lastTurnId: 't1',
+    }],
+    unresolvedReference: null,
+    conversationalNicknames: [],
+    compactedTurnCount: 0,
+    boundaries: {
+      storesTranscript: false, isEvidence: false, canOverrideLiveReads: false,
+      canMutateG6Context: false, canGrantAuthority: false,
+      founderNicknamesConversationScoped: true,
+      vocabularySource: 'READ_ONLY_G6_CONTEXT_ONLY',
+    },
+  }
+  const result = await harness({ captured }).run({
+    mode: 'normal', text: 'why?',
+    context: {
+      tenantId: tenantA,
+      caseContext: { focus: { clientRef: { kind: 'client', id: 'atlas' } }, memory },
+      companyBrainReadModel: companyBrainReadModel(),
+    },
+  })
+
+  assert.deepEqual(captured.plan.caseContext.memory, memory)
+  assert.deepEqual(captured.synthesize.caseContext.memory, memory)
+  assert.deepEqual(captured.verify.caseContext.memory, memory)
+  assert.ok(captured.verify.requiredChecks.includes('conversation_memory_not_treated_as_evidence'))
+  assert.equal(result.safeguards.conversationMemoryIsEvidence, false)
+  assert.equal(result.safeguards.conversationMemoryCanOverrideLiveReads, false)
+})
+
 // ── daily priorities ─────────────────────────────────────────────────────────
 
 test('G7-P1 priorities are ordered by a fixed reviewable policy, not by a model', () => {

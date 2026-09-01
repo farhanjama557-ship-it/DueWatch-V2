@@ -9,6 +9,7 @@ import {
   createAskDwCaseState,
 } from '../src/lib/dwIntelligence/askDwCaseState.js'
 import { createAskDwCaseAwareRuntime } from '../src/lib/dwIntelligence/askDwConversationRuntime.js'
+import { ASK_DW_CONVERSATION_MEMORY_PROFILE } from '../src/lib/dwIntelligence/askDwConversationMemory.js'
 import {
   ASK_DW_CONVERSATION_PERSISTENCE_PROFILE,
   AskDwConversationExpiredError,
@@ -621,4 +622,163 @@ test('G7-CP5 durable Normal to Deep mode change preserves the same reference sub
     { mode: 'normal', invoiceId: 'invoice-1844' },
     { mode: 'deep', invoiceId: 'invoice-1844' },
   ])
+})
+
+test('G7-CP6 memory is a bounded non-evidentiary reference summary, never a transcript', () => {
+  assert.equal(ASK_DW_CONVERSATION_MEMORY_PROFILE.deterministicStructuredSummary, true)
+  assert.equal(ASK_DW_CONVERSATION_MEMORY_PROFILE.storesTranscript, false)
+  assert.equal(ASK_DW_CONVERSATION_MEMORY_PROFILE.storesRawFounderAssertions, false)
+  assert.equal(ASK_DW_CONVERSATION_MEMORY_PROFILE.canonicalFinancialTruthStored, false)
+  assert.equal(ASK_DW_CONVERSATION_MEMORY_PROFILE.companyPolicyStored, false)
+  assert.equal(ASK_DW_CONVERSATION_MEMORY_PROFILE.evidenceStored, false)
+  assert.equal(ASK_DW_CONVERSATION_MEMORY_PROFILE.authorityStored, false)
+  assert.equal(ASK_DW_CONVERSATION_MEMORY_PROFILE.conversationCanGrantAuthority, false)
+})
+
+test('G7-CP6 thirty turns compact deterministically while the verified subject survives', async () => {
+  const persistence = makeMemoryPersistence()
+  const durable = createAskDwDurableConversationRuntime({
+    persistence,
+    conversationRuntime: {
+      async runConversationTurn({ caseState }) {
+        return { status: 'ANSWERED', caseState, resolver: null, askDw: { fresh: true } }
+      },
+    },
+  })
+  const prompts = [
+    'why?', 'anything else?', 'are you sure?', 'what does our policy say?',
+    'they paid yesterday', 'what changed?',
+  ]
+
+  let result = null
+  for (let index = 0; index < 30; index += 1) {
+    result = await durable.runConversationTurn({
+      tenantId: TENANT,
+      conversationId: 'conversation-cp6-long',
+      turnId: `cp6-long-${index}`,
+      text: prompts[index % prompts.length],
+      initialInvoiceId: index === 0 ? 'invoice-1844' : null,
+      mode: index % 2 === 0 ? 'normal' : 'deep',
+      now: new Date(Date.UTC(2026, 7, 28, index)),
+    })
+  }
+
+  const memory = result.caseState.memory
+  assert.equal(memory.recentTurns.length, 12)
+  assert.equal(memory.compactedTurnCount, 18)
+  assert.ok(memory.recentTopics.length <= 8)
+  assert.equal(memory.recentSubjects.at(-1).invoiceRef.id, 'invoice-1844')
+  assert.equal(memory.boundaries.storesTranscript, false)
+  assert.equal(memory.boundaries.isEvidence, false)
+  assert.equal(memory.boundaries.canOverrideLiveReads, false)
+  assert.equal(memory.boundaries.canGrantAuthority, false)
+
+  const persisted = JSON.stringify(persistence.snapshot())
+  assert.doesNotMatch(persisted, /they paid yesterday|what does our policy say|"fresh":true/i)
+  assert.doesNotMatch(JSON.stringify(memory), /canonicalFacts|authoritySnapshot|toolOutput/i)
+})
+
+test('G7-CP6 unresolved reference survives turn-window compaction without becoming truth', async () => {
+  const persistence = makeMemoryPersistence()
+  const durable = createAskDwDurableConversationRuntime({
+    persistence,
+    conversationRuntime: {
+      async runConversationTurn({ caseState, turnId }) {
+        if (turnId === 'cp6-unresolved-0') {
+          return {
+            status: 'NEEDS_INVOICE_RESOLUTION', caseState,
+            resolver: { status: 'NEEDS_INVOICE_RESOLUTION', blocked: true },
+          }
+        }
+        return { status: 'ANSWERED', caseState, resolver: null }
+      },
+    },
+  })
+
+  let result = null
+  for (let index = 0; index < 20; index += 1) {
+    result = await durable.runConversationTurn({
+      tenantId: TENANT,
+      conversationId: 'conversation-cp6-unresolved',
+      turnId: `cp6-unresolved-${index}`,
+      text: index === 0 ? 'what about Anthony?' : 'okay',
+      initialInvoiceId: index === 0 ? 'invoice-1844' : null,
+      now: new Date(`2026-08-29T${String(index).padStart(2, '0')}:00:00.000Z`),
+    })
+  }
+
+  assert.equal(result.caseState.memory.recentTurns.length, 12)
+  assert.equal(result.caseState.memory.unresolvedReference.status, 'NEEDS_INVOICE_RESOLUTION')
+  assert.equal(result.caseState.memory.unresolvedReference.recordedAtTurnId, 'cp6-unresolved-0')
+  assert.equal(result.caseState.memory.unresolvedReference.invoiceRef, undefined)
+  assert.equal(result.caseState.memory.boundaries.isEvidence, false)
+})
+
+test('G7-CP6 pre-memory V0 state upgrades in place without a migration or truth copy', async () => {
+  const legacy = clone(withInvoices(initialState({ conversationId: 'conversation-cp6-legacy' })))
+  delete legacy.memory
+  const persistence = makeMemoryPersistence(legacy)
+  const durable = createAskDwDurableConversationRuntime({
+    persistence,
+    conversationRuntime: {
+      async runConversationTurn({ caseState }) {
+        return { status: 'ANSWERED', caseState, resolver: null }
+      },
+    },
+  })
+
+  const result = await durable.runConversationTurn({
+    tenantId: TENANT,
+    conversationId: 'conversation-cp6-legacy',
+    turnId: 'cp6-legacy-turn',
+    text: 'why?',
+    now: new Date('2026-08-30T12:00:00.000Z'),
+  })
+
+  assert.equal(result.caseState.schemaVersion, 'ASK_DW_CASE_STATE_V0')
+  assert.equal(result.caseState.memory.recentTurns[0].turnType, 'FOLLOW_UP')
+  assert.equal(result.caseState.memory.recentSubjects[0].invoiceRef.id, 'invoice-1844')
+  assert.equal(result.durability.persisted, true)
+})
+
+test('G7-CP6 a nickname event cannot bind an invented reference outside current focus', () => {
+  const state = withInvoices(initialState({ conversationId: 'conversation-cp6-nickname-guard' }))
+  assert.throws(() => apply(
+    state,
+    ASK_DW_CASE_EVENT.RECORD_CONVERSATION_MEMORY,
+    {
+      turnType: 'FOLLOW_UP', mode: 'normal', referenceResolution: 'UNCHANGED',
+      nickname: { term: 'invented', ref: { kind: 'client', id: 'not-current' } },
+    },
+    'cp6-nickname-guard',
+    '2026-08-30T13:00:00.000Z',
+  ), /must target the current verified focus/)
+})
+
+test('G7-CP6 memory rejects raw model labels instead of persisting free-form claims', () => {
+  const state = withInvoices(initialState({ conversationId: 'conversation-cp6-label-guard' }))
+  assert.throws(() => apply(
+    state,
+    ASK_DW_CASE_EVENT.RECORD_CONVERSATION_MEMORY,
+    {
+      turnType: 'THE_FOUNDER_CONFIRMED_PAYMENT',
+      mode: 'normal',
+      referenceResolution: 'UNCHANGED',
+      resolutionStatus: 'THE_INVOICE_IS_PAID',
+    },
+    'cp6-label-guard',
+    '2026-08-30T14:00:00.000Z',
+  ), /turn type invalid/)
+})
+
+test('G7-CP6 memory transitions retain the case-state tenant boundary', () => {
+  const state = withInvoices(initialState({ conversationId: 'conversation-cp6-tenant-guard' }))
+  assert.throws(() => applyAskDwCaseEvent(state, {
+    type: ASK_DW_CASE_EVENT.RECORD_CONVERSATION_MEMORY,
+    payload: { turnType: 'FOLLOW_UP', mode: 'normal', referenceResolution: 'UNCHANGED' },
+    tenantId: OTHER,
+    expectedVersion: state.version,
+    turnId: 'cp6-tenant-guard',
+    at: '2026-08-30T15:00:00.000Z',
+  }), /cross-tenant case event blocked/)
 })

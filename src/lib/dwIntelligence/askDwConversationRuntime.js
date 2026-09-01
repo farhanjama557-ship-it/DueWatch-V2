@@ -5,6 +5,7 @@ import {
   assertAskDwActionReadyForExecutionBoundary,
   getAskDwActiveAction,
   getAskDwActiveCase,
+  getAskDwConversationMemory,
   validateAskDwCaseState,
 } from './askDwCaseState.js'
 
@@ -175,6 +176,7 @@ export function buildAskDwCaseContext(state) {
     openQuestions: clone(current.openQuestions || []),
     recommendationRef: clone(current.recommendationRef),
     referenceBindings: clone(current.referenceBindings || []),
+    memory: clone(getAskDwConversationMemory(state)),
     presentation: clone(state.presentation),
     activeAction: activeActionSummary(action),
     boundaries: {

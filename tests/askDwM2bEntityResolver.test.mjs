@@ -12,6 +12,7 @@ import {
 import {
   createAskDwCaseAwareRuntime,
 } from '../src/lib/dwIntelligence/askDwConversationRuntime.js'
+import { recordAskDwConversationMemory } from '../src/lib/dwIntelligence/askDwConversationMemory.js'
 import {
   ASK_DW_ENTITY_RESOLUTION_STATUS,
   ASK_DW_ENTITY_RESOLVER_PROFILE,
@@ -887,4 +888,76 @@ test('G7-CP5 proposed resolver event cannot invent an invoice outside verified c
     }],
   }), /resolver proposal was not independently verified/)
   assert.equal(liveCalls.length, 1)
+})
+
+test('G7-CP6 a casual nickname returns to its verified client but cannot guess among invoices', async () => {
+  const supabase = makeSupabase()
+  const liveCalls = []
+  const { runtime } = runtimeFor(supabase, liveCalls)
+  const anthony = await runtime.runTurn({
+    tenantId: TENANT, caseState: initialState(), turnId: 'cp6-name-base',
+    text: 'Check INV-1902', now: new Date('2026-08-31T10:00:00.000Z'),
+  })
+  const named = recordAskDwConversationMemory({
+    state: anthony.caseState,
+    tenantId: TENANT,
+    turnId: 'cp6-name-declare',
+    text: 'call them blue accounts',
+    mode: 'normal',
+    at: '2026-08-31T10:01:00.000Z',
+    result: { status: 'ANSWERED', resolver: { status: 'RESOLVED', blocked: false } },
+  })
+  const sarah = await runtime.runTurn({
+    tenantId: TENANT, caseState: named, turnId: 'cp6-name-switch',
+    text: 'what about Sarah?', now: new Date('2026-08-31T10:02:00.000Z'),
+  })
+  const back = await runtime.runTurn({
+    tenantId: TENANT, caseState: sarah.caseState, turnId: 'cp6-name-use',
+    text: 'what about blue accounts?', now: new Date('2026-08-31T10:03:00.000Z'),
+  })
+
+  assert.equal(named.memory.conversationalNicknames[0].term, 'blue accounts')
+  assert.equal(named.memory.conversationalNicknames[0].ref.id, 'client-anthony')
+  assert.equal(back.status, ASK_DW_ENTITY_RESOLUTION_STATUS.NEEDS_INVOICE_RESOLUTION)
+  assert.equal(back.caseContext.focus.clientRef.id, 'client-anthony')
+  assert.equal(back.caseContext.focus.invoiceRef, null)
+  assert.deepEqual(back.caseContext.candidates.invoiceRefs.map((ref) => ref.id), [
+    'invoice-anthony-1844', 'invoice-anthony-1902',
+  ])
+  assert.equal(liveCalls.length, 2)
+})
+
+test('G7-CP6 a deleted nickname target is refused after tenant-scoped live revalidation', async () => {
+  const data = baseData()
+  const supabase = makeSupabase({ data })
+  const liveCalls = []
+  const { runtime } = runtimeFor(supabase, liveCalls)
+  const anthony = await runtime.runTurn({
+    tenantId: TENANT, caseState: initialState(), turnId: 'cp6-stale-name-base',
+    text: 'Check INV-1902', now: new Date('2026-08-31T11:00:00.000Z'),
+  })
+  const named = recordAskDwConversationMemory({
+    state: anthony.caseState,
+    tenantId: TENANT,
+    turnId: 'cp6-stale-name-declare',
+    text: 'when I say blue accounts I mean them',
+    mode: 'normal',
+    at: '2026-08-31T11:01:00.000Z',
+    result: { status: 'ANSWERED', resolver: { status: 'RESOLVED', blocked: false } },
+  })
+  const sarah = await runtime.runTurn({
+    tenantId: TENANT, caseState: named, turnId: 'cp6-stale-name-switch',
+    text: 'what about Sarah?', now: new Date('2026-08-31T11:02:00.000Z'),
+  })
+  data.clients = data.clients.filter((row) => row.id !== 'client-anthony')
+  const stale = await runtime.runTurn({
+    tenantId: TENANT, caseState: sarah.caseState, turnId: 'cp6-stale-name-use',
+    text: 'what about blue accounts?', now: new Date('2026-08-31T11:03:00.000Z'),
+  })
+
+  assert.equal(stale.status, ASK_DW_ENTITY_RESOLUTION_STATUS.CLIENT_NOT_FOUND)
+  assert.equal(stale.caseContext.focus.clientRef.id, 'client-sarah')
+  assert.notEqual(stale.caseContext.focus.clientRef.id, 'client-anthony')
+  assert.match(stale.reason, /no longer available/i)
+  assert.equal(liveCalls.length, 2)
 })

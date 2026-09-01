@@ -7,6 +7,11 @@ import {
   createAskDwControlledConversationRuntime,
   createAskDwControlledInvoiceCaseState,
 } from './askDwControlledConversationRuntime.js'
+import { buildAskDwCaseContext } from './askDwConversationRuntime.js'
+import {
+  ASK_DW_CONVERSATION_MEMORY_PROFILE,
+  recordAskDwConversationMemory,
+} from './askDwConversationMemory.js'
 import {
   ASK_DW_ENTITY_RESOLVER_PROFILE,
   createAskDwEntityResolver,
@@ -22,6 +27,7 @@ export const ASK_DW_DURABLE_CONVERSATION_PROFILE = Object.freeze({
   id: 'ASK_DW_DURABLE_CONVERSATION_V0',
   durableCaseState: true,
   storesTranscript: false,
+  storesBoundedStructuredMemory: true,
   storesReferenceWorkflowStateOnly: true,
   canonicalFinancialTruthStored: false,
   rawToolOutputsStored: false,
@@ -225,15 +231,31 @@ export function createAskDwDurableConversationRuntime({
       throw new Error('Ask DW durable conversation runtime returned wrong scope')
     }
 
+    const rememberedState = recordAskDwConversationMemory({
+      state: result.caseState,
+      tenantId: tenant,
+      turnId: turn,
+      text,
+      mode,
+      at,
+      result,
+    })
+    validateAskDwCaseState(rememberedState)
+    const rememberedResult = {
+      ...clone(result),
+      caseState: rememberedState,
+      caseContext: buildAskDwCaseContext(rememberedState),
+    }
+
     let persistenceReceipt = null
-    const mustPersist = !loaded || result.caseState.version !== priorVersion
+    const mustPersist = !loaded || rememberedState.version !== priorVersion
 
     if (mustPersist) {
       try {
         persistenceReceipt = await persistence.persist({
           tenantId: tenant,
           expectedVersion: loaded ? priorVersion : null,
-          state: result.caseState,
+          state: rememberedState,
         })
       } catch (error) {
         if (
@@ -256,12 +278,12 @@ export function createAskDwDurableConversationRuntime({
     }
 
     return freeze({
-      ...clone(result),
+      ...clone(rememberedResult),
       durability: freeze({
         loaded: Boolean(loaded),
         persisted: mustPersist,
         loadedVersion: loaded?.state?.version ?? null,
-        persistedVersion: persistenceReceipt?.stateVersion ?? result.caseState.version,
+        persistedVersion: persistenceReceipt?.stateVersion ?? rememberedState.version,
         persistenceReceipt,
         canonicalFinancialTruthPersisted: false,
         rawToolOutputsPersisted: false,
@@ -273,6 +295,7 @@ export function createAskDwDurableConversationRuntime({
 
   return freeze({
     profile: ASK_DW_DURABLE_CONVERSATION_PROFILE,
+    memoryProfile: ASK_DW_CONVERSATION_MEMORY_PROFILE,
     persistenceProfile: persistence.profile ?? null,
     runConversationTurn,
   })

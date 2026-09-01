@@ -21,6 +21,7 @@ export const ASK_DW_CASE_EVENT = Object.freeze({
   CANCEL_ACTION: 'CANCEL_ACTION',
   CONFIRM_ACTION_REFERENCE: 'CONFIRM_ACTION_REFERENCE',
   SET_PRESENTATION: 'SET_PRESENTATION',
+  RECORD_CONVERSATION_MEMORY: 'RECORD_CONVERSATION_MEMORY',
   CLOSE_CASE: 'CLOSE_CASE',
   EXPIRE_CONVERSATION: 'EXPIRE_CONVERSATION',
 })
@@ -63,6 +64,42 @@ const MAX_REFERENCE_BINDINGS = 20
 const MAX_INVOICE_CANDIDATES = 20
 const MAX_EVIDENCE_REFS = 50
 const MAX_OPEN_QUESTIONS = 10
+const MAX_MEMORY_TURNS = 12
+const MAX_MEMORY_TOPICS = 8
+const MAX_MEMORY_SUBJECTS = 6
+const MAX_CONVERSATIONAL_NICKNAMES = 12
+const MAX_CONVERSATIONAL_NICKNAME_LENGTH = 40
+const FORBIDDEN_CONVERSATIONAL_NICKNAME_TOKENS = new Set([
+  'act', 'authority', 'authorized', 'balance', 'canonical', 'contract', 'execute',
+  'grant', 'invoice', 'paid', 'payment', 'permission', 'policy', 'send', 'truth',
+  'writeoff',
+])
+
+const MEMORY_RESOLUTION_STATES = new Set(['UNCHANGED', 'RESOLVED', 'UNRESOLVED'])
+const MEMORY_TURN_TYPES = new Set([
+  'GREETING', 'ACKNOWLEDGEMENT', 'DAILY_PRIORITIES', 'PORTFOLIO_STATUS',
+  'NEEDS_FOUNDER', 'WHAT_CHANGED', 'FOLLOW_UP', 'EVIDENCE_REQUEST',
+  'CORRECTION', 'CHALLENGE', 'COMPANY_BRAIN_QUESTION', 'AUTHORITY_QUESTION',
+  'AR_JOB',
+])
+const MEMORY_CORRECTION_KINDS = new Set([
+  'REFERENT', 'NEW_EVIDENCE', 'CHALLENGE', 'UNDERSTANDING',
+])
+const MEMORY_RESOLUTION_STATUSES = new Set([
+  'ANSWERED', 'CONTROLLED', 'RESOLVED', 'RESOLVED_WITH_LIMITATION', 'NOOP',
+  'NEEDS_CLIENT_RESOLUTION', 'CLIENT_NOT_FOUND', 'CLIENT_HAS_NO_INVOICES',
+  'NEEDS_INVOICE_RESOLUTION', 'INVOICE_NOT_FOUND', 'NEEDS_REFERENCE_RESOLUTION',
+])
+
+const CONVERSATION_MEMORY_BOUNDARIES = Object.freeze({
+  storesTranscript: false,
+  isEvidence: false,
+  canOverrideLiveReads: false,
+  canMutateG6Context: false,
+  canGrantAuthority: false,
+  founderNicknamesConversationScoped: true,
+  vocabularySource: 'READ_ONLY_G6_CONTEXT_ONLY',
+})
 
 const FORBIDDEN_DURABLE_KEYS = new Set([
   'amount',
@@ -108,6 +145,27 @@ function optionalString(value) {
   if (value == null) return null
   const normalized = String(value).trim()
   return normalized || null
+}
+
+function boundedString(value, name, maxLength) {
+  const normalized = requiredId(value, name)
+  if (normalized.length > maxLength) throw new Error(`${name} too long`)
+  return normalized
+}
+
+export function normalizeAskDwConversationNicknameTerm(value) {
+  const term = String(value || '').trim().toLowerCase().replace(/\s+/g, ' ')
+  if (!term || term.length > MAX_CONVERSATIONAL_NICKNAME_LENGTH) {
+    throw new Error('conversation nickname invalid')
+  }
+  const tokens = term.split(' ')
+  if (tokens.length > 4 || tokens.some((token) =>
+    !/^[a-z][a-z'-]*$/.test(token) ||
+    FORBIDDEN_CONVERSATIONAL_NICKNAME_TOKENS.has(token))) {
+    throw new Error('conversation nickname invalid')
+  }
+  if (term.includes('write off')) throw new Error('conversation nickname invalid')
+  return term
 }
 
 function normalizeRef(ref, expectedKind = null) {
@@ -175,6 +233,23 @@ function makeCase({ caseId, turnId, at }) {
     actions: [],
     activeActionId: null,
   }
+}
+
+function makeConversationMemory() {
+  return {
+    recentTurns: [],
+    recentTopics: [],
+    recentSubjects: [],
+    unresolvedReference: null,
+    conversationalNicknames: [],
+    compactedTurnCount: 0,
+    boundaries: clone(CONVERSATION_MEMORY_BOUNDARIES),
+  }
+}
+
+function ensureConversationMemory(state) {
+  if (!state.memory) state.memory = makeConversationMemory()
+  return state.memory
 }
 
 function activeCase(state) {
@@ -303,6 +378,82 @@ function validateState(state) {
     }
   }
 
+  if (state.memory != null) {
+    const memory = state.memory
+    if (!Array.isArray(memory.recentTurns) || memory.recentTurns.length > MAX_MEMORY_TURNS) {
+      throw new Error('conversation memory turn window invalid')
+    }
+    if (!Array.isArray(memory.recentTopics) || memory.recentTopics.length > MAX_MEMORY_TOPICS) {
+      throw new Error('conversation memory topic window invalid')
+    }
+    if (!Array.isArray(memory.recentSubjects) || memory.recentSubjects.length > MAX_MEMORY_SUBJECTS) {
+      throw new Error('conversation memory subject window invalid')
+    }
+    if (!Array.isArray(memory.conversationalNicknames) ||
+        memory.conversationalNicknames.length > MAX_CONVERSATIONAL_NICKNAMES) {
+      throw new Error('conversation nickname window invalid')
+    }
+    if (!Number.isInteger(memory.compactedTurnCount) || memory.compactedTurnCount < 0) {
+      throw new Error('conversation memory compacted turn count invalid')
+    }
+    for (const item of memory.recentTurns) {
+      requiredId(item.turnId, 'conversation memory turnId')
+      requiredId(item.caseId, 'conversation memory turn caseId')
+      if (!MEMORY_TURN_TYPES.has(requiredId(item.turnType, 'conversation memory turnType'))) {
+        throw new Error('conversation memory turn type invalid')
+      }
+      if (item.correctionKind != null && !MEMORY_CORRECTION_KINDS.has(item.correctionKind)) {
+        throw new Error('conversation memory correction kind invalid')
+      }
+      if (item.resolutionStatus != null && !MEMORY_RESOLUTION_STATUSES.has(item.resolutionStatus)) {
+        throw new Error('conversation memory resolution status invalid')
+      }
+      if (!['normal', 'deep'].includes(item.mode)) throw new Error('conversation memory mode invalid')
+    }
+    for (const item of memory.recentTopics) {
+      if (!MEMORY_TURN_TYPES.has(requiredId(item.topic, 'conversation memory topic'))) {
+        throw new Error('conversation memory topic invalid')
+      }
+      requiredId(item.lastTurnId, 'conversation memory topic turnId')
+    }
+    for (const item of memory.recentSubjects) {
+      requiredId(item.caseId, 'conversation memory subject caseId')
+      requiredId(item.lastTurnId, 'conversation memory subject turnId')
+      if (item.clientRef) normalizeRef(item.clientRef, 'client')
+      if (item.invoiceRef) normalizeRef(item.invoiceRef, 'invoice')
+    }
+    for (const item of memory.conversationalNicknames) {
+      if (normalizeAskDwConversationNicknameTerm(item.term) !== item.term) {
+        throw new Error('conversation nickname normalization invalid')
+      }
+      normalizeRef(item.ref)
+      requiredId(item.createdAtTurnId, 'conversation nickname created turnId')
+      requiredId(item.lastUsedAtTurnId, 'conversation nickname last used turnId')
+    }
+    if (memory.unresolvedReference) {
+      if (!MEMORY_RESOLUTION_STATUSES.has(requiredId(
+        memory.unresolvedReference.status,
+        'unresolved reference status',
+      ))) {
+        throw new Error('unresolved reference status invalid')
+      }
+      requiredId(memory.unresolvedReference.caseId, 'unresolved reference caseId')
+      requiredId(memory.unresolvedReference.recordedAtTurnId, 'unresolved reference turnId')
+      if (memory.unresolvedReference.clientRef) {
+        normalizeRef(memory.unresolvedReference.clientRef, 'client')
+      }
+      normalizeRefs(memory.unresolvedReference.candidateInvoiceRefs || [], 'invoice', MAX_INVOICE_CANDIDATES)
+    }
+    const boundaryKeys = Object.keys(memory.boundaries || {}).sort()
+    const expectedBoundaryKeys = Object.keys(CONVERSATION_MEMORY_BOUNDARIES).sort()
+    if (boundaryKeys.length !== expectedBoundaryKeys.length ||
+        boundaryKeys.some((key, index) => key !== expectedBoundaryKeys[index]) ||
+        expectedBoundaryKeys.some((key) =>
+          memory.boundaries[key] !== CONVERSATION_MEMORY_BOUNDARIES[key])) {
+      throw new Error('conversation memory boundaries invalid')
+    }
+  }
+
   assertNoForbiddenDurableKeys(state)
   return true
 }
@@ -344,6 +495,7 @@ export function createAskDwCaseState({
       tone: 'CONVERSATIONAL',
       detail: 'STANDARD',
     },
+    memory: makeConversationMemory(),
     boundaries: {
       canonicalFinancialTruthStored: false,
       rawToolOutputsStored: false,
@@ -399,6 +551,108 @@ function performEvent(next, event) {
   if (type === ASK_DW_CASE_EVENT.SET_PRESENTATION) {
     if (payload.tone != null) next.presentation.tone = requiredId(payload.tone, 'presentation tone')
     if (payload.detail != null) next.presentation.detail = requiredId(payload.detail, 'presentation detail')
+    return
+  }
+
+  if (type === ASK_DW_CASE_EVENT.RECORD_CONVERSATION_MEMORY) {
+    const memory = ensureConversationMemory(next)
+    const caseState = activeCase(next)
+    const turnType = boundedString(payload.turnType, 'conversation memory turnType', 80)
+    if (!MEMORY_TURN_TYPES.has(turnType)) throw new Error('conversation memory turn type invalid')
+    const mode = requiredId(payload.mode, 'conversation memory mode').toLowerCase()
+    if (!['normal', 'deep'].includes(mode)) throw new Error('conversation memory mode invalid')
+    const resolutionState = requiredId(
+      payload.referenceResolution || 'UNCHANGED',
+      'conversation memory reference resolution',
+    )
+    if (!MEMORY_RESOLUTION_STATES.has(resolutionState)) {
+      throw new Error('conversation memory reference resolution invalid')
+    }
+
+    const correctionKind = optionalString(payload.correctionKind)
+    if (correctionKind && !MEMORY_CORRECTION_KINDS.has(correctionKind)) {
+      throw new Error('conversation memory correction kind invalid')
+    }
+    const resolutionStatus = optionalString(payload.resolutionStatus)
+    if (resolutionStatus && !MEMORY_RESOLUTION_STATUSES.has(resolutionStatus)) {
+      throw new Error('conversation memory resolution status invalid')
+    }
+
+    const turnRecord = {
+      turnId,
+      turnType,
+      correctionKind,
+      mode,
+      resolutionStatus,
+      caseId: next.activeCaseId,
+    }
+    memory.recentTurns.push(turnRecord)
+    if (memory.recentTurns.length > MAX_MEMORY_TURNS) {
+      const overflow = memory.recentTurns.length - MAX_MEMORY_TURNS
+      memory.recentTurns = memory.recentTurns.slice(-MAX_MEMORY_TURNS)
+      memory.compactedTurnCount += overflow
+    }
+
+    memory.recentTopics = [
+      ...memory.recentTopics.filter((item) => item.topic !== turnType),
+      { topic: turnType, lastTurnId: turnId },
+    ].slice(-MAX_MEMORY_TOPICS)
+
+    if (caseState.focus.clientRef || caseState.focus.invoiceRef) {
+      const subjectKey = [
+        caseState.focus.clientRef?.id || '',
+        caseState.focus.invoiceRef?.id || '',
+      ].join(':')
+      memory.recentSubjects = [
+        ...memory.recentSubjects.filter((item) => [
+          item.clientRef?.id || '',
+          item.invoiceRef?.id || '',
+        ].join(':') !== subjectKey),
+        {
+          caseId: next.activeCaseId,
+          clientRef: caseState.focus.clientRef ? normalizeRef(caseState.focus.clientRef, 'client') : null,
+          invoiceRef: caseState.focus.invoiceRef ? normalizeRef(caseState.focus.invoiceRef, 'invoice') : null,
+          lastTurnId: turnId,
+        },
+      ].slice(-MAX_MEMORY_SUBJECTS)
+    }
+
+    if (resolutionState === 'UNRESOLVED') {
+      memory.unresolvedReference = {
+        status: requiredId(resolutionStatus, 'unresolved reference status'),
+        caseId: next.activeCaseId,
+        clientRef: caseState.focus.clientRef ? normalizeRef(caseState.focus.clientRef, 'client') : null,
+        candidateInvoiceRefs: [...normalizeRefs(
+          caseState.candidates.invoiceRefs || [],
+          'invoice',
+          MAX_INVOICE_CANDIDATES,
+        )],
+        recordedAtTurnId: turnId,
+      }
+    } else if (resolutionState === 'RESOLVED') {
+      memory.unresolvedReference = null
+    }
+
+    if (payload.nickname) {
+      const term = normalizeAskDwConversationNicknameTerm(payload.nickname.term)
+      const nicknameRef = normalizeRef(payload.nickname.ref)
+      const matchesCurrentFocus = sameRef(nicknameRef, caseState.focus.clientRef) ||
+        sameRef(nicknameRef, caseState.focus.invoiceRef)
+      if (!matchesCurrentFocus) {
+        throw new Error('conversation nickname must target the current verified focus')
+      }
+      const existing = memory.conversationalNicknames.find((item) => item.term === term)
+      memory.conversationalNicknames = [
+        ...memory.conversationalNicknames.filter((item) => item.term !== term),
+        {
+          term,
+          ref: nicknameRef,
+          createdAtTurnId: existing?.createdAtTurnId || turnId,
+          lastUsedAtTurnId: turnId,
+        },
+      ].slice(-MAX_CONVERSATIONAL_NICKNAMES)
+      upsertReferenceBinding(caseState, { term, ref: nicknameRef, turnId })
+    }
     return
   }
 
@@ -725,6 +979,11 @@ export function getAskDwActiveCase(state) {
 export function getAskDwActiveAction(state) {
   const caseState = getAskDwActiveCase(state)
   return activeAction(caseState)
+}
+
+export function getAskDwConversationMemory(state) {
+  validateState(state)
+  return freeze(clone(state.memory || makeConversationMemory()))
 }
 
 export function resolveAskDwReference(state, term) {
