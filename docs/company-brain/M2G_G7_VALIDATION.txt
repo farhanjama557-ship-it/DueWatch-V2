@@ -1,0 +1,294 @@
+M2G — COMPANY BRAIN BOOTSTRAP
+G7 — ASK DW × COMPANY BRAIN
+VALIDATION RECORD
+
+==================================================
+1. GATE IDENTITY
+==================================================
+
+Gate:              G7 — Ask DW × Company Brain conversational intelligence
+Branch:            m2g/company-brain-bootstrap-g7
+Starting SHA:      20b7fc3358c9f57aa78c3c00584781a05b0e4d1f  (frozen G6 head)
+Checkpoint 1:      a7ac269a2e53c37573f55d48a2008b12ab6988bb
+Checkpoint 2:      933d3c2ad9dbd7a1435c1f8af85fe1668802d11d
+Checkpoint 3:      2aee5c809f4ada9e89aebb9a5aa6eeff650fb5ae
+Checkpoint 4:      <G7_CP4_SHA>
+
+Preconditions verified before editing:
+  branch/HEAD = 20b7fc3358c9f57aa78c3c00584781a05b0e4d1f   OK
+  worktree    = clean                                       OK
+  ancestry    = G5 9a60ec0, G6 5315103 / e2cb012, corrected G3 b653ffb, G4 14a8c4f
+                all confirmed ancestors of HEAD             OK
+The branch m2g/company-brain-bootstrap-g7 did not exist and was created from
+that exact SHA, per the standing branch instruction. No history was rewritten
+and nothing was force-pushed.
+
+STATUS: this is a checkpointed work-in-progress record, not a freeze claim.
+Section 12 states exactly what remains.
+
+==================================================
+2. FILES CHANGED
+==================================================
+
+Added (all new, G7-owned):
+  src/lib/dwIntelligence/askDwConversationalTurn.js       turn classification
+  src/lib/dwIntelligence/askDwCompanyBrainContext.js      G6 read seam -> conversation
+  src/lib/dwIntelligence/askDwDailyPriorities.js          deterministic prioritisation
+  src/lib/dwIntelligence/askDwCharacterSpec.js            DW voice + detectors
+  src/lib/dwIntelligence/askDwGroundingGuard.js           deterministic grounding
+  src/lib/dwIntelligence/askDwConversationBenchmark.js    benchmark corpus
+  tests/askDwG7CompanyBrainContext.test.mjs               24 tests
+  tests/askDwG7ConversationIntegration.test.mjs           14 tests
+  tests/askDwG7CharacterAndGrounding.test.mjs             22 tests
+  tests/askDwG7Benchmark.test.mjs                         12 tests
+
+Modified:
+  src/lib/dwIntelligence/askDwOrchestrator.js   conversation layer + grounding guard
+
+NOT modified: askDwCaseState, askDwConversationRuntime, askDwIntent,
+askDwModes, askDwRuntime, askDwEntityResolver, askDwOrchestratorDefault, the
+persistence modules, the edge function, or any G0-G6 artifact.
+
+==================================================
+3. ARCHITECTURE
+==================================================
+
+The existing orchestration spine is preserved exactly: deterministic core ->
+PLAN -> bounded read-only tools -> SYNTHESIZE -> independent VERIFY -> truth
+lock -> fallback. G7 adds a conversation layer beside it.
+
+  founder text
+    -> classifyAskDwConversationalTurn   (above the AR job taxonomy)
+    -> buildAskDwCompanyBrainContext     (read-only projection of the G6 model)
+    -> buildAskDwDailyPriorities         (composed from existing projections)
+    -> PLAN / SYNTHESIZE / VERIFY        (all three now receive the layer)
+    -> hardenVerification                (existing tool-citation check)
+    -> enforceAskDwGrounding             (new deterministic guard)
+    -> answer or existing fallback
+
+Turn classification sits ABOVE EXPLAIN/INVESTIGATE/PREDICT/DECIDE/ACT. That
+taxonomy is unchanged and still owns AR work: anything not recognised as
+conversation falls through to classifyAskDwIntent, which remains authoritative.
+Verified explicitly by G7-T5, which asserts the existing classifier keeps its
+own judgement even where G7 might have "improved" it.
+
+==================================================
+4. EXISTING COMPONENTS REUSED, NOT REPLACED
+==================================================
+
+  createAskDwOrchestrator      extended in place
+  classifyAskDwIntent          still owns AR job classification
+  buildAskDwModePolicy         Normal/Deep policy untouched
+  askDwCaseState / caseContext untouched, and deliberately not extended
+  projectNeedsYouReadModel     still owns "which cases need the founder"
+  hardenVerification           still runs, before the new guard
+  G6 buildFounderReviewReadModel and its read seams  consumed, not reimplemented
+
+==================================================
+5. G6 SEAMS CONSUMED
+==================================================
+
+buildAskDwCompanyBrainContext consumes a frozen
+COMPANY_BRAIN_FOUNDER_REVIEW_READ_MODEL_V0 and projects: founder-confirmed
+understanding, founder corrections (an EDITED item's reviewed value is what DW
+states, not DW's original proposal), unresolved conflicts with every competing
+side preserved, roles/delegations, pending founder decisions,
+changed-since-review, source revocation, and the G5 authority projection with
+every dimension named.
+
+G7 adds no Company Brain semantics and reinterprets nothing into new policy or
+permission.
+
+==================================================
+6. COMPANY BRAIN PACKET CONTRACT
+==================================================
+
+The Company Brain context is a SEPARATE typed context from caseContext, by
+design. caseContext deliberately excludes canonical financial facts and
+authority so a conversational reference can never carry either; stuffing
+Company Brain into it would quietly break that split. The new context keeps its
+own boundary and is inspected before it can reach a model: a canonical-money
+field (balance, amount_paid, due_date, canonicalFacts, arState) or a mutable
+authority field raises rather than being stripped silently (G7-C4).
+
+Its boundaries are all false except readOnly, asserted field-by-field (G7-C6):
+isCanonicalFinancialTruth, canMutateCompanyBrain, canGrantAuthority,
+canRevokeAuthority, canExecute, conversationCanMutate,
+understandingApprovalIsAuthority, humanRoleIsDwAuthority,
+repeatedApprovalIsAuthority, modelConfidenceIsAuthority,
+providerCapabilityIsAuthority, usualBehaviourIsPolicy.
+
+A failed Company Brain read reports available:false with reason
+COMPANY_BRAIN_READ_UNAVAILABLE. It never answers as though the Company Brain
+were empty — those are different answers and only one is honest (G7-C8), and
+asserting Company Brain content while that read failed is blocked (G7-G7).
+
+==================================================
+7. CONVERSATION BEHAVIOUR
+==================================================
+
+Turn types: GREETING, ACKNOWLEDGEMENT, DAILY_PRIORITIES, PORTFOLIO_STATUS,
+NEEDS_FOUNDER, WHAT_CHANGED, FOLLOW_UP, EVIDENCE_REQUEST, CORRECTION,
+CHALLENGE, COMPANY_BRAIN_QUESTION, AUTHORITY_QUESTION, AR_JOB.
+
+Corrections are split into REFERENT / NEW_EVIDENCE / CHALLENGE because they are
+not the same thing. A challenge is pressure; an assertion in chat is flagged
+requiresEvidencePath and is not admitted evidence.
+
+"What should I do today?" is answered from buildAskDwDailyPriorities, which
+composes the canonical needs-you projection, the G6 read model and the G5
+authority projection into a fixed, reviewable order:
+  FOUNDER_DECISION_REQUIRED > UNRESOLVED_CONFLICT > SUPPORTING_SOURCE_REVOKED >
+  CHANGED_SINCE_REVIEW > BLOCKED_ON_MISSING_AUTHORITY > NEEDS_FOUNDER_ANSWER >
+  AWAITING_REVIEW
+Every entry carries the exact reason it ranked, so "why is this first?" has a
+real answer. The model does not choose the order (boundaries.modelChoseOrder is
+false). A degraded read is never smoothed into "nothing needs you": that
+sentence is only sayable when everything deciding it was readable (G7-P3).
+
+==================================================
+8. NORMAL / DEEP
+==================================================
+
+Not rebuilt. buildAskDwModePolicy, the correctness floor, the action floor, the
+deep passes and compareAskDwModes are untouched. G7 reads
+core.policy.internalDepth only to select a response SHAPE (sentence budget and
+whether evidence is included by default). Depth changes wording, never the
+truth floor, never authority, and never the hard-safety outcome. Deep is not
+more permission; Normal is not weaker safety.
+
+==================================================
+9. CHARACTER, GROUNDING AND SYCOPHANCY
+==================================================
+
+askDwCharacterSpec.js is the single definition of DW's voice, so runtime and
+tests cannot drift. Filler is measured as a RATE, not banned outright: one
+warranted "in conclusion" is not a regression, a persona built from filler is
+(G7-K5). Sycophantic reversal language and repeated openers are detected.
+
+enforceAskDwGrounding runs after the existing citation check and only ever
+downgrades a verdict (G7-G10). It blocks, with no model involved:
+  invented amounts and identifiers        UNGROUNDED_AMOUNT / _IDENTIFIER
+  any claim an action was performed       CLAIMED_EXECUTION
+  authority claimed with no grant         CLAIMED_AUTHORITY_WITHOUT_GRANT
+  "they paid" without canonical support   UNSUPPORTED_PAYMENT_CLAIM
+  prose deciding an undecided conflict    RESOLVED_AN_UNRESOLVED_CONFLICT
+  Company Brain claims while read down    COMPANY_BRAIN_CLAIM_UNAVAILABLE
+  reversal under pressure, no evidence    SYCOPHANTIC_REVERSAL
+
+Sycophancy: tone may adapt, facts may not. Ten consecutive pushes do not soften
+the guard (G7-G9), and four separate pushes inside the payment-pressure
+conversation are each still blocked (G7-B7).
+
+==================================================
+10. MISMATCH FOUND AND RESPECTED
+==================================================
+
+The brief asks for the edge function's language layer to be improved. Both
+supabase/functions/_shared/askDwOpenAiContract.js and
+supabase/functions/ask-dw-model/index.ts are HASH-LOCKED M2D replay sources in
+scripts/system-brain/m2d-hosted-catchup-plan.mjs. Editing the contract broke
+four M2D tests (source drift on the locked blob).
+
+Re-cutting an earlier gate's lock is not G7's to do, and the brief forbids
+silently repairing earlier gates. The edit was therefore REVERTED — both files
+are byte-identical to the frozen head, verified by git hash-object:
+  askDwOpenAiContract.js  e3870f6ffc62fea71118a9202d79af00cdf70477
+  ask-dw-model/index.ts   b687f54b07ac7f9f31596a7cdf42a472d4ab8855
+
+DW's voice is instead carried in the SYNTHESIS INPUT (answerStyle: character,
+epistemic ladder, response shape, style examples), which G7 does own. The model
+still receives it on every synthesis. G7-N3 pins the lock so this cannot
+regress.
+
+CONSEQUENCE, stated plainly: the character spec reaches the model as input
+payload rather than as system instructions. That is weaker placement than the
+brief intended. Deciding whether to re-cut the M2D lock is left to a human.
+
+==================================================
+11. BENCHMARK AND TEST RESULTS (ACTUAL)
+==================================================
+
+Benchmark corpus: 126 single-turn scenarios + 5 conversations (60 turns) = 186.
+  longest conversation 20 turns; every conversation >= 10 turns
+  covers all 13 turn types (G7-B12)
+Coverage includes greetings, acknowledgements, daily priorities, portfolio
+status, needs-founder, what-changed, follow-ups, very short turns ("why",
+"no", "next", "more", "and?"), evidence requests, challenges, referent and
+new-evidence corrections, Company Brain questions, authority questions, and
+real AR commands.
+
+  G2 (test:company-brain-g2)           129 / 129   pass
+  G3 (test:company-brain-g3)           229 / 229   pass
+  G3 tests 228, 229, 230                 3 / 3     pass
+  G4 (test:company-brain-g4)           264 / 264   pass
+  G5 (test:company-brain-g5)           362 / 362   pass
+  G6 (test:company-brain-g6)           503 / 503   pass
+  Ask DW suites (inherited + G7)       227 / 227   pass
+  G7 focused (4 files)                  72 / 72    pass
+  FULL SUITE (npm test)               1545 / 1545  pass
+  Production build                     PASS
+  git diff --check                     CLEAN
+
+Baseline at the G6 head was 1473; 1473 + 72 = 1545.
+
+MUTATION CHECKS (run to prove the new tests catch real regressions, then
+reverted; no mutant is in the committed tree):
+  removing greeting detection -> G7-B3 and G7-B12 FAIL
+
+SCANS: credentials CLEAN; no .rpc/createClient/fetch/insert/update in any G7
+module; no execution or provider path; no canonical-money write (the only
+match is the forbidden-key list that blocks them); no G8 file, test or branch;
+both M2D locked blobs unchanged.
+
+==================================================
+12. WHAT IS NOT DONE
+==================================================
+
+G7 is NOT complete. Remaining, in the order I would do it:
+
+ 1. Referent/follow-up execution against the real case state. The turn
+    classifier recognises "the second invoice" and "the other one", but they
+    are not yet routed into resolveAskDwDeterministicCaseControl and the
+    entity resolver, so multi-turn referent SWITCHING is classified but not
+    yet resolved end to end. Benchmark conversation 'referent-switching'
+    currently asserts classification only.
+ 2. Ask DW UI surface work (brief section 30). Untouched this session.
+ 3. Long-conversation history/summarisation policy (brief section 21).
+ 4. Company vocabulary from Company Brain (brief section 18).
+ 5. The remaining named test classes from brief section 35 that depend on
+    items 1-4, in particular AO/AP (long-conversation referents and persona
+    stability under a real runtime rather than the classifier alone).
+
+==================================================
+13. CLAIMS NOT MADE
+==================================================
+
+  - NO live-model verification was performed. No OpenAI/Groq/Anthropic or
+    Supabase credentials exist in this environment; the model path was not
+    exercised against a real provider, and no result is reported for one.
+  - NO browser or runtime UI verification was performed. No Ask DW UI change
+    was made this session.
+  - NATURALNESS IS NOT PROVEN. The tests measure classification, grounding,
+    authority consistency, non-sycophancy, filler rate and repetition. Whether
+    DW actually reads well needs human evaluation, which did not happen.
+  - No fine-tuning and no DSPy runtime dependency were introduced.
+  - No AR execution path, provider call, canonical-money write or Company
+    Brain mutation was introduced.
+  - G8 was NOT started.
+
+==================================================
+14. KNOWN LIMITATIONS
+==================================================
+
+ 1. Character spec reaches the model as input, not system instructions
+    (section 10). A human decision is needed on the M2D lock.
+ 2. Turn classification is deterministic phrase matching. It is conservative
+    and falls through to the existing AR classifier, but it will not recognise
+    every paraphrase a founder might type.
+ 3. The grounding guard is pattern-based. It catches the classes of claim that
+    are cheap to check mechanically; it is a floor beneath the model verifier,
+    not a replacement for it.
+ 4. buildAskDwDailyPriorities ranks by reason class, not by amount at risk or
+    days overdue, because those live in canonical projections G7 does not own.
+ 5. Items 1-5 in section 12 remain outstanding.
