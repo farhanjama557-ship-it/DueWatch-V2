@@ -1,10 +1,11 @@
-M2G G3 Validation Report — G3 Hardening + Exit-Gate Closure + G3 Consistency Patch + TRUE FINAL EXIT PATCH + FINAL SEMANTIC CLOSURE + CANONICAL STATE FINAL CLOSURE
+M2G G3 Validation Report — G3 Hardening + Exit-Gate Closure + G3 Consistency Patch + TRUE FINAL EXIT PATCH + FINAL SEMANTIC CLOSURE + CANONICAL STATE FINAL CLOSURE + FOUNDER DECISION SUPERSESSION CLOSURE
 Branch: m2g/company-brain-bootstrap-g3
-Date: 2026-08-31
+Date: 2026-09-01
 Starting SHA (exit-gate work): f2a533dc902d00b2106c1dd8ef770f8fdca01fbd
 Starting SHA (consistency patch): 7dbfa3efcf65488cb5934c8f240744d21960438c
 Starting SHA (FINAL SEMANTIC CLOSURE): f182d060ca7661d29132a934eaf76389c7a28844
 Starting SHA (CANONICAL STATE FINAL CLOSURE): 8bbf4b7d12dc6a0d31fb8cb4b1dbb7cf67dadf61
+Starting SHA (FOUNDER DECISION SUPERSESSION CLOSURE): 87e9bf9582836e023e01051beb04b9050ed3e15f
 
 == Test Results ==
 
@@ -12,18 +13,19 @@ npm run test:company-brain-g2 (G0+G1+G2 suite):
   tests 129 | pass 129 | fail 0 | todo 0
 
 npm run test:company-brain-g3 (G0+G1+G2+G3 suite):
-  tests 226 | pass 226 | fail 0 | todo 0
+  tests 229 | pass 229 | fail 0 | skipped 0 | todo 0
 
 npm test (full suite):
-  tests 1196 | pass 1196 | fail 0 | todo 0
+  tests 1199 | pass 1199 | fail 0 | skipped 0 | todo 0
 
 npm run build:
-  ✓ built in ~13s — no errors, no new warnings
+  PASS — Vite 5.4.21, 1978 modules transformed, production bundle built in 6.26s.
+  The existing chunk-size advisory remains; there are no build errors or new warnings.
 
 git diff --check:
   (no output — no whitespace errors)
 
-== G3-Specific Tests (44 total: 10 from G3 runtime + 12 from hardening + 10 from exit-gate closure + 4 from consistency patch + 3 from TRUE FINAL EXIT PATCH [net: replaced 1, added 4] + 5 from FINAL SEMANTIC CLOSURE) ==
+== G3-Specific Numbered Closure Tests ==
 
   ok 180 - G3-temporal: classify UNKNOWN/CURRENT/EXPIRED/FUTURE from effectiveTime and queryDate
   ok 181 - G3-temporal: UNKNOWN temporal state prevents automatic resolution — canActAutomatically:false
@@ -71,6 +73,12 @@ git diff --check:
   ok 222 - test-222: 3-way conflict — decision picks A; B-vs-C conflict remains because A not in its candidateKeys
   ok 223 - test-223: buildG3DwIntelligenceContext policyConflicts per-topic invariant — no cross-topic candidate pairings
   ok 224 - test-224: newer malformed decision (null governingClaimId) does not mask older valid decision
+  ok 225 - test-225: resolvePolicy and DW Intelligence retain the same uncovered B-vs-C conflict
+  ok 226 - test-226: malformed newer decision is audit history, never current resolution evidence
+  ok 227 - test-227: CONTRACT conflict attributes only the contract linked to qualifying exception evidence
+  ok 228 - test-228: newer valid decision explicitly supersedes older valid decision across all G3 surfaces
+  ok 229 - test-229: invalid explicit successor leaves its lineage without a current governing decision
+  ok 230 - test-230: only the valid unsuperseded tip of D1 to D2 to D3 is current
 
 == Hardening Fixes Applied (G3 Hardening) ==
 
@@ -513,3 +521,98 @@ Tenant isolation scan (tenantId checks):
   - No Supabase push, Edge deployment, Vercel deployment, or live-provider action performed.
   - No canonical financial write path added or modified.
   - Changes remain isolated to m2g/company-brain-bootstrap-g3.
+
+== FOUNDER DECISION SUPERSESSION CLOSURE — Canonical Semantics ==
+
+  deriveFounderDecisionState is the single tenant-bound derivation consumed by
+  applyFounderDecisions, resolvePolicy/conflict coverage, askDwPolicy, and
+  buildG3DwIntelligenceContext.
+
+  1. Explicit supersession is derived before structural/scope/winner validity evaluation.
+  2. A tenant decision referenced by another tenant decision's supersedesDecisionId is never
+     current. It remains durable in supersededDecisions/supersededFounderDecisions, annotated with
+     deterministic supersededByDecisionIds audit lineage.
+  3. Only unsuperseded lineage tips are evaluated for current governing eligibility.
+  4. A fully valid tip is current. An invalid tip is invalidated, and its explicitly superseded
+     predecessors do not silently return to current truth.
+  5. An unlinked malformed newer record does not supersede or mask an older valid decision, preserving
+     tests 224 and 226.
+  6. Current, invalidated, and superseded arrays use deterministic newest-first ordering with decision
+     ID as the stable tie-breaker.
+  7. deriveFounderConflictCoverage receives current decisions only. Therefore superseded, malformed,
+     revoked-evidence, wrong-scope, and invalid-winner records cannot cover a current conflict or appear
+     in resolvedConflictEvidence.
+  8. No durable founder decision record is deleted or rewritten.
+
+== FOUNDER DECISION SUPERSESSION CLOSURE — Regression Tests 228–230 ==
+
+[x] 228. D2 validly selects A and explicitly supersedes valid D1 selecting B. Only D2 is current on
+         applyFounderDecisions, resolvePolicy, Ask DW, and DW Intelligence. D1 remains superseded audit
+         history and cannot cover the explicitly asserted B-vs-C conflict or enter resolved evidence.
+
+[x] 229. Invalid D2 explicitly supersedes valid D1. D1 remains superseded, D2 is invalidated, the
+         lineage has no current governing decision, the resolver remains CONFLICTED with an explicitly
+         asserted unresolved identity, and Ask DW/DW Intelligence expose neither record as current while
+         preserving both audit states.
+
+[x] 230. D1 -> D2 -> D3 chain. Only valid tip D3 is current; D2 then D1 appear in deterministic
+         newest-first superseded history. D1/D2 never cover the explicitly asserted A-vs-B conflict and
+         never enter resolvedConflictEvidence.
+
+  Preservation proof:
+    test 224 PASS — unlinked malformed newer record does not mask older valid decision.
+    test 226 PASS — unlinked malformed newer record stays invalid audit history while older valid
+                    decision remains current and is the only resolution evidence.
+    No test from 180–227 was weakened or removed.
+
+== FOUNDER DECISION SUPERSESSION CLOSURE — Exact Validation ==
+
+  npm run test:company-brain-g2:
+    tests 129 | pass 129 | fail 0 | cancelled 0 | skipped 0 | todo 0
+
+  npm run test:company-brain-g3:
+    tests 229 | pass 229 | fail 0 | cancelled 0 | skipped 0 | todo 0
+
+  npm test:
+    tests 1199 | pass 1199 | fail 0 | cancelled 0 | skipped 0 | todo 0
+
+  npm run build:
+    PASS — Vite 5.4.21, 1978 modules transformed, production bundle built in 6.26s.
+    Existing >500 kB chunk-size advisory only; no build errors or new warnings.
+
+  git diff --check:
+    PASS — no whitespace errors.
+
+  Credential scan:
+    PASS — 0 Stripe live/restricted/webhook secret patterns, AWS access-key patterns, private-key
+    headers, Supabase service-role assignments, or Stripe secret-key assignments in the changed
+    runtime/test files.
+
+  Canonical financial mutation scan:
+    PASS — 0 INSERT/UPDATE/DELETE/ALTER statements targeting invoices, payments, payment_attempts,
+    payouts, or bank_transactions in the changed runtime/test files.
+
+  Tenant isolation/invariant review:
+    PASS — deriveFounderDecisionState first filters raw decisions by exact tenantId, so another tenant's
+    decision or supersession link cannot enter current, invalidated, or superseded state. Every consumer
+    passes the same tenantId, topic, scope, and candidate set into the shared derivation. Existing tenant
+    isolation tests pass. R0 canonicalMoneyWritable:false and R9 canActAutomatically:false remain
+    structurally present on every applicable G3 output.
+
+  Scope review:
+    PASS — 0 G4/G5 or operating-model files changed. No G4 or G5 behavior was started.
+
+== Files Changed (FOUNDER DECISION SUPERSESSION CLOSURE, relative to 87e9bf9) ==
+
+  src/lib/companyBrain/policyIntelligence.js  (canonical current/invalidated/superseded derivation;
+                                               shared consumption across every G3 decision surface)
+  tests/companyBrainG3Policy.test.mjs         (tests 228–230; exact conflict identities and audit history)
+  docs/company-brain/M2G_G3_VALIDATION.txt    (this closure evidence)
+
+== FOUNDER DECISION SUPERSESSION CLOSURE — Boundary Confirmation ==
+
+  - G4 was NOT started.
+  - G5 was NOT started.
+  - G2 behavior and implementation files were not modified.
+  - Tests 180–227 were not weakened or removed.
+  - No production execution, provider call, deployment, or canonical financial write path was added.

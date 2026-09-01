@@ -176,6 +176,70 @@ function evaluateFounderDecision(d, { brain, tenantId, topic = null, scope = nul
   return { valid: true, winner: null, reason: 'ok' }
 }
 
+function compareFounderDecisionRecency(a, b) {
+  const aTime = Date.parse(a.decidedAt)
+  const bTime = Date.parse(b.decidedAt)
+  if (Number.isFinite(aTime) && Number.isFinite(bTime) && aTime !== bTime) return bTime - aTime
+  if (Number.isFinite(aTime) !== Number.isFinite(bTime)) return Number.isFinite(bTime) ? 1 : -1
+  return String(b.id).localeCompare(String(a.id))
+}
+
+/**
+ * Canonical current/audit state for founder decisions.
+ *
+ * Explicit supersession is applied before validity evaluation. A referenced
+ * predecessor remains durable in supersededDecisions, but can never govern or
+ * return to current truth if the unsuperseded successor is invalid. Unlinked
+ * invalid decisions do not mask otherwise-current valid decisions.
+ */
+export function deriveFounderDecisionState(
+  brain,
+  { tenantId, topic = null, scope = null, candidates = null } = {},
+) {
+  const tenantDecisions = (brain.decisions ?? []).filter((d) => d.tenantId === tenantId)
+  const supersededBy = new Map()
+
+  for (const successor of tenantDecisions) {
+    if (!successor.supersedesDecisionId) continue
+    const successors = supersededBy.get(successor.supersedesDecisionId) ?? []
+    successors.push(successor.id)
+    supersededBy.set(successor.supersedesDecisionId, successors)
+  }
+
+  const supersededDecisions = tenantDecisions
+    .filter((decision) => supersededBy.has(decision.id))
+    .sort(compareFounderDecisionRecency)
+    .map((decision) => ({
+      ...decision,
+      supersededByDecisionIds: [...supersededBy.get(decision.id)].sort(),
+    }))
+
+  const evaluatedTips = tenantDecisions
+    .filter((decision) => !supersededBy.has(decision.id))
+    .map((decision) => ({
+      decision,
+      result: evaluateFounderDecision(decision, {
+        brain, tenantId, topic, scope, candidates,
+      }),
+    }))
+
+  const currentDecisions = evaluatedTips
+    .filter(({ result }) => result.valid)
+    .map(({ decision }) => decision)
+    .sort(compareFounderDecisionRecency)
+
+  const invalidatedDecisions = evaluatedTips
+    .filter(({ result }) => !result.valid)
+    .map(({ decision, result }) => ({ ...decision, invalidReason: result.reason }))
+    .sort(compareFounderDecisionRecency)
+
+  return {
+    currentDecisions,
+    invalidatedDecisions,
+    supersededDecisions,
+  }
+}
+
 /**
  * Scope-aware conflict coverage check: does a valid founder decision cover a G3 policy conflict?
  *
@@ -564,7 +628,7 @@ export function validateClientIdentity(graph, { actor, tenantId, clientId }) {
 // ── C: Founder decision integration ───────────────────────────────────────────
 
 /**
- * Read brain.decisions and apply any valid founder decisions for the given topic.
+ * Read canonical founder-decision state and apply current decisions for the given topic.
  *
  * A decision is valid when:
  *   - tenantId matches
@@ -578,7 +642,8 @@ export function validateClientIdentity(graph, { actor, tenantId, clientId }) {
  *       (the client's exception remains a separate unresolved question).
  *       A client-specific decision does NOT resolve company-wide policy.
  *
- * Returns the most recent valid decision's winner candidate if one exists.
+ * Explicitly superseded decisions remain auditable but are never current. Returns the
+ * most recent fully-valid unsuperseded decision's winner candidate if one exists.
  *
  * Invariants enforced:
  *   R9: authorityGrantable always false — a policy decision ≠ DW execution authority
@@ -588,46 +653,39 @@ export function applyFounderDecisions(candidates, { brain, tenantId, topic, scop
   // Default scope: COMPANY when none provided
   const requestedScope = scope ?? { level: SEMANTIC_SCOPE.COMPANY }
 
-  // Evaluate all tenant decisions through all three phases. Current governing
-  // truth contains only fully valid decisions; every rejection remains
-  // separately auditable with its exact invalidation reason.
-  const evaluatedDecisions = (brain.decisions ?? [])
-    .filter((d) => d.tenantId === tenantId)
-    .map((d) => ({
-      d,
-      result: evaluateFounderDecision(d, {
-        brain, tenantId, topic, scope: requestedScope, candidates,
-      }),
-    }))
+  const {
+    currentDecisions,
+    invalidatedDecisions,
+    supersededDecisions,
+  } = deriveFounderDecisionState(brain, {
+    tenantId, topic, scope: requestedScope, candidates,
+  })
 
-  const invalidatedDecisions = evaluatedDecisions
-    .filter(({ result }) => !result.valid)
-    .map(({ d, result }) => ({ ...d, invalidReason: result.reason }))
-
-  // Keep only fully valid decisions. A newer malformed decision
-  // (null/wrong-topic governingClaimId) must not mask an older valid one.
-  const fullyValidDecisions = evaluatedDecisions
-    .filter(({ result }) => result.valid)
-    .sort((a, b) => new Date(b.d.decidedAt) - new Date(a.d.decidedAt))
-
-  if (fullyValidDecisions.length === 0) {
+  if (currentDecisions.length === 0) {
     return {
       applied: false,
       decisions: [],
       invalidatedDecisions,
+      supersededDecisions,
       winner: null,
       latestDecision: null,
       authorityGrantable: false,
     }
   }
 
-  const { d: latestDecision, result: latestResult } = fullyValidDecisions[0]
+  const latestDecision = currentDecisions[0]
+  const winner = candidates.find(
+    (candidate) =>
+      candidate.claimId === latestDecision.newState?.governingClaimId &&
+      candidate.candidateStatus === CANDIDATE_STATUS.ACTIVE,
+  ) ?? null
 
   return {
     applied: true,
-    decisions: fullyValidDecisions.map(({ d }) => d),
+    decisions: currentDecisions,
     invalidatedDecisions,
-    winner: latestResult.winner,
+    supersededDecisions,
+    winner,
     latestDecision,
     authorityGrantable: false, // R9: policy decision ≠ DW execution authority
   }
@@ -1009,7 +1067,7 @@ export function resolvePolicy(graph, brain, {
   // (C) Founder decisions: read brain.decisions for this topic, scope-validated (Issue 3)
   const decisionResult = topic
     ? applyFounderDecisions(active, { brain, tenantId, topic, scope })
-    : { applied: false, decisions: [], invalidatedDecisions: [], winner: null, authorityGrantable: false }
+    : { applied: false, decisions: [], invalidatedDecisions: [], supersededDecisions: [], winner: null, authorityGrantable: false }
 
   const conflictCoverage = deriveFounderConflictCoverage(
     conflicts,
@@ -1084,6 +1142,7 @@ export function resolvePolicy(graph, brain, {
     supersessionEvidence,
     founderDecisions: decisionResult.decisions,
     invalidatedFounderDecisions: decisionResult.invalidatedDecisions,
+    supersededFounderDecisions: decisionResult.supersededDecisions,
     hasUnknownTemporal,
     // Structural invariants — never negotiable
     canActAutomatically: false,
@@ -1190,12 +1249,11 @@ export function askDwPolicy(graph, brain, {
     (c) => c.candidateStatus === CANDIDATE_STATUS.ACTIVE,
   )
 
-  const founderDecisions = (brain.decisions ?? []).filter((d) =>
-    evaluateFounderDecision(d, {
-      brain, tenantId, topic, scope: questionScope,
-      candidates: founderDecisionCandidates,
-    }).valid,
-  )
+  const founderDecisionState = deriveFounderDecisionState(brain, {
+    tenantId, topic, scope: questionScope,
+    candidates: founderDecisionCandidates,
+  })
+  const founderDecisions = founderDecisionState.currentDecisions
 
   const hasUnknownTemporal = applicablePolicyCandidates.some(
     (c) => c.temporalState === TEMPORAL_STATE.UNKNOWN,
@@ -1279,6 +1337,8 @@ export function askDwPolicy(graph, brain, {
     unresolvedConflicts: primaryResolution.unresolvedConflicts,
     precedenceEvidence: primaryResolution.supersessionEvidence ?? [],
     founderDecisions,
+    invalidatedFounderDecisions: founderDecisionState.invalidatedDecisions,
+    supersededFounderDecisions: founderDecisionState.supersededDecisions,
     provenance: primaryResolution.provenance,
     uncertainty: {
       hasUnknownTemporal,
@@ -1308,7 +1368,9 @@ export function askDwPolicy(graph, brain, {
  *   precedenceEvidence          — valid SUPERSEDES edges from live graph store
  *   temporalApplicability       — temporal summary (UNKNOWN, CURRENT, FUTURE, HISTORICAL counts)
  *   clientExceptions            — CLIENT_EXCEPTION candidates for the clientId (if provided)
- *   founderDecisions            — brain.decisions for this tenantId
+ *   founderDecisions            — current valid, non-superseded decisions for this tenant/scope
+ *   invalidatedFounderDecisions — invalid unsuperseded decision tips retained for audit
+ *   supersededFounderDecisions  — explicit predecessor history retained for audit
  *   provenancePaths             — from G2 dwIntelligenceContext
  *   uncertainty                 — typed uncertainty flags
  *   authorityBoundary           — always canActAutomatically: false (R9)
@@ -1419,22 +1481,13 @@ export function buildG3DwIntelligenceContext(graph, brain, {
   const hasConflicts = brainConflicts.length > 0 || unresolvedPolicyConflicts.length > 0
   const danglingProvenances = detectDanglingProvenance(brain, { tenantId })
 
-  // Founder decisions: use evaluateFounderDecision with contextScope and active candidates (Issues 1, 5).
-  // Only decisions valid for the context scope and with resolvable winner candidates are current.
-  // Decisions that fail (revoked evidence, wrong scope, invalid governingClaimId) are invalidated.
-  const evaluatedDecisions = (brain.decisions ?? []).map((d) => ({
-    d,
-    result: evaluateFounderDecision(d, {
-      brain, tenantId, topic: null, scope: contextScope,
-      candidates: applicablePolicyCandidates,
-    }),
-  }))
-  const founderDecisions = evaluatedDecisions
-    .filter(({ result }) => result.valid)
-    .map(({ d }) => d)
-  const invalidatedFounderDecisions = evaluatedDecisions
-    .filter(({ d, result }) => d.tenantId === tenantId && !result.valid)
-    .map(({ d, result }) => ({ ...d, invalidReason: result.reason }))
+  const founderDecisionState = deriveFounderDecisionState(brain, {
+    tenantId, topic: null, scope: contextScope,
+    candidates: applicablePolicyCandidates,
+  })
+  const founderDecisions = founderDecisionState.currentDecisions
+  const invalidatedFounderDecisions = founderDecisionState.invalidatedDecisions
+  const supersededFounderDecisions = founderDecisionState.supersededDecisions
 
   const canActAutomatically = false // R9: always false
 
@@ -1482,6 +1535,7 @@ export function buildG3DwIntelligenceContext(graph, brain, {
     clientExceptions,
     founderDecisions,
     invalidatedFounderDecisions,
+    supersededFounderDecisions,
     precedenceEvidence,
     temporalApplicability,
     danglingProvenance: danglingProvenances,

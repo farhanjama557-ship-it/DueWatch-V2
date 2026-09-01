@@ -3033,3 +3033,243 @@ test('test-227: CONTRACT conflict attributes only the contract linked to qualify
   assert.equal(conflict.contractKeys.includes('contract:contract-atlas-payment-terms-only'), false,
     'unrelated Contract B must not be attributed to the conflict')
 })
+
+function g3ClosureDecision({ id, decidedAt, winnerClaimId, evidenceClaimIds, supersedesDecisionId }) {
+  return {
+    id,
+    tenantId: tenantA,
+    actorId: founderA.id,
+    actorRole: 'FOUNDER',
+    decidedAt,
+    decisionType: 'RESOLVE_CONFLICT',
+    target: 'late_fee_policy',
+    scope: { level: SEMANTIC_SCOPE.COMPANY },
+    oldState: { status: 'CONFLICTED' },
+    newState: { governingClaimId: winnerClaimId },
+    evidenceClaimIds,
+    reason: 'G3 supersession closure regression',
+    revocable: true,
+    idempotencyKey: `idem-${id}`,
+    requestFingerprint: 'test',
+    supersedesDecisionId,
+    status: 'RECORDED',
+  }
+}
+
+function g3ConflictIdentity(conflict) {
+  return `${conflict.conflictClass}:${[...conflict.candidateKeys].sort().join(',')}`
+}
+
+function g3ThreeWayCompanyPolicyState(suffix) {
+  const brain = new CompanyBrainDurableStore({ clock: clocks() })
+  ingestContent(brain, workerA, `${suffix}-a.md`, 'Charge a 5% late fee on all overdue invoices.', `${suffix}-a`)
+  ingestContent(brain, workerA, `${suffix}-b.md`, 'Charge a 3% late fee on all overdue invoices.', `${suffix}-b`)
+  ingestContent(brain, workerA, `${suffix}-c.md`, 'Charge a 9% late fee on all overdue invoices.', `${suffix}-c`)
+  ingestContent(brain, workerA, `${suffix}-reg.csv`, 'entity_type,entity_id,name\nCOMPANY,duewatch-company,DueWatch', `${suffix}-reg`)
+  const graph = new CompanyGraphStore({ brainStore: brain, clock: clocks() })
+  graph.build({ actor: founderA, tenantId: tenantA })
+  const scope = { level: SEMANTIC_SCOPE.COMPANY }
+  const candidates = buildPolicyCandidates(graph, brain, {
+    actor: founderA, tenantId: tenantA, scope, queryDate: '2026-08-31',
+  }).filter((candidate) =>
+    candidate.candidateStatus === CANDIDATE_STATUS.ACTIVE &&
+    candidate.topic === 'late_fee_policy',
+  )
+  assert.equal(candidates.length, 3, 'precondition: exact A/B/C active candidate set')
+  return { brain, graph, scope, candidates }
+}
+
+// ── Test 228 — explicit successor replaces older valid decision ──────────────
+
+test('test-228: newer valid decision explicitly supersedes older valid decision across all G3 surfaces', () => {
+  const { brain, graph, scope, candidates } = g3ThreeWayCompanyPolicyState('supersession-228')
+  const [candidateA, candidateB, candidateC] = candidates
+  const before = resolvePolicy(graph, brain, {
+    actor: founderA, tenantId: tenantA, scope,
+    topic: 'late_fee_policy', queryDate: '2026-08-31',
+  })
+  const bcConflict = before.detectedConflicts.find((conflict) =>
+    conflict.candidateKeys.includes(candidateB.graphNodeKey) &&
+    conflict.candidateKeys.includes(candidateC.graphNodeKey) &&
+    !conflict.candidateKeys.includes(candidateA.graphNodeKey),
+  )
+  assert.ok(bcConflict, 'precondition: explicit B-vs-C conflict identity exists')
+  const bcIdentity = g3ConflictIdentity(bcConflict)
+
+  const d1 = g3ClosureDecision({
+    id: 'decision-228-d1',
+    decidedAt: '2026-08-30T10:00:00Z',
+    winnerClaimId: candidateB.claimId,
+    evidenceClaimIds: [candidateB.claimId],
+    supersedesDecisionId: null,
+  })
+  const d2 = g3ClosureDecision({
+    id: 'decision-228-d2',
+    decidedAt: '2026-08-31T10:00:00Z',
+    winnerClaimId: candidateA.claimId,
+    evidenceClaimIds: [candidateA.claimId],
+    supersedesDecisionId: d1.id,
+  })
+  brain.decisions.push(d1, d2)
+
+  const applied = applyFounderDecisions(candidates, {
+    brain, tenantId: tenantA, topic: 'late_fee_policy', scope,
+  })
+  assert.deepEqual(applied.decisions.map((decision) => decision.id), [d2.id], 'D2 alone is current')
+  assert.deepEqual(applied.supersededDecisions.map((decision) => decision.id), [d1.id], 'D1 remains superseded audit history')
+
+  const resolution = resolvePolicy(graph, brain, {
+    actor: founderA, tenantId: tenantA, scope,
+    topic: 'late_fee_policy', queryDate: '2026-08-31',
+  })
+  assert.deepEqual(resolution.founderDecisions.map((decision) => decision.id), [d2.id])
+  assert.deepEqual(resolution.supersededFounderDecisions.map((decision) => decision.id), [d1.id])
+  assert.ok(!resolution.resolvedConflictEvidence.some((decision) => decision.id === d1.id), 'D1 cannot be resolution evidence')
+  assert.deepEqual(resolution.resolvedConflictEvidence.map((decision) => decision.id), [d2.id])
+  assert.ok(resolution.unresolvedConflicts.some((conflict) => g3ConflictIdentity(conflict) === bcIdentity),
+    'D1 cannot cover the explicit B-vs-C conflict merely because B remains active')
+
+  const ask = askDwPolicy(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    question: 'What founder decision governs the late-fee policy?', queryDate: '2026-08-31',
+  })
+  assert.deepEqual(ask.founderDecisions.map((decision) => decision.id), [d2.id])
+  assert.deepEqual(ask.supersededFounderDecisions.map((decision) => decision.id), [d1.id])
+
+  const context = buildG3DwIntelligenceContext(graph, brain, {
+    actor: founderA, tenantId: tenantA, queryDate: '2026-08-31',
+  })
+  assert.deepEqual(context.founderDecisions.map((decision) => decision.id), [d2.id])
+  assert.deepEqual(context.supersededFounderDecisions.map((decision) => decision.id), [d1.id])
+  assert.ok(context.unresolvedPolicyConflicts.some((conflict) => g3ConflictIdentity(conflict) === bcIdentity),
+    'DW Intelligence retains the same explicit B-vs-C conflict identity')
+})
+
+// ── Test 229 — invalid explicit tip never resurrects predecessor ─────────────
+
+test('test-229: invalid explicit successor leaves its lineage without a current governing decision', () => {
+  const { brain, graph, scope, candidates } = g3ThreeWayCompanyPolicyState('supersession-229')
+  const [candidateA] = candidates
+  const before = resolvePolicy(graph, brain, {
+    actor: founderA, tenantId: tenantA, scope,
+    topic: 'late_fee_policy', queryDate: '2026-08-31',
+  })
+  const unresolvedIdentity = g3ConflictIdentity(before.unresolvedConflicts[0])
+
+  const d1 = g3ClosureDecision({
+    id: 'decision-229-d1',
+    decidedAt: '2026-08-30T10:00:00Z',
+    winnerClaimId: candidateA.claimId,
+    evidenceClaimIds: [candidateA.claimId],
+    supersedesDecisionId: null,
+  })
+  const d2 = g3ClosureDecision({
+    id: 'decision-229-d2-invalid',
+    decidedAt: '2026-08-31T10:00:00Z',
+    winnerClaimId: null,
+    evidenceClaimIds: [candidateA.claimId],
+    supersedesDecisionId: d1.id,
+  })
+  brain.decisions.push(d1, d2)
+
+  const applied = applyFounderDecisions(candidates, {
+    brain, tenantId: tenantA, topic: 'late_fee_policy', scope,
+  })
+  assert.equal(applied.applied, false, 'no decision in the explicit lineage governs')
+  assert.deepEqual(applied.decisions, [])
+  assert.deepEqual(applied.supersededDecisions.map((decision) => decision.id), [d1.id])
+  assert.deepEqual(applied.invalidatedDecisions.map((decision) => decision.id), [d2.id])
+
+  const resolution = resolvePolicy(graph, brain, {
+    actor: founderA, tenantId: tenantA, scope,
+    topic: 'late_fee_policy', queryDate: '2026-08-31',
+  })
+  assert.equal(resolution.status, G3_RESOLUTION_STATUS.CONFLICTED, 'resolver must not fall back to D1')
+  assert.equal(resolution.winner, null)
+  assert.deepEqual(resolution.founderDecisions, [])
+  assert.deepEqual(resolution.resolvedConflictEvidence, [])
+  assert.ok(resolution.unresolvedConflicts.some((conflict) => g3ConflictIdentity(conflict) === unresolvedIdentity))
+  assert.deepEqual(resolution.supersededFounderDecisions.map((decision) => decision.id), [d1.id])
+  assert.deepEqual(resolution.invalidatedFounderDecisions.map((decision) => decision.id), [d2.id])
+
+  const ask = askDwPolicy(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    question: 'What founder decision governs the late-fee policy?', queryDate: '2026-08-31',
+  })
+  assert.deepEqual(ask.founderDecisions, [], 'Ask DW must not resurrect D1')
+  assert.deepEqual(ask.supersededFounderDecisions.map((decision) => decision.id), [d1.id])
+  assert.deepEqual(ask.invalidatedFounderDecisions.map((decision) => decision.id), [d2.id])
+
+  const context = buildG3DwIntelligenceContext(graph, brain, {
+    actor: founderA, tenantId: tenantA, queryDate: '2026-08-31',
+  })
+  assert.deepEqual(context.founderDecisions, [], 'DW Intelligence must not resurrect D1')
+  assert.deepEqual(context.supersededFounderDecisions.map((decision) => decision.id), [d1.id])
+  assert.deepEqual(context.invalidatedFounderDecisions.map((decision) => decision.id), [d2.id])
+  assert.ok(context.unresolvedPolicyConflicts.some((conflict) => g3ConflictIdentity(conflict) === unresolvedIdentity))
+})
+
+// ── Test 230 — deterministic explicit supersession chain ─────────────────────
+
+test('test-230: only the valid unsuperseded tip of D1 to D2 to D3 is current', () => {
+  const { brain, graph, scope, candidates } = g3ThreeWayCompanyPolicyState('supersession-230')
+  const [candidateA, candidateB, candidateC] = candidates
+  const before = resolvePolicy(graph, brain, {
+    actor: founderA, tenantId: tenantA, scope,
+    topic: 'late_fee_policy', queryDate: '2026-08-31',
+  })
+  const abConflict = before.detectedConflicts.find((conflict) =>
+    conflict.candidateKeys.includes(candidateA.graphNodeKey) &&
+    conflict.candidateKeys.includes(candidateB.graphNodeKey) &&
+    !conflict.candidateKeys.includes(candidateC.graphNodeKey),
+  )
+  assert.ok(abConflict, 'precondition: explicit A-vs-B conflict identity exists')
+  const abIdentity = g3ConflictIdentity(abConflict)
+
+  const d1 = g3ClosureDecision({
+    id: 'decision-230-d1', decidedAt: '2026-08-29T10:00:00Z',
+    winnerClaimId: candidateA.claimId, evidenceClaimIds: [candidateA.claimId],
+    supersedesDecisionId: null,
+  })
+  const d2 = g3ClosureDecision({
+    id: 'decision-230-d2', decidedAt: '2026-08-30T10:00:00Z',
+    winnerClaimId: candidateB.claimId, evidenceClaimIds: [candidateB.claimId],
+    supersedesDecisionId: d1.id,
+  })
+  const d3 = g3ClosureDecision({
+    id: 'decision-230-d3', decidedAt: '2026-08-31T10:00:00Z',
+    winnerClaimId: candidateC.claimId, evidenceClaimIds: [candidateC.claimId],
+    supersedesDecisionId: d2.id,
+  })
+  brain.decisions.push(d1, d2, d3)
+
+  const applied = applyFounderDecisions(candidates, {
+    brain, tenantId: tenantA, topic: 'late_fee_policy', scope,
+  })
+  assert.deepEqual(applied.decisions.map((decision) => decision.id), [d3.id])
+  assert.deepEqual(applied.supersededDecisions.map((decision) => decision.id), [d2.id, d1.id],
+    'superseded history is deterministic newest-first')
+  assert.equal(applied.winner?.claimId, candidateC.claimId)
+
+  const resolution = resolvePolicy(graph, brain, {
+    actor: founderA, tenantId: tenantA, scope,
+    topic: 'late_fee_policy', queryDate: '2026-08-31',
+  })
+  assert.deepEqual(resolution.founderDecisions.map((decision) => decision.id), [d3.id])
+  assert.deepEqual(resolution.supersededFounderDecisions.map((decision) => decision.id), [d2.id, d1.id])
+  assert.deepEqual(resolution.resolvedConflictEvidence.map((decision) => decision.id), [d3.id])
+  assert.ok(resolution.unresolvedConflicts.some((conflict) => g3ConflictIdentity(conflict) === abIdentity),
+    'D1 and D2 never contribute coverage to the A-vs-B conflict')
+
+  const ask = askDwPolicy(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    question: 'What founder decision governs the late-fee policy?', queryDate: '2026-08-31',
+  })
+  const context = buildG3DwIntelligenceContext(graph, brain, {
+    actor: founderA, tenantId: tenantA, queryDate: '2026-08-31',
+  })
+  assert.deepEqual(ask.founderDecisions.map((decision) => decision.id), [d3.id])
+  assert.deepEqual(ask.supersededFounderDecisions.map((decision) => decision.id), [d2.id, d1.id])
+  assert.deepEqual(context.founderDecisions.map((decision) => decision.id), [d3.id])
+  assert.deepEqual(context.supersededFounderDecisions.map((decision) => decision.id), [d2.id, d1.id])
+})
