@@ -7,8 +7,7 @@ create table public.company_operating_model_proposals (
   user_id uuid not null references auth.users(id) on delete cascade,
   proposal_key text not null check (proposal_key ~ '^operating-model-[0-9a-f]{24}$'),
   proposal_revision bigint not null check (proposal_revision > 0),
-  brain_snapshot_id uuid not null,
-  graph_version_id uuid not null,
+  graph_fingerprint text not null check (graph_fingerprint ~ '^[0-9a-f]{64}$'),
   brain_knowledge_version bigint not null check (brain_knowledge_version >= 0),
   source_fingerprint text not null check (source_fingerprint ~ '^[0-9a-f]{64}$'),
   model_fingerprint text not null check (model_fingerprint ~ '^[0-9a-f]{64}$'),
@@ -21,12 +20,9 @@ create table public.company_operating_model_proposals (
   unique (user_id, id),
   unique (user_id, proposal_key),
   unique (user_id, model_fingerprint),
-  constraint company_operating_model_brain_snapshot_fk
-    foreign key (user_id, brain_snapshot_id)
-    references public.company_brain_snapshots(user_id, id) on delete restrict,
-  constraint company_operating_model_graph_version_fk
-    foreign key (user_id, graph_version_id)
-    references public.company_graph_versions(user_id, id) on delete restrict,
+  constraint company_operating_model_graph_fingerprint_fk
+    foreign key (user_id, graph_fingerprint)
+    references public.company_graph_versions(user_id, fingerprint) on delete restrict,
   constraint company_operating_model_superseded_by_fk
     foreign key (user_id, superseded_by_id)
     references public.company_operating_model_proposals(user_id, id) on delete restrict,
@@ -39,8 +35,7 @@ create table public.company_operating_model_proposals (
   check (model_payload ->> 'fingerprint' = model_fingerprint),
   check (coalesce((source_state ->> 'knowledgeVersion')::bigint, -1) = brain_knowledge_version),
   check (coalesce(source_state ->> 'fingerprint', '') = source_fingerprint),
-  check (coalesce(source_state ->> 'brainSnapshotId', '') = brain_snapshot_id::text),
-  check (coalesce(source_state ->> 'graphVersion', '') = graph_version_id::text),
+  check (coalesce(source_state ->> 'graphFingerprint', '') = graph_fingerprint),
   check (source_state ->> 'asOfDate' is not null),
   check ((source_state ->> 'asOfDate')::date::text = source_state ->> 'asOfDate'),
   check (coalesce(source_state ->> 'asOfDate', '') = coalesce(model_payload ->> 'asOfDate', '')),
@@ -198,33 +193,30 @@ declare
   v_graph_brain_snapshot_id uuid;
   v_graph_fingerprint text;
 begin
-  select active, knowledge_version
-    into v_snapshot_active, v_snapshot_knowledge_version
-  from public.company_brain_snapshots
-  where user_id = new.user_id and id = new.brain_snapshot_id;
-
-  if not found then
-    raise exception 'operating model Brain snapshot is missing for tenant';
-  end if;
-
   select active, brain_snapshot_id, fingerprint
     into v_graph_active, v_graph_brain_snapshot_id, v_graph_fingerprint
   from public.company_graph_versions
-  where user_id = new.user_id and id = new.graph_version_id;
+  where user_id = new.user_id and fingerprint = new.graph_fingerprint;
 
   if not found then
     raise exception 'operating model graph version is missing for tenant';
   end if;
 
-  if v_graph_brain_snapshot_id <> new.brain_snapshot_id then
-    raise exception 'operating model graph and Brain snapshot lineage mismatch';
+  select active, knowledge_version
+    into v_snapshot_active, v_snapshot_knowledge_version
+  from public.company_brain_snapshots
+  where user_id = new.user_id and id = v_graph_brain_snapshot_id;
+
+  if not found then
+    raise exception 'operating model graph Brain snapshot is missing for tenant';
   end if;
 
   if v_snapshot_knowledge_version <> new.brain_knowledge_version then
     raise exception 'operating model Brain knowledge version mismatch';
   end if;
 
-  if v_graph_fingerprint is distinct from new.source_state ->> 'graphFingerprint' then
+  if v_graph_fingerprint is distinct from new.graph_fingerprint
+    or v_graph_fingerprint is distinct from new.source_state ->> 'graphFingerprint' then
     raise exception 'operating model graph fingerprint mismatch';
   end if;
 
@@ -237,7 +229,7 @@ end;
 $$;
 
 create trigger company_operating_model_source_state_integrity
-before insert or update of user_id, brain_snapshot_id, graph_version_id,
+before insert or update of user_id, graph_fingerprint,
   brain_knowledge_version, source_state, model_payload, status
 on public.company_operating_model_proposals
 for each row execute function private.validate_company_operating_model_source_state();
@@ -252,7 +244,7 @@ begin
     update public.company_operating_model_proposals
     set status = 'STALE', invalidated_at = coalesce(new.invalidated_at, now())
     where user_id = new.user_id
-      and graph_version_id = new.id
+      and graph_fingerprint = new.fingerprint
       and status in ('PROPOSED','BLOCKED');
   end if;
   return new;
@@ -273,8 +265,14 @@ begin
     update public.company_operating_model_proposals
     set status = 'STALE', invalidated_at = coalesce(new.invalidated_at, now())
     where user_id = new.user_id
-      and brain_snapshot_id = new.id
-      and status in ('PROPOSED','BLOCKED');
+      and status in ('PROPOSED','BLOCKED')
+      and exists (
+        select 1
+        from public.company_graph_versions graph_version
+        where graph_version.user_id = new.user_id
+          and graph_version.fingerprint = company_operating_model_proposals.graph_fingerprint
+          and graph_version.brain_snapshot_id = new.id
+      );
   end if;
   return new;
 end;

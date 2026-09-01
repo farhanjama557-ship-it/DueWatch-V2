@@ -35,6 +35,15 @@ current Brain/graph/as-of context and cannot present stale proposals as current.
 - G4 SQL validates current rows at INSERT/UPDATE time against active tenant Brain and graph rows,
   exact graph-to-snapshot lineage, snapshot knowledge version, graph fingerprint, and JSON/source
   binding. Existing AFTER invalidation triggers remain.
+- Frozen G1 prepareSnapshot() has no durable row ID. G4 no longer emits an undefined
+  sourceState.brainSnapshotId or stores a redundant brain_snapshot_id. SQL uses the actual runtime
+  64-character graphFingerprint as the tenant-composite persistence anchor, resolves the exact
+  company_graph_versions row, follows its brain_snapshot_id, and then validates the exact tenant
+  company_brain_snapshots row. Runtime graphVersion remains debug metadata and is never treated as
+  the persisted graph UUID.
+- Freshness, persistence, review, and normal get/replay require an explicit canonical current
+  asOfDate. Normal replay evaluates upstream/date freshness immediately, records/returns STALE with
+  invalidatedAt when needed, and never rewrites SUPERSEDED history.
 
 == Persistence ==
 
@@ -44,10 +53,10 @@ Runtime replay store:
 
 Repository migration:
   supabase/migrations/20260901034230_company_operating_model_g4.sql
-  - exact tenant Brain-snapshot and graph-version foreign keys
+  - exact (user_id, graph_fingerprint) foreign key; Brain lineage is derived through that G2 row
   - exact tenant-composite claim-root evidence relation
   - deferred JSON/normalized provenance agreement checks
-  - automatic staleness on graph or Brain snapshot invalidation
+  - automatic staleness on graph invalidation or Brain invalidation joined through graph lineage
   - fail-closed current-row validation for active Brain/graph state and exact shared lineage
   - exact snapshot knowledge-version, graph-fingerprint, and JSON/source-state binding
   - RLS, authenticated tenant read policy, read-only browser grant
@@ -59,6 +68,12 @@ Qualification:
 
 == Validation Results ==
 
+npm run test:company-brain-g0:
+  tests 27 | pass 27 | fail 0 | skipped 0 | todo 0
+
+npm run test:company-brain-g1:
+  tests 74 | pass 74 | fail 0 | skipped 0 | todo 0
+
 npm run test:company-brain-g2:
   tests 129 | pass 129 | fail 0 | skipped 0 | todo 0
 
@@ -66,16 +81,19 @@ npm run test:company-brain-g3:
   tests 226 | pass 226 | fail 0 | skipped 0 | todo 0
 
 npm run test:company-brain-g4:
-  tests 256 | pass 256 | fail 0 | skipped 0 | todo 0
+  tests 261 | pass 261 | fail 0 | skipped 0 | todo 0
   G4-24 through G4-30 close stale persistence/replay, stale review, descriptive temporal
   applicability, unsupported claim routing, semantic tampering, SQL exact source binding, and
   as-of freshness.
+  G4-31 through G4-35 close runtime/SQL lineage-shape agreement, mandatory explicit current dates,
+  direct replay freshness, temporal rollover without knowledge mutation, and exact graph-derived
+  Brain lineage/invalidation.
 
 npm test:
-  tests 1226 | pass 1226 | fail 0 | skipped 0 | todo 0
+  tests 1231 | pass 1231 | fail 0 | skipped 0 | todo 0
 
 npm run build:
-  PASS — Vite 5.4.21; 1978 modules transformed; production bundle built in 4.76s.
+  PASS — Vite 5.4.21; 1978 modules transformed; production bundle built in 7.06s.
   Only the repository's existing large-chunk advisory remains.
 
 git diff --check:
@@ -83,8 +101,9 @@ git diff --check:
 
 PostgreSQL parser/migration structure:
   PASS — the G4 migration parses with pgsql-parser; an intentionally corrupted variant fails.
-  Exact tenant graph/snapshot FKs, normalized claim-root evidence FK, deferred JSON/normalized
-  provenance checks, RLS, authenticated read-only grants, automatic graph/Brain staleness triggers,
+  Exact tenant+graph-fingerprint FK and graph-derived Brain lineage, normalized claim-root evidence
+  FK, deferred JSON/normalized provenance checks, RLS, authenticated read-only grants, automatic
+  graph/Brain staleness triggers,
   current-insert active-state checks, exact graph/Brain lineage, knowledge-version/fingerprint
   source binding, payload/source identity binding, and fail-closed false boundary checks are
   structurally tested. Good SQL parses; intentionally syntax-corrupted SQL is rejected. This is
@@ -101,7 +120,8 @@ Canonical financial mutation scan:
 Tenant isolation review:
   PASS — runtime entry points bind authenticated actor to tenant; every Brain/graph read is tenant
   scoped; replay persistence filters by tenant; SQL uses user_id on all tables, policies, and
-  composite foreign keys. G4-12 proves Tenant A cannot incorporate or read Tenant B evidence/proposals.
+  composite foreign keys. G4-12 proves Tenant A cannot incorporate or read Tenant B evidence/proposals;
+  G4-31/G4-35 prove runtime and SQL lineage remain exact-tenant without a fabricated snapshot ID.
 
 Authority-boundary scan:
   PASS — canonicalMoneyWritable, authorityGrantable, canActAutomatically, operatingModelApproved,
@@ -143,6 +163,11 @@ Scope-creep scan:
   clients, and proposals.
 - Persistence round trip: fingerprint replay is idempotent; changed upstream state supersedes the old
   proposal; exact evidence/provenance survives retrieval; review context remains review-only.
+- Runtime/SQL shape: sourceState has no undefined identities and no fake Brain snapshot ID; its exact
+  graph fingerprint supplies the durable persistence anchor while graphVersion remains debug metadata.
+- Direct replay: revocation marks the stored current row STALE without another persist/review call.
+- Date rollover: a date-A proposal becomes stale for date B even when Brain and graph versions do not
+  change; every currentness API requires the caller's explicit canonical date.
 
 == Changed Files ==
 
