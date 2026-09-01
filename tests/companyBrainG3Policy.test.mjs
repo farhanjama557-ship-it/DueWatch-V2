@@ -1912,3 +1912,317 @@ test('G3-final-6: askDwPolicy reports governing decision when valid; stops after
   assert.equal(afterAnswer.authorityBoundary.canActAutomatically, false, 'R9')
   assert.equal(afterAnswer.canonicalMoneyWritable, false, 'R0')
 })
+
+// ── G3-consistency: 1 — Ask DW scope filtering (Issue 1 regression) ───────────
+
+test('G3-consistency-1: askDwPolicy founderDecisions filtered by exact scope', () => {
+  // Three decisions exist: one COMPANY-wide, one atlas-scoped, one acme-us-scoped.
+  // Atlas Ask DW must see only the atlas decision.
+  // COMPANY Ask DW must see only the COMPANY decision.
+  // acme-us Ask DW must see only the acme-us decision.
+  const { graph, brain } = seeded()
+
+  const companyCandidates = buildPolicyCandidates(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    scope: { level: SEMANTIC_SCOPE.COMPANY }, queryDate: '2026-08-31',
+  }).filter((c) => c.topic === 'late_fee_policy' && c.candidateStatus === CANDIDATE_STATUS.ACTIVE)
+
+  const atlasClientCandidates = buildPolicyCandidates(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    scope: { level: SEMANTIC_SCOPE.CLIENT, clientId: 'atlas' }, queryDate: '2026-08-31',
+  }).filter((c) => c.topic === 'late_fee_policy' && c.candidateStatus === CANDIDATE_STATUS.ACTIVE)
+
+  const companyPolicy = companyCandidates.find((c) => c.claimClass === CLAIM_CLASS.COMPANY_POLICY)
+  const atlasException = atlasClientCandidates.find((c) => c.claimClass === CLAIM_CLASS.CLIENT_EXCEPTION)
+  assert.ok(companyPolicy, 'expected COMPANY_POLICY candidate')
+  assert.ok(atlasException, 'expected atlas CLIENT_EXCEPTION candidate')
+
+  // Decision 1: COMPANY-wide (no scope field)
+  brain.decisions.push({
+    id: 'decision-consistency-1-company',
+    tenantId: tenantA,
+    actorId: founderA.id, actorRole: 'FOUNDER',
+    decidedAt: '2026-08-31T10:00:00Z',
+    decisionType: 'RESOLVE_CONFLICT',
+    target: 'late_fee_policy',
+    oldState: { status: 'CONFLICTED' },
+    newState: { governingClaimId: companyPolicy.claimId },
+    evidenceClaimIds: [companyPolicy.claimId],
+    reason: 'company 5%',
+    revocable: true,
+    idempotencyKey: 'idem-c1-company',
+    requestFingerprint: 'test',
+    supersedesDecisionId: null,
+    status: 'RECORDED',
+  })
+
+  // Decision 2: atlas-scoped
+  brain.decisions.push({
+    id: 'decision-consistency-1-atlas',
+    tenantId: tenantA,
+    actorId: founderA.id, actorRole: 'FOUNDER',
+    decidedAt: '2026-08-31T10:00:00Z',
+    decisionType: 'RESOLVE_CONFLICT',
+    target: 'late_fee_policy',
+    scope: { level: SEMANTIC_SCOPE.CLIENT, clientId: 'atlas' },
+    oldState: { status: 'CONFLICTED' },
+    newState: { governingClaimId: atlasException.claimId },
+    evidenceClaimIds: [atlasException.claimId],
+    reason: 'atlas 2%',
+    revocable: true,
+    idempotencyKey: 'idem-c1-atlas',
+    requestFingerprint: 'test',
+    supersedesDecisionId: null,
+    status: 'RECORDED',
+  })
+
+  // Decision 3: acme-us-scoped (evidence = same company policy claim as a stand-in)
+  brain.decisions.push({
+    id: 'decision-consistency-1-acme',
+    tenantId: tenantA,
+    actorId: founderA.id, actorRole: 'FOUNDER',
+    decidedAt: '2026-08-31T10:00:00Z',
+    decisionType: 'RESOLVE_CONFLICT',
+    target: 'late_fee_policy',
+    scope: { level: SEMANTIC_SCOPE.CLIENT, clientId: 'acme-us' },
+    oldState: { status: 'CONFLICTED' },
+    newState: { governingClaimId: companyPolicy.claimId },
+    evidenceClaimIds: [companyPolicy.claimId],
+    reason: 'acme 5%',
+    revocable: true,
+    idempotencyKey: 'idem-c1-acme',
+    requestFingerprint: 'test',
+    supersedesDecisionId: null,
+    status: 'RECORDED',
+  })
+
+  // Atlas Ask DW: must see only atlas decision
+  const atlasAsk = askDwPolicy(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    question: 'What did the founder decide about late fees?',
+    clientId: 'atlas', queryDate: '2026-08-31',
+  })
+  assert.equal(atlasAsk.founderDecisions.length, 1,
+    'atlas Ask DW must see exactly 1 decision (its own)')
+  assert.equal(atlasAsk.founderDecisions[0].id, 'decision-consistency-1-atlas',
+    'atlas Ask DW must report only the atlas-scoped decision, not COMPANY or acme-us')
+
+  // COMPANY Ask DW: must see only COMPANY decision
+  const companyAsk = askDwPolicy(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    question: 'What did the founder decide about late fees?', queryDate: '2026-08-31',
+  })
+  assert.equal(companyAsk.founderDecisions.length, 1,
+    'COMPANY Ask DW must see exactly 1 decision (its own)')
+  assert.equal(companyAsk.founderDecisions[0].id, 'decision-consistency-1-company',
+    'COMPANY Ask DW must report only the COMPANY-scoped decision, not atlas or acme-us')
+
+  // acme-us Ask DW: must see only acme-us decision
+  const acmeAsk = askDwPolicy(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    question: 'What did the founder decide about late fees?',
+    clientId: 'acme-us', queryDate: '2026-08-31',
+  })
+  assert.equal(acmeAsk.founderDecisions.length, 1,
+    'acme-us Ask DW must see exactly 1 decision (its own)')
+  assert.equal(acmeAsk.founderDecisions[0].id, 'decision-consistency-1-acme',
+    'acme-us Ask DW must report only the acme-scoped decision, not atlas or COMPANY')
+})
+
+// ── G3-consistency: 2 — Ask DW hasUnresolvedConflicts 3-state (Issue 2 regression) ──
+
+test('G3-consistency-2: askDwPolicy uncertainty.hasUnresolvedConflicts reflects unresolvedConflicts (3-state)', () => {
+  // State A: no decision → hasUnresolvedConflicts === true
+  // State B: valid decision → hasUnresolvedConflicts === false
+  // State C: revoke backing evidence → hasUnresolvedConflicts === true again
+  //
+  // The decision uses a SEPARATE standalone backing claim (not the candidate's own claimId),
+  // so revoking it invalidates the decision without removing the conflict candidates.
+  const { graph, brain } = seeded()
+
+  const candidates = buildPolicyCandidates(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    scope: { level: SEMANTIC_SCOPE.COMPANY }, queryDate: '2026-08-31',
+  }).filter((c) => c.topic === 'late_fee_policy' && c.candidateStatus === CANDIDATE_STATUS.ACTIVE)
+
+  const chosenCandidate = candidates.find((c) => c.claimClass === CLAIM_CLASS.COMPANY_POLICY)
+  assert.ok(chosenCandidate)
+
+  // State A: CONFLICTED — must report hasUnresolvedConflicts: true
+  const stateA = askDwPolicy(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    question: 'Why is the late fee policy unresolved?', queryDate: '2026-08-31',
+  })
+  assert.equal(stateA.uncertainty.hasUnresolvedConflicts, true,
+    'State A: must be true when conflicts exist and no decision is in place')
+
+  // Add a standalone backing claim (not a candidate's claimId — only in evidenceClaimIds)
+  // so that revoking it later invalidates the decision without removing any candidate.
+  const standaloneBackingId = 'backing-standalone-c2'
+  brain.claims.push({
+    id: standaloneBackingId,
+    tenantId: tenantA,
+    active: true,
+    claimType: 'memo',
+    claimClass: 'FOUNDER_INSTRUCTION',
+    value: { note: 'standalone decision backing for test' },
+    sourceDocumentId: 'backing-c2',
+    sourceVersionId: 'backing-c2-v1',
+    extractedBy: workerA.id,
+  })
+
+  // Add a valid decision: winner = chosenCandidate; evidence = standalone backing claim
+  brain.decisions.push({
+    id: 'decision-consistency-2',
+    tenantId: tenantA,
+    actorId: founderA.id, actorRole: 'FOUNDER',
+    decidedAt: '2026-08-31T12:00:00Z',
+    decisionType: 'RESOLVE_CONFLICT',
+    target: 'late_fee_policy',
+    oldState: { status: 'CONFLICTED' },
+    newState: { governingClaimId: chosenCandidate.claimId },
+    evidenceClaimIds: [standaloneBackingId],
+    reason: '5% is correct',
+    revocable: true,
+    idempotencyKey: 'idem-c2',
+    requestFingerprint: 'test',
+    supersedesDecisionId: null,
+    status: 'RECORDED',
+  })
+
+  // State B: RESOLVED — must report hasUnresolvedConflicts: false
+  const stateB = askDwPolicy(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    question: 'Why is the late fee policy unresolved?', queryDate: '2026-08-31',
+  })
+  assert.equal(stateB.uncertainty.hasUnresolvedConflicts, false,
+    'State B: must be false when a valid founder decision resolves the conflict (Issue 2)')
+
+  // Revoke the standalone backing claim — this invalidates the decision,
+  // but leaves both candidate claims active so the conflict is still present.
+  const backingClaim = brain.claims.find((c) => c.id === standaloneBackingId)
+  assert.ok(backingClaim)
+  backingClaim.active = false
+
+  // State C: decision invalidated → back to CONFLICTED
+  const stateC = askDwPolicy(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    question: 'Why is the late fee policy unresolved?', queryDate: '2026-08-31',
+  })
+  assert.equal(stateC.uncertainty.hasUnresolvedConflicts, true,
+    'State C: must be true again after backing evidence revoked (Issue 2 + R6)')
+  assert.equal(stateC.canonicalMoneyWritable, false, 'R0')
+})
+
+// ── G3-consistency: 3 — DW Intelligence unresolvedPolicyConflicts scope-aware (Issue 3 regression) ──
+
+test('G3-consistency-3: buildG3DwIntelligenceContext unresolvedPolicyConflicts is scope-aware', () => {
+  // Atlas decision must reduce atlas unresolvedPolicyConflicts,
+  // but must NOT affect COMPANY or acme-us unresolvedPolicyConflicts.
+  const { graph, brain } = seeded()
+
+  const atlasClientCandidates = buildPolicyCandidates(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    scope: { level: SEMANTIC_SCOPE.CLIENT, clientId: 'atlas' }, queryDate: '2026-08-31',
+  }).filter((c) => c.topic === 'late_fee_policy' && c.candidateStatus === CANDIDATE_STATUS.ACTIVE)
+
+  const atlasException = atlasClientCandidates.find((c) => c.claimClass === CLAIM_CLASS.CLIENT_EXCEPTION)
+  assert.ok(atlasException, 'expected atlas CLIENT_EXCEPTION candidate')
+
+  // Baseline: all three scopes have unresolved conflicts
+  const baseAtlas = buildG3DwIntelligenceContext(graph, brain, {
+    actor: founderA, tenantId: tenantA, clientId: 'atlas', queryDate: '2026-08-31',
+  })
+  const baseCompany = buildG3DwIntelligenceContext(graph, brain, {
+    actor: founderA, tenantId: tenantA, queryDate: '2026-08-31',
+  })
+  const baseAcme = buildG3DwIntelligenceContext(graph, brain, {
+    actor: founderA, tenantId: tenantA, clientId: 'acme-us', queryDate: '2026-08-31',
+  })
+  assert.ok(baseAtlas.unresolvedPolicyConflicts.length > 0, 'atlas must have unresolved conflicts before decision')
+  assert.ok(baseCompany.unresolvedPolicyConflicts.length > 0, 'COMPANY must have unresolved conflicts before decision')
+
+  // Add atlas-scoped decision
+  brain.decisions.push({
+    id: 'decision-consistency-3-atlas',
+    tenantId: tenantA,
+    actorId: founderA.id, actorRole: 'FOUNDER',
+    decidedAt: '2026-08-31T12:00:00Z',
+    decisionType: 'RESOLVE_CONFLICT',
+    target: 'late_fee_policy',
+    scope: { level: SEMANTIC_SCOPE.CLIENT, clientId: 'atlas' },
+    oldState: { status: 'CONFLICTED' },
+    newState: { governingClaimId: atlasException.claimId },
+    evidenceClaimIds: [atlasException.claimId],
+    reason: 'atlas 2% confirmed',
+    revocable: true,
+    idempotencyKey: 'idem-c3-atlas',
+    requestFingerprint: 'test',
+    supersedesDecisionId: null,
+    status: 'RECORDED',
+  })
+
+  // After atlas decision: atlas unresolvedPolicyConflicts must be reduced (atlas conflict resolved)
+  const afterAtlas = buildG3DwIntelligenceContext(graph, brain, {
+    actor: founderA, tenantId: tenantA, clientId: 'atlas', queryDate: '2026-08-31',
+  })
+  // COMPANY scope must remain unresolved — atlas-scoped decision must not bleed into COMPANY
+  const afterCompany = buildG3DwIntelligenceContext(graph, brain, {
+    actor: founderA, tenantId: tenantA, queryDate: '2026-08-31',
+  })
+  // acme-us must remain unresolved
+  const afterAcme = buildG3DwIntelligenceContext(graph, brain, {
+    actor: founderA, tenantId: tenantA, clientId: 'acme-us', queryDate: '2026-08-31',
+  })
+
+  assert.ok(afterAtlas.unresolvedPolicyConflicts.length < baseAtlas.unresolvedPolicyConflicts.length,
+    'atlas-scoped decision must reduce atlas unresolvedPolicyConflicts (Issue 3)')
+  assert.equal(afterCompany.unresolvedPolicyConflicts.length, baseCompany.unresolvedPolicyConflicts.length,
+    'atlas decision must NOT reduce COMPANY unresolvedPolicyConflicts (scope isolation, Issue 3)')
+  assert.equal(afterAcme.unresolvedPolicyConflicts.length, baseAcme.unresolvedPolicyConflicts.length,
+    'atlas decision must NOT reduce acme-us unresolvedPolicyConflicts (cross-client isolation, Issue 3)')
+  assert.equal(afterCompany.authorityBoundary.canActAutomatically, false, 'R9')
+  assert.equal(afterCompany.boundaries.canonicalMoneyWritable, false, 'R0')
+})
+
+// ── G3-consistency: 4 — CONTRACT provenance negative regression (Issue 4 regression) ──
+
+test('G3-consistency-4: CONTRACT_VS_COMPANY_POLICY does NOT fire for non-contract-derived client evidence', () => {
+  // A client-scoped founder instruction (not derived from a contract) coexisting with
+  // an active contract and a company late-fee policy must NOT fire CONTRACT_VS_COMPANY_POLICY.
+  // It may fire COMPANY_VS_CLIENT_EXCEPTION or FOUNDER_INSTRUCTION_VS_PRIOR_POLICY instead.
+  const brain = new CompanyBrainDurableStore({ clock: clocks() })
+
+  // Company-wide 5% late fee
+  ingestContent(brain, workerA, 'sop-c4.md', 'Charge a 5% late fee on all overdue invoices.', 'sop-c4')
+
+  // Active contract for testco — Net 30 payment terms only, no late-fee exception
+  const contractContent = `---\ndocument_type: contract\ncontract_id: contract-testco\nclient_id: testco\nscope: CLIENT\neffective_from: 2026-01-01\n---\nPayment terms: Net 30.`
+  ingestContent(brain, workerA, 'contract-testco.md', contractContent, 'contract-testco')
+
+  // Client-scoped founder instruction saying 2% — but NOT linked to the contract
+  // (ingested as a client_exception_record WITHOUT a contract_id field → no DERIVED_FROM edge)
+  const exceptionContent = `---\ndocument_type: client_exception\nexception_id: exception-testco-standalone\nclient_id: testco\npolicy_topic: late_fee_policy\nscope: CLIENT\n---\nTestCo gets a 2% late fee rate per founder verbal agreement.`
+  ingestContent(brain, workerA, 'exception-testco-standalone.md', exceptionContent, 'exception-testco-standalone')
+
+  // Entity registry so testco is resolvable
+  ingestContent(brain, workerA, 'reg-c4.csv', 'entity_type,entity_id,name\nCLIENT,testco,TestCo', 'reg-c4')
+
+  const graph = new CompanyGraphStore({ brainStore: brain, clock: clocks() })
+  graph.build({ actor: founderA, tenantId: tenantA })
+
+  const result = resolvePolicy(graph, brain, {
+    actor: founderA, tenantId: tenantA,
+    scope: { level: SEMANTIC_SCOPE.CLIENT, clientId: 'testco' },
+    topic: 'late_fee_policy',
+    queryDate: '2026-08-31',
+  })
+
+  const classes = result.conflicts.map((c) => c.conflictClass)
+  assert.ok(
+    !classes.includes(CONFLICT_CLASS.CONTRACT_VS_COMPANY_POLICY),
+    `CONTRACT_VS_COMPANY_POLICY must NOT fire when client evidence is not provenance-linked to contract, got: ${JSON.stringify(classes)}`,
+  )
+  assert.equal(result.canActAutomatically, false, 'R9')
+  assert.equal(result.canonicalMoneyWritable, false, 'R0')
+})
