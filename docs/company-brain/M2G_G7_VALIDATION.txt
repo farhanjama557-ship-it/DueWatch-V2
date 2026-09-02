@@ -17,6 +17,7 @@ Authority audit fix:  52a5d25d0941b6a6dce35d692e6e783559e4029a
 Channel edge fix:     b707f68e2512676c66b7ca872ec67bd0b66b96de
 Polarity audit fix:   c927e84fffa731ff38084ae2e38864e042eb3f3f
 Read-only drift fix: b41e0068c0290c4c3cb49e890d6019c87d80c6dd
+Mixed-operation fix: b6240abecac28d96451f70556b33815fa5c306b0
 Validation-doc SHA:   reported in final handoff (a commit cannot embed its own SHA)
 
 Recovery proved CP7 was a real coherent local commit and CP6 its ancestor. The
@@ -963,6 +964,79 @@ bundle is created and independently proved after the validation commit; its
 head and SHA-256 are reported in the final handoff.
 
 ==================================================
+9h. MIXED READ-ONLY + UNKNOWN OPERATION COMPOSITION REPAIR
+==================================================
+
+Starting candidate: 4966f11a3ee6c3ed29525a51ba5daa0c13e592e1
+Implementation:     b6240abecac28d96451f70556b33815fa5c306b0
+Branch:             g7-safe-by-default-action-boundary (isolated local repair)
+
+REPRODUCTION. Every independently supplied mixed founder request reproduced at
+the starting candidate: a leading EXPLAIN, INVESTIGATE, PREDICT or DECIDE
+predicate made recognizeKnownReadOnlyAskDwJob return a safe job, caused
+classifyAskDwAuthorityRequest to return false, and routed the turn into normal
+model-owned work. All four supplied mixed first-person DW commitments likewise
+returned authorityBearing:false.
+
+STRUCTURAL REPAIR. A safe prefix no longer proves a safe operation. The shared
+intent owner now validates the complete direct operation phrase. Sequenced
+components (then, and then, but also) and coordinated components (and, but,
+or) must each begin with a positively recognized bounded read-only predicate.
+Unknown punctuation boundaries fail closed. A closed two-object comparison and
+non-operational wh-complements preserve legitimate read-only grammar without
+turning arbitrary trailing verbs into safe work. No hostile verb was added to
+AR_ACT, AR_ACT_VERB or another unsafe dictionary.
+
+MODEL OUTPUT. The same complete-operation proof is applied to the pre-existing
+narrower model-output vocabulary; it does not widen future/background work.
+Proposition segmentation now preserves the DW subject/modal controller when a
+coordinator elides it. Thus "I will explain and reimburse" becomes independent
+"I will explain" and "I will reimburse" propositions for grounding. Pure
+read-only commitments remain permissible, while every supplied mixed model
+commitment reaches the real grounding guard and is blocked.
+
+REGRESSION AND MUTATION PROOF. G7-SD9 runs all supplied mixed founder cases and
+additional and-then/then/but-also/order variants through both
+classifyAskDwConversationalTurn and the real orchestrator path. Every case is
+owned deterministically, is not mapped to any G5 action, receives
+CLARIFICATION_REQUIRED, and cannot use the colluding model answer. G7-SD10
+checks full-proposition parsing, segmented candidate parsing and the real
+grounding guard for mixed model commitments, alongside all required legitimate
+output counterexamples. G7-SD11 mutates the implementation back to the prior
+leading-predicate exemption and proves every mixed founder case regresses.
+G7-SD1 through SD8 remain green.
+
+VALIDATION (actual, final implementation tree):
+
+  Focused boundary       92 tests; 92 pass; 0 fail; 0 skip
+  G5 gate               362 tests; 362 pass; 0 fail; 0 skip
+  G6 gate               504 tests; 490 pass; 0 fail; 14 skip
+  Ask DW                361 tests; 361 pass; 0 fail; 0 skip
+  G7 focused            182 tests; 182 pass; 0 fail; 0 skip
+  Full npm test        1680 tests; 1666 pass; 0 fail; 14 skip
+  Production build     PASS (existing externalized-node/chunk warnings only)
+  git diff --check     CLEAN
+
+The fourteen G6 PostgreSQL runtime tests remain honestly skipped because no
+PostgreSQL server/socket was available.
+
+SCANS AND LOCKS. Credential/secret literals, canonical financial writes,
+authority mutation/execution primitives, provider/network I/O and new tenant
+boundary code are absent from the changed production files. No file under
+src/lib/companyBrain changed, so G5 semantics are untouched. No G8 path or file
+exists. Historical M2D Git blob locks remain exactly:
+
+  supabase/functions/_shared/askDwOpenAiContract.js
+    e3870f6ffc62fea71118a9202d79af00cdf70477
+  supabase/functions/ask-dw-model/index.ts
+    b687f54b07ac7f9f31596a7cdf42a472d4ab8855
+
+The canonical local m2g/company-brain-bootstrap-g7 branch remains unmoved at
+7136985beb7e9e664989d964e09a256fbf77ebce. Nothing was pushed and G8 was not
+started. The standalone bundle is created and clean-room proved after this
+validation commit; its head and SHA-256 are reported in the final handoff.
+
+==================================================
 10. EXIT DECISION
 ==================================================
 
@@ -970,6 +1044,7 @@ The committed source tree, including the final authority-boundary repair in
 section 9b, the independent-audit targeted repair in section 9c, and the
 input/output authority closure in section 9d, the question-semantics closure
 in section 9e, the safe-by-default action boundary in section 9f, and the
-shared read-only job repair in section 9g, is a G7 FREEZE CANDIDATE. All material source-level
+shared read-only job repair in section 9g, and the mixed-operation composition
+repair in section 9h, is a G7 FREEZE CANDIDATE. All material source-level
 requirements have implementation and executable evidence. External validation
 limitations are stated above rather than hidden. G8 was not started.
