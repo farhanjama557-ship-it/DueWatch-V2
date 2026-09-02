@@ -187,8 +187,11 @@ test('G7-G3 claiming an action happened is blocked regardless of the verifier', 
 test('G7-G4 claiming authority without a current grant is blocked', () => {
   const withoutGrant = guard('I am authorized to send this.', { companyBrainContext: conflictedBrain() })
   assert.ok(withoutGrant.groundingIssues.includes(ASK_DW_GROUNDING_ISSUE.CLAIMED_AUTHORITY_WITHOUT_GRANT))
-  // With a real grant in context the same sentence is permitted.
-  const withGrant = guard('I am authorized to send this.', { companyBrainContext: conflictedBrain({ grants: 1 }) })
+  // Only a real grant matching the active scope and action permits the claim.
+  const withGrant = guard('I am authorized to send this.', {
+    companyBrainContext: conflictedBrain({ grants: 1 }),
+    caseContext: { focus: { clientRef: { kind: 'client', id: 'atlas' }, invoiceRef: null } },
+  })
   assert.ok(!withGrant.groundingIssues.includes(ASK_DW_GROUNDING_ISSUE.CLAIMED_AUTHORITY_WITHOUT_GRANT))
 })
 

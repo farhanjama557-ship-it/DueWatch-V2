@@ -57,7 +57,8 @@ test('System Brain code audit exposes code-level data dependencies without query
   assert.ok(rpcs.has('persist_ask_dw_conversation_state'))
 
   const edgeFunctions = new Set(manifest.data_dependencies.filter((item) => item.kind === 'edge_function').map((item) => item.name))
-  assert.ok(edgeFunctions.has('ask-dw-model'))
+  assert.ok(edgeFunctions.has('ask-dw-g7-model'))
+  assert.equal(edgeFunctions.has('ask-dw-model'), false, 'historical M2D provider is not the active G7 browser dependency')
 
   assert.equal(manifest.meta.tenant_row_data_read, false)
   assert.equal(manifest.boundaries.live_tenant_state_included, false)

@@ -118,6 +118,73 @@ function downgrade(verdict, target) {
   return 'REVISE'
 }
 
+function activeFocus(caseContext) {
+  return {
+    clientId: caseContext?.focus?.clientRef?.id ?? null,
+    invoiceId: caseContext?.focus?.invoiceRef?.id ?? null,
+  }
+}
+
+function hasDimensions(value) {
+  return Boolean(value && typeof value === 'object' && Object.keys(value).length > 0)
+}
+
+function grantIsCurrentAt(grant, evaluatedAt) {
+  const at = Date.parse(evaluatedAt)
+  if (!Number.isFinite(at)) return true
+  const from = Date.parse(grant?.effectiveFrom)
+  const expires = grant?.expiresAt == null ? null : Date.parse(grant.expiresAt)
+  if (Number.isFinite(from) && at < from) return false
+  if (Number.isFinite(expires) && at >= expires) return false
+  return true
+}
+
+function grantMatchesFocus(grant, caseContext, evaluatedAt) {
+  if (grant?.status !== 'GRANTED') return false
+  if (!grantIsCurrentAt(grant, evaluatedAt)) return false
+  if (grant?.approvalRequirement !== 'NONE') return false
+  if (hasDimensions(grant?.conditions) || hasDimensions(grant?.limits)) return false
+  const focus = activeFocus(caseContext)
+  const level = String(grant?.scope?.level || '').toUpperCase()
+  if (level === 'COMPANY') return true
+  if (level === 'CLIENT') {
+    return Boolean(focus.clientId && grant?.scope?.clientId === focus.clientId)
+  }
+  if (level === 'ENTITY') {
+    return Boolean(
+      focus.invoiceId &&
+      String(grant?.scope?.entityType || '').toUpperCase() === 'INVOICE' &&
+      grant?.scope?.entityId === focus.invoiceId
+    )
+  }
+  return false
+}
+
+function claimedActions(text) {
+  const actions = new Set()
+  if (/\b(?:send|email|reminder|collection message)\b/i.test(text)) {
+    actions.add('SEND_REMINDER')
+    actions.add('SEND_COLLECTION_MESSAGE')
+  }
+  if (/\bapply\b[^.]{0,24}\blate fee\b/i.test(text)) actions.add('APPLY_LATE_FEE')
+  if (/\bwaive\b[^.]{0,24}\blate fee\b/i.test(text)) actions.add('WAIVE_LATE_FEE')
+  if (/\bsettle\b/i.test(text)) actions.add('SETTLE_INVOICE')
+  if (/\bwrite(?:-| )?off\b/i.test(text)) actions.add('WRITE_OFF_INVOICE')
+  if (/\brefund\b/i.test(text)) actions.add('ISSUE_REFUND')
+  return actions
+}
+
+function authorityClaimSupported({ text, grants, caseContext, evaluatedAt }) {
+  const actions = claimedActions(text)
+  const channel = /\b(?:email|emailed)\b/i.test(text) ? 'EMAIL' : null
+  return grants.some((grant) => {
+    if (!grantMatchesFocus(grant, caseContext, evaluatedAt)) return false
+    if (actions.size > 0 && !actions.has(grant.action)) return false
+    if (channel && grant.channel !== channel) return false
+    return true
+  })
+}
+
 /**
  * Checks a candidate answer deterministically.
  *
@@ -161,8 +228,14 @@ export function enforceAskDwGrounding({
   }
   if (AUTHORITY_CLAIMS.some((pattern) => pattern.test(text))) {
     const grants = safeArray(companyBrainContext?.authority?.currentGrants)
-    if (grants.length === 0) {
-      add(ASK_DW_GROUNDING_ISSUE.CLAIMED_AUTHORITY_WITHOUT_GRANT, 'Candidate claims authority with no current grant in context.', 'BLOCK')
+    if (!authorityClaimSupported({
+      text,
+      grants,
+      caseContext,
+      evaluatedAt: companyBrainContext?.authority?.evaluatedAt,
+    })) {
+      add(ASK_DW_GROUNDING_ISSUE.CLAIMED_AUTHORITY_WITHOUT_GRANT,
+        'Candidate claims authority without a current grant matching the active scope, action, and channel.', 'BLOCK')
     }
   }
 

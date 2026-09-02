@@ -106,6 +106,18 @@ function relevantTo(item, focus) {
   return true
 }
 
+function grantIsCurrentAt(grant, evaluatedAt) {
+  const at = Date.parse(evaluatedAt)
+  if (!Number.isFinite(at)) return true
+  const from = Date.parse(grant?.effectiveWindow?.effectiveFrom)
+  const expires = grant?.effectiveWindow?.expiresAt == null
+    ? null
+    : Date.parse(grant.effectiveWindow.expiresAt)
+  if (Number.isFinite(from) && at < from) return false
+  if (Number.isFinite(expires) && at >= expires) return false
+  return true
+}
+
 /**
  * Projects the frozen G6 founder-review read model into the read-only slice a
  * conversation is permitted to discuss.
@@ -151,19 +163,29 @@ export function buildAskDwCompanyBrainContext({ readModel, tenantId, focus = nul
   const changed = items.filter((item) =>
     item.changedSinceReview === true || item.supportingSourceRevoked === true)
 
+  const currentAuthorityGrants = safeArray(readModel.authority?.currentAuthorityGrants)
+  if (currentAuthorityGrants.some((grant) =>
+    grant?.status !== 'GRANTED' || !grantIsCurrentAt(grant, readModel.authority?.evaluatedAt))) {
+    throw new Error('Ask DW Company Brain current authority projection contains a non-current grant')
+  }
+
   const authority = readModel.authority ? {
     evaluatedAt: readModel.authority.evaluatedAt,
     activeGrantCount: readModel.authority.activeGrantCount,
     proposalCount: readModel.authority.proposalCount,
     noStandingAuthorityConfigured: readModel.authority.noStandingAuthorityConfigured === true,
     // Each dimension is named so an answer can be exact about what is allowed.
-    currentGrants: safeArray(readModel.authority.currentAuthorityGrants).map((grant) => ({
+    currentGrants: currentAuthorityGrants.map((grant) => ({
       grantId: grant.id,
       action: grant.action,
       scope: clone(grant.scope),
       clientId: grant.scope?.clientId ?? null,
       channel: grant.channel ?? null,
       approvalRequirement: grant.approvalRequirement,
+      limits: grant.limits ? {
+        maxAmountMinor: grant.limits.maxAmountMinor ?? null,
+        currencyCode: grant.limits.currency ?? null,
+      } : {},
       conditions: clone(grant.conditions ?? {}),
       effectiveFrom: grant.effectiveWindow?.effectiveFrom ?? null,
       expiresAt: grant.effectiveWindow?.expiresAt ?? null,

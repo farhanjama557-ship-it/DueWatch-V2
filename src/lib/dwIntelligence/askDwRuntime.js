@@ -15,6 +15,7 @@ import {
   askDwTurnToJob,
   classifyAskDwConversationalTurn,
 } from './askDwConversationalTurn.js'
+import { ASK_DW_READ_TOOL } from './askDwToolRuntime.js'
 
 const HIGH_RISK_ACTIONS = new Set([
   'mark_paid',
@@ -187,6 +188,22 @@ function buildWorkManifest({ policy, result }) {
   }
 }
 
+function assertScopedReadEnvelope({ output, name, scope, tenantId, canonicalAuthority }) {
+  if (
+    !output ||
+    output.name !== name ||
+    output.scope !== scope ||
+    output.tenantId !== tenantId ||
+    output.canonicalAuthority !== canonicalAuthority ||
+    output.readOnly !== true ||
+    output.sideEffect !== false ||
+    !output.result ||
+    typeof output.result !== 'object'
+  ) {
+    throw new Error(`Ask DW scoped snapshot ${name} provenance invalid`)
+  }
+}
+
 function runScopedConversationCore({
   mode,
   text,
@@ -202,13 +219,29 @@ function runScopedConversationCore({
   if (snapshot.scope === 'CLIENT' && (!snapshot.clientId || snapshot.clientId !== context.clientId)) {
     throw new Error('Ask DW scoped snapshot client mismatch')
   }
+  if (context.asOf && snapshot.asOf !== context.asOf) {
+    throw new Error('Ask DW scoped snapshot freshness mismatch')
+  }
+  assertScopedReadEnvelope({
+    output: snapshot.canonicalState,
+    name: ASK_DW_READ_TOOL.CANONICAL_STATE,
+    scope: snapshot.scope,
+    tenantId: snapshot.tenantId,
+    canonicalAuthority: true,
+  })
+  assertScopedReadEnvelope({
+    output: snapshot.portfolioSummary,
+    name: ASK_DW_READ_TOOL.PORTFOLIO_SUMMARY,
+    scope: snapshot.scope,
+    tenantId: snapshot.tenantId,
+    canonicalAuthority: false,
+  })
   if (
-    snapshot.canonicalState?.readOnly !== true ||
-    snapshot.canonicalState?.sideEffect !== false ||
-    snapshot.portfolioSummary?.readOnly !== true ||
-    snapshot.portfolioSummary?.sideEffect !== false
+    snapshot.scope === 'CLIENT' &&
+    snapshot.canonicalState.result.found === true &&
+    snapshot.canonicalState.result.client?.id !== snapshot.clientId
   ) {
-    throw new Error('Ask DW scoped snapshot did not prove read-only retrieval')
+    throw new Error('Ask DW scoped snapshot canonical client mismatch')
   }
 
   const turn = classifyAskDwConversationalTurn({ text, context })
