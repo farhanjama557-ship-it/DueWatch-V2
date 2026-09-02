@@ -305,7 +305,7 @@ Base:   7136985beb7e9e664989d964e09a256fbf77ebce (portable bundle, verified)
         CP6 6dd8ede1c2afa1ad21d2a9ae42fd9cccd84e1468 confirmed an ancestor
         imported to isolated ref g7-opus-authority-repair; the GitHub-tracking
         branch m2g/company-brain-bootstrap-g7 was NOT moved or force-pushed
-Repair: <G7_REPAIR_SHA>
+Repair: adf91babe0299b7b880067e472300972e078e713
 
 THE DEFECT. Authority prose was recognised with a growing regex catalog, and
 the action and channel were then extracted from the WHOLE FLATTENED answer
