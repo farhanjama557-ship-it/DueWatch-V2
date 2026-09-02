@@ -185,7 +185,9 @@ const ACTION_TERMS = Object.freeze([
   [/\bwaiv(?:e|es|ed|ing)\b[^.]{0,24}\blate\s+fees?\b/i, 'WAIVE_LATE_FEE'],
   [/\blate\s+fees?\b[^.]{0,24}\bwaiv(?:e|es|ed|ing|er)\b/i, 'WAIVE_LATE_FEE'],
   [/\b(?:appl(?:y|ies|ied|ying)|charg(?:e|es|ed|ing)|add(?:s|ed|ing)?)\b[^.]{0,24}\blate\s+fees?\b/i, 'APPLY_LATE_FEE'],
-  [/\blate\s+fees?\b/i, 'APPLY_LATE_FEE'],
+  // A bare late-fee noun does not say whether the operation applies or waives
+  // it. The verb must establish one exact G5 action; otherwise the request is
+  // unmappable and the deterministic boundary asks for clarification.
   [/\bsettl(?:e|es|ed|ing|ement)\b/i, 'SETTLE_INVOICE'],
   [/\bwrit(?:e|es|ing|ten)[- ]offs?\b|\bwrote[- ]off\b|\bwrite\s+off\b/i, 'WRITE_OFF_INVOICE'],
   [/\brefunds?\b|\brefund(?:s|ed|ing)\b/i, 'ISSUE_REFUND'],
@@ -239,6 +241,49 @@ const DOUBLE_NEGATION_HINT = /\bnot\s+un(?:authoris|authoriz)|\bnot\s+true\s+tha
  */
 const MODAL = /\b(?:can|cannot|can't|cant|may|could|might|able\s+to|unable\s+to|capable\s+of|allowed\s+to|permitted\s+to)\b/i
 const AR_ACT = /\b(?:send|sends|sending|sent|email|emails|emailing|text|texts|texting|message|messages|messaging|contact|contacts|contacting|chase|chasing|nudge|nudging|remind|reminds|reminding|reminder|reminders|follow[- ]up|call|calls|calling|apply|applies|applying|waive|waives|waiving|settle|settles|settling|write[- ]?off|wrote[- ]?off|refund|refunds|refunding|charge|charges|charging|collect|collects|collecting|escalate|escalating|dunning|act|acts|acting|handle|handles|handling|do\s+(?:this|that|it))\b/i
+
+/**
+ * SAFE-BY-DEFAULT OWNERSHIP.
+ *
+ * AR_ACT remains the closed canonical-action vocabulary. It is not the owner
+ * of the routing decision: an unknown operational verb must not become model
+ * work merely because that verb is absent from AR_ACT. Direct founder prompts
+ * aimed at DW and first-person DW commitments are claimed structurally first.
+ * Only a small, closed family of clearly read-only predicates stays with the
+ * model. Everything else must map exactly to G5 or fail closed.
+ */
+const SAFE_READ_ONLY_OPERATION = /^(?:please\s+)?(?:explain|summari[sz]e|show|describe|list|compare|analy[sz]e|clarify|review|inspect|read|find|look\s+up|check\s+(?:whether|if|the|this|that|what|which|when|where|why|how)|calculate|watch|monitor|keep\s+(?:watching|monitoring)|help\s+(?:me|us)\s+understand|tell\s+(?:me|us)\s+(?:about|why|how|what|which|when|where|who|whether))\b/i
+
+function isSafeReadOnlyOperation(phrase) {
+  return SAFE_READ_ONLY_OPERATION.test(String(phrase || '').trim())
+}
+
+function directedDwOperationPhrase(text) {
+  const value = String(text || '').trim()
+  const direct = /^(?:so\s+|and\s+|but\s+|ok(?:ay)?,?\s+|hey,?\s+)*(?:can|may|could|would|will|should|shall)\s+(?:you|dw|due\s?watch)\s+(.+)$/i.exec(value)
+  if (direct) return direct[1]
+  const going = /^(?:so\s+|and\s+|but\s+)*(?:are|is)\s+(?:you|dw|due\s?watch)\s+going\s+to\s+(.+)$/i.exec(value)
+  if (going) return going[1]
+  const planned = /^(?:so\s+|and\s+|but\s+)*(?:do|does)\s+(?:you|dw|due\s?watch)\s+(?:plan|intend|mean)\s+to\s+(.+)$/i.exec(value)
+  return planned ? planned[1] : null
+}
+
+function dwSelfOperationPhrase(text) {
+  const value = String(text || '').trim()
+  const modal = /^(?:i|we|dw|due\s?watch)\s+(?:can|may|could|might|will|would|should|shall)\s+(.+)$/i.exec(value)
+  if (modal) return modal[1]
+  const contracted = /^(?:i|we)'(?:ll|d)\s+(.+)$/i.exec(value)
+  if (contracted) return contracted[1]
+  const going = /^(?:i(?:'m|\s+am)|we(?:'re|\s+are)|dw\s+is|due\s?watch\s+is)\s+going\s+to\s+(.+)$/i.exec(value)
+  return going ? going[1] : null
+}
+
+function ownsUnknownOperationalLanguage(text, mode) {
+  const phrase = mode === ASK_DW_PARSE_MODE.QUESTION
+    ? directedDwOperationPhrase(text)
+    : dwSelfOperationPhrase(text)
+  return phrase != null && !isSafeReadOnlyOperation(phrase)
+}
 
 /**
  * TYPED FRAMES.
@@ -450,6 +495,8 @@ function parseActionActor(text, mode) {
   AR_ACT_VERB.lastIndex = 0
   const verb = AR_ACT_VERB.exec(text)
   if (!verb) return null
+  const controlledActor = parseEmbeddedControllerActor(text.slice(0, verb.index), mode)
+  if (controlledActor) return controlledActor
   ACTOR_TOKEN.lastIndex = 0
   let nominative = null
   let oblique = null
@@ -468,6 +515,23 @@ function parseActionActor(text, mode) {
   // of the verb at all -- in "Do you lack permission to send ...", DW is who
   // would send, not the permission.
   return nominative ?? oblique ?? grantNoun
+}
+
+/**
+ * Resolve the controller of an embedded controlled-action infinitive before
+ * considering the matrix subject. In `you ask me to send`, `me` sends; in
+ * `I ask you to send`, `you` sends. The same relation covers bare-infinitive
+ * causatives (`have/get/let/make`) and named third parties.
+ */
+function parseEmbeddedControllerActor(prefix, mode) {
+  const match = /\b(?:ask(?:s|ed|ing)?|tell(?:s|ing)?|told|allow(?:s|ed|ing)?|have|has|had|having|get|gets|got|getting|let|lets|letting|make|makes|made|making)\s+((?:the\s+)?[A-Za-z][A-Za-z0-9&.'-]*)\s+(?:to\s+)?$/i.exec(prefix)
+  if (!match) return null
+  const role = actorRoleFor(match[1], mode, { sentenceInitial: false })
+  const bare = match[1].replace(/^the\s+/i, '')
+  if (!role && FUNCTION_WORD.test(bare)) return null
+  // An explicit but unfamiliar controller is a third party, never DW by
+  // fallback. This is fail-closed and does not invent authority for that actor.
+  return role ?? ASK_DW_ACTOR.OTHER
 }
 
 /**
@@ -692,6 +756,7 @@ export function parseAuthorityProposition(proposition, { knownEntities = [], mod
   const text = proposition.text
   const dwActor = parseActor(text, mode)
   const controlledAct = AR_ACT.test(text)
+  const unknownOperationalCandidate = ownsUnknownOperationalLanguage(text, mode)
   const explicitDeontic = EXPLICIT_DEONTIC.test(text) || AUTHORITY_TRIGGER.test(text)
   const modalDeontic = MODAL_DEONTIC.test(text)
   // In a question, a leading wh-word is an interrogative, not the conditional
@@ -710,6 +775,7 @@ export function parseAuthorityProposition(proposition, { knownEntities = [], mod
   const authorityBearing =
     (controlledAct && (dwActor === ASK_DW_ACTOR.DW || dwActor === ASK_DW_ACTOR.GRANT_SUBJECT ||
       dwActor === ASK_DW_ACTOR.OTHER) && !exempted) ||
+    (unknownOperationalCandidate && !exempted) ||
     explicitDeontic ||
     (modalDeontic && (controlledAct || GRANT_SUBJECT.test(text)))
   const base = {
@@ -718,6 +784,7 @@ export function parseAuthorityProposition(proposition, { knownEntities = [], mod
     polarity: null, actor: null, canonicalAction: null, scopeType: null,
     clientName: null, entityId: null, channel: null, approvalState: null,
     vagueCapability: false, grantIdentity: null,
+    unknownOperationalCandidate,
     frames: Object.freeze([...frames]),
     conditional: frames.has(ASK_DW_FRAME.CONDITION),
   }
@@ -826,6 +893,35 @@ export const ASK_DW_QUESTION_SEMANTIC = Object.freeze({
  */
 const ASKS_ABOUT_APPROVAL = /\b(?:need|needs|require|requires|want|get|have\s+to\s+(?:get|ask)|ask\s+(?:me|us)?\s*first|check\s+with\s+(?:me|us))\b[^?]{0,40}\b(?:approval|sign[- ]?off|signoff|consent|permission\s+from|the\s+ok|okay|go[- ]ahead)\b|\b(?:approval|sign[- ]?off|consent)\b[^?]{0,30}\b(?:needed|required|necessary)\b/i
 
+const APPROVAL_ACT = /(?:approv(?:e|es|ed|ing)|authori[sz](?:e|es|ed|ing)|consent|sign\s*off|say\s+yes|give\s+(?:the\s+)?(?:ok|okay|go[- ]ahead))/i
+
+/**
+ * Founder authorization as a prerequisite relation, not as a sentence list.
+ * The approval actor must be the founder and the governed operation must be
+ * DW's. This captures verbal forms while preserving speaker perspective.
+ */
+function asksAboutApprovalPrerequisite(text) {
+  if (!APPROVAL_ACT.test(text)) return false
+  const prerequisite = /\b(?:need|require|have\s+to|must|before|prior\s+to|in\s+order\s+for)\b/i.test(text)
+  if (!prerequisite) return false
+  const founderApproves = new RegExp([
+    '\\b(?:do|would|will|must|should)\\s+(?:i|we)\\s+(?:(?:need|have)\\s+to\\s+)?',
+    `(?:${APPROVAL_ACT.source})`,
+    '|\\b(?:you|dw|due\\s?watch)\\s+(?:need|require|want)\\s+(?:me|us)\\s+to\\s+',
+    `(?:${APPROVAL_ACT.source})`,
+  ].join(''), 'i').test(text)
+  if (!founderApproves) return false
+  const actionVerb = '(?:send|sending|email|emailing|text|texting|message|messaging|contact|contacting|remind|reminding|apply|applying|waive|waiving|settle|settling|write|writing|refund|refunding|issue|issuing|charge|charging|collect|collecting|act|acting|proceed|proceeding)'
+  const explicitDwActor = new RegExp(`\\bbefore\\s+(?:you|dw|due\\s?watch)\\s+${actionVerb}\\b`, 'i').test(text)
+  // A subjectless gerund inherits DW only from a matrix in which DW requires
+  // the founder's approval act. In "Do I approve before sending?" the founder,
+  // not DW, is the implied sender.
+  const dwRequiresFounder = new RegExp(`\\b(?:you|dw|due\\s?watch)\\s+(?:need|require|want)\\s+(?:me|us)\\s+to\\s+(?:${APPROVAL_ACT.source})`, 'i').test(text)
+  const impliedDwActor = dwRequiresFounder &&
+    new RegExp(`\\bbefore\\s+${actionVerb}\\b`, 'i').test(text)
+  return explicitDwActor || impliedDwActor
+}
+
 /**
  * A commitment or intention question rather than a permission question:
  * "Will you send ...?", "Do you plan to send ...?". These are answered from
@@ -876,14 +972,23 @@ export function classifyAskDwAuthorityRequest(text, { knownEntities = [] } = {})
   // prevented from performing a controlled act, deterministic handling owns
   // the answer — whether the question says "allowed", "forbidden", "barred",
   // "restricted", or nothing of the kind.
-  const questionActor = parseActor(stripped, ASK_DW_PARSE_MODE.QUESTION)
+  const approvalPrerequisite = asksAboutApprovalPrerequisite(stripped)
+  // In a prerequisite question the controlled operation's actor is established
+  // by the relation itself. A noun such as "email" before the embedded `send`
+  // must not be mistaken for the first controlled verb and bind the founder.
+  const questionActor = approvalPrerequisite
+    ? ASK_DW_ACTOR.DW
+    : parseActor(stripped, ASK_DW_PARSE_MODE.QUESTION)
   const asksAboutDwControlledAction =
     interrogative && AR_ACT.test(stripped) && questionActor === ASK_DW_ACTOR.DW
+  const unknownOperationalQuestion =
+    interrogative && ownsUnknownOperationalLanguage(stripped, ASK_DW_PARSE_MODE.QUESTION)
   const overview = CAPABILITY_OVERVIEW.test(stripped) || AUTHORITY_ENQUIRY.test(stripped)
   const isAuthorityRequest = Boolean(
     !historical && (
       (proposition.authorityBearing && interrogative) ||
       asksAboutDwControlledAction ||
+      unknownOperationalQuestion ||
       overview),
   )
 
@@ -891,7 +996,7 @@ export function classifyAskDwAuthorityRequest(text, { knownEntities = [] } = {})
     : overview && (proposition.canonicalAction == null ||
       proposition.canonicalAction === UNMAPPABLE.ACTION_UNKNOWN)
       ? ASK_DW_QUESTION_SEMANTIC.AUTHORITY_OVERVIEW
-      : ASKS_ABOUT_APPROVAL.test(stripped)
+      : (ASKS_ABOUT_APPROVAL.test(stripped) || approvalPrerequisite)
         ? ASK_DW_QUESTION_SEMANTIC.APPROVAL_REQUIRED
         // Surface negation is read with the SAME polarity machinery that reads
         // DW's own sentences, so "can't you", "aren't you allowed" and "do you

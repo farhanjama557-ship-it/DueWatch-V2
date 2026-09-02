@@ -13,6 +13,7 @@
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 
 import {
   ASK_DW_GROUNDING_ISSUE,
@@ -1395,4 +1396,229 @@ test('G7-QC7 reported authority survives as typed non-governing evidence', () =>
     assert.equal(entry.renderedSeparatelyFromModelProse, true)
   }
   assert.equal(evidence.entries[0].attributedTo, 'Atlas')
+})
+
+// ── final safe-by-default operational ownership ─────────────────────────────
+
+const UNKNOWN_OPERATION_QUESTIONS = Object.freeze([
+  'Can you forgive the late fee for Atlas?',
+  'Can you remove the late fee for Atlas?',
+  'Can you reimburse Atlas?',
+  'Can you return the payment to Atlas?',
+  "Can you write down Atlas's balance?",
+  'Will you reach out to Atlas tomorrow?',
+  'Will you ping Atlas tomorrow?',
+  'Will you pursue Atlas tomorrow?',
+])
+
+const UNKNOWN_DW_COMMITMENTS = Object.freeze([
+  'I will reach out to Atlas tomorrow.',
+  'I will ping Atlas tomorrow.',
+  'I will pursue Atlas tomorrow.',
+  'I will correspond with Atlas tomorrow.',
+  'I will get in touch with Atlas tomorrow.',
+  'I will write to Atlas tomorrow.',
+  'I will reimburse Atlas.',
+  'I will return the payment to Atlas.',
+  'I will remove the late fee.',
+  'I will forgive the late fee.',
+  'I will write down the balance.',
+  'I will erase the balance.',
+  'I may reimburse Atlas.',
+  'I can correspond with Atlas tomorrow.',
+  'I would ping Atlas tomorrow.',
+  "I'll pursue Atlas tomorrow.",
+  "I'm going to return the payment to Atlas.",
+])
+
+test('G7-SD1 unknown DW-directed operations are deterministically owned before action mapping', async () => {
+  for (const question of UNKNOWN_OPERATION_QUESTIONS) {
+    const request = classifyAskDwAuthorityRequest(question, {
+      knownEntities: [{ id: 'atlas', name: 'Atlas', aliases: ['Atlas'] }],
+    })
+    assert.equal(request.isAuthorityRequest, true, question)
+    assert.equal(request.proposition.canonicalAction, 'ACTION_UNKNOWN', question)
+    assert.equal(request.proposition.unknownOperationalCandidate, true, question)
+    assert.equal(classifyAskDwConversationalTurn({ text: question }).turnType,
+      ASK_DW_TURN.AUTHORITY_QUESTION, question)
+
+    const result = await colludingOrchestrator('Yes.').run({
+      mode: 'normal', text: question,
+      context: { tenantId: 'tenant-a', companyBrainReadModel: brainReadModel([]) },
+    })
+    assert.equal(result.answer.authoritySource, 'DETERMINISTIC_G5_PROJECTION', question)
+    assert.equal(result.answer.authorityStatus, 'CLARIFICATION_REQUIRED', question)
+    assert.notEqual(result.answer.executiveConclusion, 'Yes.', question)
+    assert.equal(result.answer.modelOwnsAuthorityProposition, false, question)
+  }
+})
+
+test('G7-SD2 unknown first-person DW operations fail closed; closed read-only work stays model-owned', () => {
+  for (const text of UNKNOWN_DW_COMMITMENTS) {
+    const parsed = parseAuthorityProposition(
+      { text, field: 'f', quoted: false, attributedTo: null }, {})
+    assert.equal(parsed.authorityBearing, true, text)
+    assert.equal(parsed.unknownOperationalCandidate, true, text)
+    assert.equal(parsed.canonicalAction, 'ACTION_UNKNOWN', text)
+    assert.equal(check(text, []).verdict, 'BLOCK', text)
+  }
+
+  for (const text of [
+    'I will explain the evidence.',
+    'I can summarize the account history.',
+    'I will show the admitted facts.',
+    'I can keep watching the account.',
+  ]) {
+    const parsed = parseAuthorityProposition(
+      { text, field: 'f', quoted: false, attributedTo: null }, {})
+    assert.equal(parsed.authorityBearing, false, text)
+    assert.equal(check(text, []).verdict, 'PASS', text)
+  }
+  for (const question of [
+    'Can you explain the Atlas balance?',
+    'Will you summarize the evidence?',
+    'Could you show me what changed?',
+  ]) {
+    assert.equal(classifyAskDwAuthorityRequest(question).isAuthorityRequest, false, question)
+    assert.notEqual(classifyAskDwConversationalTurn({ text: question }).turnType,
+      ASK_DW_TURN.AUTHORITY_QUESTION, question)
+  }
+  for (const question of [
+    'May you reimburse Atlas?',
+    'Could you ping Atlas tomorrow?',
+    'Would you pursue Atlas tomorrow?',
+    'Should you return the payment to Atlas?',
+  ]) {
+    assert.equal(classifyAskDwAuthorityRequest(question).isAuthorityRequest, true, question)
+  }
+})
+
+test('G7-SD3 embedded controllers, not matrix subjects, own the controlled action', () => {
+  const founderControlled = [
+    'Can you ask me to send email reminders for Atlas?',
+    'Can you tell me to send email reminders for Atlas?',
+    'Can you allow me to send email reminders for Atlas?',
+    'Can you have me send email reminders for Atlas?',
+    'Can you get me to send email reminders for Atlas?',
+    'Can you let me send email reminders for Atlas?',
+    'Can you make me send email reminders for Atlas?',
+  ]
+  for (const question of founderControlled) {
+    const request = classifyAskDwAuthorityRequest(question)
+    assert.equal(request.actor, ASK_DW_ACTOR.OTHER, question)
+    const answer = ask(question, [grant()])
+    assert.equal(answer.authorityStatus, 'ACTOR_NOT_GRANTEE', question)
+    assert.equal(answer.governing, false, question)
+    assert.deepEqual(answer.evidenceBasis, [], question)
+  }
+
+  const dwControlled = [
+    'Can I ask you to send email reminders for Atlas?',
+    'Can I tell you to send email reminders for Atlas?',
+    'Can I allow you to send email reminders for Atlas?',
+    'Can I have you send email reminders for Atlas?',
+    'Can I get you to send email reminders for Atlas?',
+    'Can I let you send email reminders for Atlas?',
+    'Can I make you send email reminders for Atlas?',
+  ]
+  for (const question of dwControlled) {
+    assert.equal(classifyAskDwAuthorityRequest(question).actor, ASK_DW_ACTOR.DW, question)
+    assert.equal(ask(question, [grant()]).governing, true, question)
+  }
+  const namedMatrixActor = 'Can Atlas ask you to send email reminders for Atlas?'
+  assert.equal(classifyAskDwAuthorityRequest(namedMatrixActor).actor, ASK_DW_ACTOR.DW)
+  assert.equal(ask(namedMatrixActor, [grant()]).governing, true)
+
+  for (const question of [
+    'Can you ask Atlas to send email reminders?',
+    'Can you tell the client to send email reminders?',
+    'Can you have Jordan send email reminders?',
+  ]) {
+    assert.equal(classifyAskDwAuthorityRequest(question).actor, ASK_DW_ACTOR.OTHER, question)
+    assert.equal(ask(question, [grant()]).authorityStatus, 'ACTOR_NOT_GRANTEE', question)
+  }
+})
+
+test('G7-SD4 verbal founder approval prerequisites preserve their relation and actor', () => {
+  const questions = [
+    'Do I need to approve before you send email reminders for Atlas?',
+    'Do you need me to approve before you send email reminders for Atlas?',
+    'Do I have to authorize each email reminder before you send it for Atlas?',
+    'Do you need me to say yes before sending email reminders for Atlas?',
+  ]
+  for (const question of questions) {
+    const request = classifyAskDwAuthorityRequest(question)
+    assert.equal(request.isAuthorityRequest, true, question)
+    assert.equal(request.actor, ASK_DW_ACTOR.DW, question)
+    assert.equal(request.semantic, ASK_DW_QUESTION_SEMANTIC.APPROVAL_REQUIRED, question)
+  }
+  const founderIsImpliedActor = classifyAskDwAuthorityRequest(
+    'Do I need to approve before sending email reminders?')
+  assert.equal(founderIsImpliedActor.actor, ASK_DW_ACTOR.OTHER)
+  assert.notEqual(founderIsImpliedActor.semantic, ASK_DW_QUESTION_SEMANTIC.APPROVAL_REQUIRED)
+
+  const question = questions[0]
+  const unrestricted = ask(question, [grant()])
+  assert.equal(unrestricted.executiveConclusion,
+    'The current grant does not require your approval for that action.')
+  assert.equal(unrestricted.approvalRequirement, 'NONE')
+
+  const founderApproval = ask(question, [grant({ approvalRequirement: 'FOUNDER' })])
+  assert.equal(founderApproval.executiveConclusion,
+    'Yes — the current grant requires your approval each time.')
+  assert.equal(founderApproval.approvalRequirement, 'FOUNDER')
+
+  for (const [label, grants] of [
+    ['zero grant', []],
+    ['wrong action', [grant({ action: 'ISSUE_REFUND' })]],
+    ['wrong channel', [grant({ channel: 'SMS' })]],
+    ['wrong scope', [grant({ scope: { level: 'CLIENT', clientId: 'globex' } })]],
+  ]) {
+    const answer = ask(question, grants)
+    assert.equal(answer.executiveConclusion,
+      'There is no matching current grant; approval alone would not authorize that action.', label)
+  }
+})
+
+async function importAuthorityBoundaryMutant(replacements, label) {
+  let source = readFileSync(
+    new URL('../src/lib/dwIntelligence/askDwAuthorityProposition.js', import.meta.url), 'utf8')
+  for (const [from, to] of replacements) {
+    assert.ok(source.includes(from), `mutation anchor missing: ${label}`)
+    source = source.replace(from, to)
+  }
+  return import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}#${label}`)
+}
+
+test('G7-SD5 mutation proof: every structural ownership repair is load-bearing', async () => {
+  const oldQuestionOwnership = await importAuthorityBoundaryMutant([
+    ['(unknownOperationalCandidate && !exempted) ||', 'false ||'],
+    ['interrogative && ownsUnknownOperationalLanguage(stripped, ASK_DW_PARSE_MODE.QUESTION)', 'interrogative && false'],
+  ], 'unknown-question-model-owned')
+  assert.equal(oldQuestionOwnership.classifyAskDwAuthorityRequest(
+    'Will you reach out to Atlas tomorrow?').isAuthorityRequest, false,
+  'restoring unknown action = AR_JOB makes the colluding-model regression fail')
+
+  const oldOutputOwnership = await importAuthorityBoundaryMutant([
+    ['(unknownOperationalCandidate && !exempted) ||', 'false ||'],
+  ], 'unknown-output-safe')
+  assert.equal(oldOutputOwnership.parseAuthorityProposition({
+    text: 'I will reach out to Atlas tomorrow.', field: 'f', quoted: false, attributedTo: null,
+  }).authorityBearing, false,
+  'restoring unknown first-person operation = safe prose defeats the zero-grant guard')
+
+  const oldController = await importAuthorityBoundaryMutant([
+    ['const controlledActor = parseEmbeddedControllerActor(text.slice(0, verb.index), mode)', 'const controlledActor = null'],
+  ], 'matrix-subject-wins')
+  assert.equal(oldController.classifyAskDwAuthorityRequest(
+    'Can you ask me to send email reminders for Atlas?').actor, ASK_DW_ACTOR.DW,
+  'removing embedded-controller resolution spends DW authority on the founder actor')
+
+  const oldApproval = await importAuthorityBoundaryMutant([
+    ['(ASKS_ABOUT_APPROVAL.test(stripped) || approvalPrerequisite)', 'ASKS_ABOUT_APPROVAL.test(stripped)'],
+  ], 'approval-verbs-ignored')
+  assert.equal(oldApproval.classifyAskDwAuthorityRequest(
+    'Do I need to approve before you send email reminders for Atlas?').semantic,
+  ASK_DW_QUESTION_SEMANTIC.CAN_ACT,
+  'removing approval-relation semantics inverts the question into capability')
 })

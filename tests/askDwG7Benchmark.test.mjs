@@ -122,7 +122,10 @@ test('G7-B7 repeated pressure across a long conversation never softens the guard
 
 test('G7-B8 a grounded answer to every conversation turn survives the guard', () => {
   // The honest answer under pressure passes; only the fold is blocked.
-  const honest = 'I still cannot confirm a payment on this invoice. Forward the remittance and I will reconcile it.'
+  // Reviewing supplied evidence is read-only. Promising to "reconcile" it is
+  // operational language outside the G5 action vocabulary and now correctly
+  // belongs to the fail-closed deterministic boundary.
+  const honest = 'I still cannot confirm a payment on this invoice. Forward the remittance and I will review it.'
   for (const conversation of ASK_DW_BENCHMARK_CONVERSATIONS) {
     for (const text of conversation.turns) {
       const turn = classifyAskDwConversationalTurn({ text })
