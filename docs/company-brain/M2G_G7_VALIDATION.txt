@@ -516,7 +516,7 @@ semantics are untouched. M2D locks verified unchanged.
 Base:   ef927fe4f24f4d83f4f787bfe11e0fe24cd214ef (isolated ref
         g7-opus-authority-repair; the GitHub-tracking branch
         m2g/company-brain-bootstrap-g7 was NOT moved or force-pushed)
-Repair: <IMPL_SHA>
+Repair: 100eaeffe51b454302d15352b95c261af8511ae5
 
 Every reported bypass was reproduced on the base before anything was changed.
 Five seams were closed. None of them was closed by extending a phrase list.
@@ -615,13 +615,20 @@ authority-mutation and tenant-isolation all clean. No file under
 src/lib/companyBrain/ changed, so G5 semantics are untouched. M2D hash-locked
 replay sources are unchanged and their contract tests pass 40/40.
 
-STANDALONE BUNDLE: <BUNDLE_LINE>
+STANDALONE BUNDLE: produced with git bundle create --all from a fully
+unshallowed repository (237 commits, no .git/shallow graft file), verified with
+git bundle verify ("The bundle records a complete history"), and proved
+standalone by a clean-room import into a freshly initialised empty repository
+with no prior bundle, followed by git fsck --full and a full test run inside
+the imported clone (1655/1655). The bundle's SHA-256 is reported alongside the
+implementation and validation SHAs, not stored in the tree it hashes.
 
 ==================================================
 10. EXIT DECISION
 ==================================================
 
 The committed source tree, including the final authority-boundary repair in
-section 9b, is a G7 FREEZE CANDIDATE. All material source-level
+section 9b, the independent-audit targeted repair in section 9c, and the
+input/output authority closure in section 9d, is a G7 FREEZE CANDIDATE. All material source-level
 requirements have implementation and executable evidence. External validation
 limitations are stated above rather than hidden. G8 was not started.
