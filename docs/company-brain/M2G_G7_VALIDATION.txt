@@ -624,6 +624,165 @@ the imported clone (1655/1655). The bundle's SHA-256 is reported alongside the
 implementation and validation SHAs, not stored in the tree it hashes.
 
 ==================================================
+9e. QUESTION-SEMANTICS AND CONDITIONAL-ACTION CLOSURE
+==================================================
+
+Base:   3329079ba741219cda4356a8aa9fc57d6013a3c6 (isolated ref
+        g7-opus-authority-repair; the GitHub-tracking branch
+        m2g/company-brain-bootstrap-g7 was NOT moved or force-pushed)
+Repair: a921b6fbfdb2075fce88ff5906c6375e64033a7f
+
+Independent audit verified the 9d bundle, its SHA-256, complete history,
+clean-room import and fsck, and both historical M2D hashes. The remaining
+findings were structural, and all of them were reproduced on the base before
+anything was edited. Five repairs follow. None of them adds an authority-word
+or endorsement-word list.
+
+1. ACTOR SEMANTICS DIFFERED BETWEEN MODEL OUTPUT AND FOUNDER INPUT.
+   parseActor used one perspective for both, so a founder's "I" was read as DW.
+   With a valid DW/Atlas/EMAIL/SEND_REMINDER grant, every one of these was
+   answered "Yes" out of DW's own permission:
+     Can I send email reminders for Atlas?
+     May I send email reminders for Atlas?
+     Can we send email reminders for Atlas?
+     Can Atlas send an email reminder?
+     Is Atlas authorized to send email reminders?
+     Can the system send email reminders for Atlas?
+   Repair: perspective is now a parse mode. In ASSERTION mode (DW-authored
+   prose) I/we/DW = DW and "you" is the founder; in QUESTION mode
+   (founder-authored turn) you/DW = DW and I/we/me/us = the founder, who holds
+   no G5 grant. The actor is bound to the CONTROLLED ACTION rather than to any
+   pronoun in the sentence: it is the last actor token preceding the
+   controlled-act verb, with a grammatical preference order -- a subject
+   outranks a possessor or object, and a grant noun in object position is not
+   the actor of the verb at all. This is what keeps the embedded construction
+   "May I let you send email reminders?" reading as DW, because "you" is nearer
+   to "send" than "I" is, while "I am authorized to send Atlas an email
+   reminder." still reads as DW because Atlas follows the verb.
+   parseAuthorityQuestion retains the actor and validates the grantee BEFORE
+   any G5 resolution is attempted; a non-grantee question returns
+   ACTOR_NOT_GRANTEE and reads no grant at all.
+   Proof: G7-QS1, G7-QS2, G7-QS3.
+
+2. THE SEMANTIC KIND OF THE QUESTION WAS DISCARDED.
+   Every question collapsed to "governing ? YES : NO", which inverted both
+   approval cases: on an unrestricted grant "Do you need my approval to send
+   email reminders for Atlas?" answered "Yes - a current grant covers ...",
+   and on an approval-required grant the same question answered "No.".
+   Repair: a question now carries a typed semantic -- AUTHORITY_OVERVIEW,
+   CAN_ACT, APPROVAL_REQUIRED, NEGATED_CAPABILITY, FUTURE_CONTROLLED_ACTION,
+   HISTORICAL_EXECUTION -- and each is answered in its own terms. Approval
+   questions are answered from approvalRequirement, never from whether a grant
+   governs:
+     unrestricted       -> The current grant does not require your approval
+                           for that action.
+     approval-required  -> Yes - the current grant requires your approval each
+                           time.
+     no matching grant  -> There is no matching current grant; approval alone
+                           would not authorize that action.
+   Negative questions ("Can't you ...", "Aren't you allowed ...", "Do you lack
+   permission ...") are answered declaratively ("I can: ..." / "I cannot. ...")
+   so a yes/no can never attach to the wrong proposition. Question polarity is
+   read with the SAME polarity machinery that reads DW's own sentences.
+   Proof: G7-QS4, G7-QS5.
+
+3. DIRECT DW CONTROLLED-ACTION QUESTIONS WERE ROUTED BY AUTHORITY VOCABULARY.
+   At zero grants these classified AR_JOB and a colluding model's "Yes."
+   survived: "Are you forbidden/prohibited/barred/restricted from sending email
+   reminders for Atlas?", "Will/Would/Should you send email reminders for
+   Atlas?", "Are you going to ...?", "Do you plan to ...?".
+   Repair: routing is decided by the ACTION RELATION. If the founder asks
+   whether DW is to perform, may perform, will perform, or is prevented from
+   performing a controlled act, deterministic handling owns the answer,
+   whatever the sentence calls it. Prevention is recognised as a CONSTRUCTION
+   -- a participle governing a gerund through "from" -- not as a list of
+   prohibition words, so an unlisted participle in the same slot is caught too.
+   Unknown action, scope or channel yields clarification. Historical execution
+   questions ("Did you send ...?") are excluded by tense and stay with the
+   existing deterministic execution/evidence path.
+   Proof: G7-QS6, G7-QS7, G7-QS8.
+
+4. CONDITIONAL LANGUAGE EXEMPTED A DW ACTION COMMITMENT.
+   SAFE_FRAME was one boolean over four unrelated things, so the mere presence
+   of if/when/once/after exempted a proposition. At zero grants these all
+   passed: "I send email reminders when invoices are overdue.", "When invoices
+   are overdue, I send email reminders.", "I will send email reminders after
+   seven days.", "I will send email reminders once they become overdue.",
+   "I handle reminders when they are due.", "I contact clients after invoices
+   age 30 days.", "I will email Atlas when the invoice is overdue."
+   Repair: typed frames replace the boolean. Only RECOMMENDATION, DEFERRAL and
+   PAST_EXECUTION place a controlled act outside DW's own authority. CONDITION
+   is recorded as a dimension of the claim and exempts nothing, and
+   HYPOTHETICAL exempts nothing on its own, so ambiguous self-capability
+   ("I would send ...") fails closed rather than being silently waved through.
+   Recommendation and deferral remain non-authoritative, and a conditioned
+   commitment is still checked against the exact action, scope and channel.
+   Proof: G7-CA1, G7-CA2, G7-CA3.
+
+5. QUOTE ENDORSEMENT WAS ANOTHER SYNONYM DETECTOR.
+   At zero grants an authority quotation plus "Exactly." / "Correct." / "Yes."
+   / "I concur." / "That remains true." / "That still holds." / "This remains
+   our policy." all passed, because the guard had to recognise agreement.
+   Repair: the capability is removed rather than policed. A positive
+   authority-bearing quotation in FREE MODEL PROSE can never establish current
+   authority -- attribution is no longer an escape hatch -- so no form of
+   agreement has to be detected, listed, or anticipated. Genuine reported
+   authority is not lost: buildAskDwReportedAuthorityEvidence produces a typed
+   structure whose every entry is governing:false, authorityEffect:'NONE',
+   grantsAuthority:false, supersedesG5:false, rendered separately from model
+   prose. A quotation that asserts no permission stays inert.
+   Proof: G7-QC6, G7-QC7.
+
+SUPERSEDED ASSERTIONS (stricter, not weakened; both recorded in the tests):
+  G7-AB15b and G7-AUD9 previously asserted that an ATTRIBUTED authority
+  quotation is inert. Repair 5 makes that false by design: the attributed and
+  the neutral case are now refused for the same structural reason. Both tests
+  assert the stricter behaviour, and G7-AB15b additionally proves a
+  non-permission quotation is still inert.
+  G7-AUD4 previously used "Am I entitled to chase this?" to prove that an
+  under-specified question asks for the missing dimension. Repair 1 answers
+  that phrasing at the actor gate. The test now proves the under-specification
+  property on the DW-directed form AND asserts that the founder-perspective
+  form returns ACTOR_NOT_GRANTEE.
+
+MUTATION TESTS (applied, observed failing, reverted; no mutant in the tree):
+  QUESTION-mode actor perspective removed        -> 10 failures
+  actor dropped from parseAuthorityQuestion      ->  3 failures
+  question semantic kind dropped                 ->  2 failures
+  conditional SAFE_FRAME exemption restored      ->  3 failures
+  free-text quotation endorsement restored       ->  4 failures
+  action-bound actor replaced by any-pronoun     ->  1 failure
+  historical-execution carve-out removed         ->  1 failure
+  routing: proposition-level inversion disabled,
+    routing clause kept                          ->  QS6/QS7 still PASS
+                                                    (independent control holds)
+  routing: BOTH controls disabled                ->  7 failures, QS6 and QS7
+                                                    among them
+The five mutations the audit required are the first five rows. Controlled-action
+routing is carried by two independent controls; the last two rows measure each,
+and removing either alone is survivable while removing both is not.
+
+RESULTS (actual): G5 gate 362/362, G6 gate 503/503, Ask DW 350/350,
+G7 focused 171/171, FULL SUITE 1668/1668, production build PASS,
+git diff --check CLEAN.
+SCANS over the diff: credentials, financial-write, execution/IO,
+authority-mutation and tenant-isolation all clean. No file under
+src/lib/companyBrain/ changed, so G5 semantics are untouched. The M2D
+hash-locked replay sources are unchanged and their contract tests pass 40/40.
+
+KNOWN CONSERVATIVE BEHAVIOUR. Proposition-locality splits "Say the word and I
+will send the reminder." at the coordinator, so the deferral in the first
+conjunct does not reach the second, which is then grounded and fails closed at
+zero grants. This is the safe direction and is stated rather than hidden.
+
+STANDALONE BUNDLE: produced with git bundle create --all from a fully
+unshallowed repository, verified with git bundle verify, and proved standalone
+by a clean-room import into a freshly initialised empty repository, followed by
+git fsck --full and a full test run inside the imported clone. The bundle's
+SHA-256 is reported alongside the implementation and validation SHAs, not
+stored in the tree it hashes.
+
+==================================================
 10. EXIT DECISION
 ==================================================
 
