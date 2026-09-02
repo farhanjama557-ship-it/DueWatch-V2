@@ -259,10 +259,15 @@ test('G7-CP9R channel-bound prose must match the exact projected channel', () =>
     'DW is allowed to send reminders via Slack.',
     projectedGrant({ channel: 'EMAIL' }),
   )
+  const unknownCannotWidenChannelNeutral = authorityClaim(
+    'DW is allowed to send reminders via Slack.',
+    projectedGrant({ channel: null }),
+  )
   assert.equal(emailCannotSms.verdict, 'BLOCK')
   assert.equal(smsCannotEmail.verdict, 'BLOCK')
   assert.equal(missingChannel.verdict, 'BLOCK')
   assert.equal(unknownChannel.verdict, 'BLOCK')
+  assert.equal(unknownCannotWidenChannelNeutral.verdict, 'BLOCK')
 })
 
 test('G7-CP9R vague authority wording cannot borrow the breadth of an exact grant', () => {

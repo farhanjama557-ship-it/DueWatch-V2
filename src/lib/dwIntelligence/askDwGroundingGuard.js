@@ -207,7 +207,12 @@ function claimedChannel(text) {
   if (/\b(?:phone|telephone|call)\b/i.test(text)) channels.add('PHONE')
   if (/\b(?:postal|post|letter)\b/i.test(text)) channels.add('POSTAL')
   if (/\bportal\b/i.test(text)) channels.add('PORTAL')
-  return channels.size === 1 ? [...channels][0] : null
+  if (channels.size === 1) return [...channels][0]
+  if (channels.size > 1) return 'AMBIGUOUS_CHANNEL'
+  if (/\b(?:by|via|through|over|using)\s+(?:an?\s+)?[a-z][a-z0-9-]*/i.test(text)) {
+    return 'UNRECOGNIZED_CHANNEL'
+  }
+  return null
 }
 
 function authorityClaimSupported({ text, grants, caseContext, evaluatedAt }) {
