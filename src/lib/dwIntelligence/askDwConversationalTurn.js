@@ -14,6 +14,7 @@
  */
 
 import { ASK_DW_JOB, ASK_DW_SCOPE, classifyAskDwIntent } from './askDwIntent.js'
+import { classifyAskDwAuthorityRequest } from './askDwAuthorityProposition.js'
 
 export const ASK_DW_TURN = Object.freeze({
   GREETING: 'GREETING',
@@ -127,31 +128,16 @@ const COMPANY_BRAIN_PHRASES = [
   'operating model', 'what do you think you know',
 ]
 
-const AUTHORITY_PHRASES = [
-  'what authority do you have', 'what are you allowed', 'are you allowed',
-  'can you handle it', 'can you handle this', 'can you do it', 'can you send',
-  'what can you do', "what can't you do", 'what cant you do',
-  'why can you not', "why can't you", 'why cant you', 'do you have permission',
-  'are you authorized', 'are you authorised', 'what authority',
-  "what authority don't you have", 'am i letting you',
-]
-
 /**
- * Authority questions use the same closed semantics as the grounding boundary:
- * a permission/authority/grant/approval noun or modal aimed at DW routes to
- * deterministic authority resolution rather than to model synthesis.
+ * Authority requests are NOT recognised here.
+ *
+ * The previous design kept its own phrase list plus a sentence-shaped regex,
+ * which meant the routing boundary and the answering boundary could disagree:
+ * a permission question phrased outside the list reached model synthesis
+ * instead of the deterministic authority answer. Both now consume the single
+ * typed boundary in askDwAuthorityProposition.js, so a turn that the answer
+ * path would treat as an authority request always routes to it.
  */
-const AUTHORITY_QUESTION_PATTERN = new RegExp([
-  '^(?:may|can|could|am|are|is|do|does|did|will)\\b[^?]*\\b(?:authoris|authoriz|permission|permitted|allowed|entitled|grant|approval|clearance)',
-  // A bare modal aimed at DW is a permission question: "May I send this?"
-  '^(?:may|might|could|can)\\s+(?:i|we|you|dw|duewatch)\\b',
-  '\\b(?:do|does)\\s+(?:we|i|you|dw|duewatch)\\s+have\\s+(?:the\\s+)?(?:permission|authority|authoris|authoriz|a\\s+grant|clearance)',
-  '\\bis\\s+there\\s+(?:an?\\s+)?(?:grant|permission|authority|authoris|authoriz)\\b',
-  '\\b(?:does|do)\\s+(?:our|the|this|that|your|my)\\s+(?:authority|grant|permission|authoris|authoriz)\\w*\\s+(?:cover|apply|extend|include)',
-  '\\bam\\s+i\\s+entitled\\b|\\bare\\s+you\\s+entitled\\b',
-  '\\bwhat\\s+(?:authority|permission|grants?)\\b',
-  '\\bwhich\\s+(?:authority|permissions?|grants?)\\b',
-].join('|'), 'i')
 
 const NEW_EVIDENCE_PHRASES = [
   'emailed us', 'they emailed', 'they called', 'they paid', 'i just got',
@@ -185,7 +171,9 @@ function startsWithAny(text, phrases) {
  * Anything not recognised falls through to the existing AR job classifier,
  * which keeps that taxonomy authoritative for real AR work.
  */
-export function classifyAskDwConversationalTurn({ text, context = {}, caseContext = null } = {}) {
+export function classifyAskDwConversationalTurn({
+  text, context = {}, caseContext = null, knownEntities = [],
+} = {}) {
   const value = normalize(text)
   if (!value) throw new Error('Ask DW turn text required')
 
@@ -235,7 +223,7 @@ export function classifyAskDwConversationalTurn({ text, context = {}, caseContex
     })
   }
 
-  if (includesAny(value, AUTHORITY_PHRASES) || AUTHORITY_QUESTION_PATTERN.test(value)) {
+  if (classifyAskDwAuthorityRequest(text, { knownEntities }).isAuthorityRequest) {
     // The question itself never creates authority; it only routes to the
     // deterministic authority renderer.
     return result(ASK_DW_TURN.AUTHORITY_QUESTION, { requiresDeterministicAuthority: true })

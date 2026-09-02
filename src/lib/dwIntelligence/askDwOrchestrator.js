@@ -3,6 +3,7 @@ import { classifyAskDwConversationalTurn } from './askDwConversationalTurn.js'
 import { buildAskDwDailyPriorities } from './askDwDailyPriorities.js'
 import { ASK_DW_TURN } from './askDwConversationalTurn.js'
 import { buildAskDwAuthorityAnswer, renderAskDwAuthority } from './askDwAuthorityRenderer.js'
+import { collectAskDwKnownEntities } from './askDwAuthorityProposition.js'
 import { enforceAskDwGrounding } from './askDwGroundingGuard.js'
 import {
   DW_EPISTEMIC_LADDER,
@@ -81,12 +82,21 @@ function sanitizeCaseContext(value) {
  * split is preserved exactly. Its own builder rejects canonical-money fields.
  */
 function buildConversationLayer({ tenantId, text, caseContext, context }) {
-  const turn = classifyAskDwConversationalTurn({ text, context, caseContext })
+  // The Company Brain is built FIRST. Authority-request routing and scope
+  // resolution both run against the tenant's real known entities, so the turn
+  // classifier cannot be asked to recognise a permission question before the
+  // reference data that boundary depends on exists.
   const companyBrain = buildAskDwCompanyBrainContext({
     readModel: context.companyBrainReadModel ?? null,
     tenantId,
     focus: context.clientId ? { clientId: context.clientId } : null,
   })
+  const knownEntities = collectAskDwKnownEntities({
+    authorityProjection: companyBrain?.authority ?? null,
+    companyBrainContext: companyBrain,
+    caseContext,
+  })
+  const turn = classifyAskDwConversationalTurn({ text, context, caseContext, knownEntities })
   const priorities = buildAskDwDailyPriorities({
     tenantId,
     needsYouReadModel: context.needsYouReadModel ?? null,
@@ -107,9 +117,10 @@ function buildConversationLayer({ tenantId, text, caseContext, context }) {
       authorityProjection: companyBrain?.authority ?? null,
       companyBrainContext: companyBrain,
       caseContext,
+      knownEntities,
     })
     : null
-  return freeze({ turn, companyBrain, priorities, authorityRendering, authorityAnswer })
+  return freeze({ turn, companyBrain, knownEntities, priorities, authorityRendering, authorityAnswer })
 }
 
 function toolRunId(index, request) {

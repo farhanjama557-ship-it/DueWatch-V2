@@ -510,6 +510,114 @@ tenant-isolation all clean. No file under src/lib/companyBrain/ changed, so G5
 semantics are untouched. M2D locks verified unchanged.
 
 ==================================================
+9d. INPUT/OUTPUT AUTHORITY CLOSURE (FINAL CONTAINED REPAIR)
+==================================================
+
+Base:   ef927fe4f24f4d83f4f787bfe11e0fe24cd214ef (isolated ref
+        g7-opus-authority-repair; the GitHub-tracking branch
+        m2g/company-brain-bootstrap-g7 was NOT moved or force-pushed)
+Repair: <IMPL_SHA>
+
+Every reported bypass was reproduced on the base before anything was changed.
+Five seams were closed. None of them was closed by extending a phrase list.
+
+1. AUTHORITY-QUESTION CLASSIFICATION WAS AN OPEN PHRASE BOUNDARY.
+   askDwConversationalTurn.js held its own AUTHORITY_PHRASES list plus an
+   independent AUTHORITY_QUESTION_PATTERN. The routing boundary and the
+   answering boundary could therefore disagree: a permission question phrased
+   outside the list reached model synthesis instead of the deterministic
+   authority answer.
+   Repair: both lists are deleted. A single shared typed boundary,
+   classifyAskDwAuthorityRequest in askDwAuthorityProposition.js, is consumed
+   by the turn classifier AND by the deterministic answer. A turn is an
+   authority request when it is interrogative AND carries an authority-bearing
+   proposition under the same closed boundary that polices DW's own sentences.
+   The orchestrator now builds the Company Brain BEFORE classifying the turn,
+   so routing and scope resolution run against the same known entities.
+   The one shape the act/actor relation cannot decide -- a bare capability
+   overview whose predicate is a pro-verb ("what can you do?") -- fails closed
+   by routing to the deterministic answer, which can only describe real grants.
+   It is anchored end to end and cannot widen.
+   Proof: G7-CL1, G7-CL2, G7-CL3.
+
+2. SPONTANEOUS AUTHORITY DETECTION WAS TRIGGER-LIST DEPENDENT.
+   Detection began from recognising a permission synonym, so "I get to",
+   "my remit includes", "I am empowered to", "within my discretion" and
+   "I have been delegated" walked through untested.
+   Repair: detection begins from the controlled AR act / DW actor relation.
+   A proposition tying DW (or the grant itself, or a third party) to a
+   controlled act is authority-bearing unless it sits in a closed SAFE_FRAME
+   (recommendation, condition, hypothetical, already-executed). Deontic
+   language is split: EXPLICIT permission nouns are authority-bearing alone;
+   bare MODAL language is authority-bearing only when it governs a controlled
+   act or a grant subject, so "I cannot confirm a payment" stays out.
+   Proof: G7-CL4, with G7-AUD10 still holding against over-triggering.
+
+3. APPROVAL IMPLICATION WAS POLARITY-SENSITIVE TO WORDING.
+   "I can send email reminders without your sign-off." parsed NEGATIVE,
+   because the approval negation was counted as a negation of the authority
+   proposition. A denial is not grounded against the grant the same way, so
+   the claim escaped.
+   Repair: approval/sign-off/consent/ask-first is its own typed dimension,
+   parsed and removed BEFORE polarity is computed. Negating an approval
+   requirement can never negate the underlying authority proposition; the
+   claim stays POSITIVE with approvalState NONE and is then checked against
+   the grant's approvalRequirement.
+   Proof: G7-CL5.
+
+4. EXPLICIT TEXTUAL SCOPE WAS LOST THROUGH SYNTAX, THEN REPLACED BY FOCUS.
+   "I am authorized to send Atlas an email reminder." named Atlas in dative
+   position, matched no prepositional cue, was recorded UNSPECIFIED, and was
+   then satisfied by the conversation's focused client.
+   Repair: scope resolves against the tenant's actually-known entities
+   (collectAskDwKnownEntities, gathered from the same read-only G5/G6 sources
+   the answer resolves against) in ANY syntactic position. Where nothing
+   known is named, a direct-object/dative cue detects a CANDIDATE target --
+   the inverse of a name catalogue: a token is a candidate unless it is in the
+   closed non-scope vocabulary -- and an unresolved candidate is UNKNOWN, which
+   fails closed. Conversational focus may fill scope ONLY when the proposition
+   contains no explicit or candidate entity/scope language, and any broad-scope
+   cue (everywhere, throughout the company, enterprise-wide, globally, every
+   client) prevents the client-focus fallback outright.
+   Proof: G7-CL6, G7-CL7, G7-CL8.
+
+5. QUOTE ENDORSEMENT ESCAPED ACROSS OUTPUT FIELDS, AND NEGATIVE CLAIMS
+   INHERITED DW'S STATE.
+   Endorsement was field-scoped, so a quotation in evidenceBasis plus
+   "That is correct." in executiveConclusion passed. Separately, actor
+   determinacy was checked only on positive claims, so a negative permission
+   statement about Atlas, "someone" or nobody in particular was resolved
+   against DW's grants.
+   Repair: endorsement of authority-bearing quoted material is now evaluated
+   across the candidate answer as a whole, while propositions stay isolated for
+   action, channel, scope and actor -- no dimension is borrowed. Grantee
+   determinacy is required in BOTH polarities; a refused denial does not carry
+   the umbrella code, because it is not a claim of authority.
+   Proof: G7-CL9 (including the unchanged no-borrowing assertion), G7-CL10.
+
+MUTATION TESTS (applied, observed failing, reverted; no mutant in the tree):
+  shared authority-request routing disabled   -> 13 failures
+  controlled-act inversion removed            ->  2 failures
+  approval dimension folded back into polarity->  4 failures
+  direct-object entity cue removed            ->  2 failures
+  endorsement re-scoped to a single field     ->  1 failure
+  negative actor determinacy removed          ->  1 failure
+  known-entity threading removed from guard   ->  2 failures
+  capability-overview fail-closed removed     ->  1 failure
+The required property holds: disabling shared routing makes the colluding-model
+test (G7-CL3) fail.
+
+RESULTS (actual): G5 gate 362/362, G6 gate 503/503, Ask DW 337/337,
+G7 focused 158/158, FULL SUITE 1655/1655, production build PASS,
+git diff --check CLEAN.
+SCANS over the diff: credentials, financial-write, execution/IO,
+authority-mutation and tenant-isolation all clean. No file under
+src/lib/companyBrain/ changed, so G5 semantics are untouched. M2D hash-locked
+replay sources are unchanged and their contract tests pass 40/40.
+
+STANDALONE BUNDLE: <BUNDLE_LINE>
+
+==================================================
 10. EXIT DECISION
 ==================================================
 

@@ -34,6 +34,12 @@ export const ASK_DW_POLARITY = Object.freeze({
   AMBIGUOUS: 'AMBIGUOUS',
 })
 
+/** How a span is being read: as an assertion DW made, or as a founder question. */
+export const ASK_DW_PARSE_MODE = Object.freeze({
+  ASSERTION: 'ASSERTION',
+  QUESTION: 'QUESTION',
+})
+
 export const ASK_DW_ACTOR = Object.freeze({
   DW: 'DW',
   // The subject is the grant/permission itself ("the current grant covers...").
@@ -234,6 +240,61 @@ const DOUBLE_NEGATION_HINT = /\bnot\s+un(?:authoris|authoriz)|\bnot\s+true\s+tha
 const MODAL = /\b(?:can|cannot|can't|cant|may|could|might|able\s+to|unable\s+to|capable\s+of|allowed\s+to|permitted\s+to)\b/i
 const AR_ACT = /\b(?:send|sends|sending|sent|email|emails|emailing|text|texts|texting|message|messages|messaging|contact|contacts|contacting|chase|chasing|nudge|nudging|remind|reminds|reminding|reminder|reminders|follow[- ]up|call|calls|calling|apply|applies|applying|waive|waives|waiving|settle|settles|settling|write[- ]?off|wrote[- ]?off|refund|refunds|refunding|charge|charges|charging|collect|collects|collecting|escalate|escalating|dunning|act|acts|acting|handle|handles|handling|do\s+(?:this|that|it))\b/i
 
+/**
+ * SAFE FRAMES — the closed list of ways DW may mention a controlled act
+ * WITHOUT asserting it may perform it: a recommendation, an explicit
+ * condition, a hypothetical, or a past action (which the execution guard
+ * owns). Everything else linking DW to a controlled act is treated as an
+ * authority assertion and must be grounded.
+ *
+ * This is the inversion that matters. The previous design asked "is a
+ * permission synonym present?", so any unlisted synonym -- "I get to",
+ * "my remit includes", "I am empowered to" -- walked straight through.
+ */
+const SAFE_FRAME = new RegExp([
+  // recommendation
+  '\\b(?:recommend|suggest|advise|propose|propose\\s+to|would\\s+advise)\\b',
+  '\\bmy\\s+recommendation\\b|\\bworth\\s+(?:a\\s+)?\\w+ing\\b',
+  // hypothetical / conditional
+  "\\b(?:i'?d|i\\s+would|we'?d|we\\s+would)\\b",
+  '\\b(?:if|once|when|unless|after|provided|assuming)\\b',
+  '\\bwould\\s+need\\b|\\bwould\\s+have\\s+to\\b',
+  // deferring to the founder
+  '\\b(?:you|founder)\\s+(?:can|could|may|might|would)\\s+(?:ask|tell|have)\\s+me\\b',
+  '\\bsay\\s+the\\s+word\\b|\\bon\\s+your\\s+(?:go|say[- ]so)\\b',
+  // already-performed action: owned by the execution guard, not this one
+  "\\bi(?:'ve| have)?\\s+(?:just\\s+|already\\s+)?(?:sent|emailed|issued|applied|charged|processed|refunded|wrote|written|marked)\\b",
+].join('|'), 'i')
+
+/**
+ * Deontic language splits in two, and the split is load-bearing.
+ *
+ * EXPLICIT names permission itself. It is authority-bearing on its own,
+ * because "I am authorized." is an authority claim even with no act attached —
+ * it is exactly the sentence that borrowed its specifics from a neighbour.
+ *
+ * MODAL is bare modality. Modality alone says nothing about permission ("I
+ * cannot confirm a payment", "that may be a duplicate record"), so it is only
+ * authority-bearing when it governs a controlled AR act, a grant subject or an
+ * approval requirement.
+ */
+const EXPLICIT_DEONTIC = new RegExp([
+  'authoris|authoriz|permission|permitted|allowed|entitled|licen[cs]ed',
+  'authority|mandate|\\bremit\\b|clearance|cleared\\s+to|green ?light|free to|good to go',
+  'discretion|empowered|delegated|the right to|rights? to|go[- ]ahead|leeway|latitude',
+  '\\bgrant\\b|\\bgrants\\b|\\bgranted\\b|standing authority',
+  'nothing (?:is )?(?:prevent|stopp|block)',
+  '\\bapprovals?\\b|\\bsign[- ]?off\\b|\\bsignoff\\b|\\bconsent\\b',
+].join('|'), 'i')
+
+const MODAL_DEONTIC = new RegExp([
+  '\\beligible\\b',
+  '\\bget to\\b|\\bgets to\\b|\\bokay to\\b|\\bok to\\b|\\bfine to\\b|\\bsafe to\\b',
+  '\\bcan\\b|\\bcannot\\b|\\bcan\'t\\b|\\bmay\\b|\\bcould\\b|\\bmight\\b',
+  '\\bable to\\b|\\bunable to\\b|\\bcapable of\\b|\\bin a position to\\b',
+  'covers|covered by|applies to|extends to|encompasses|falls within|within (?:the )?(?:scope|grant|remit)|includes',
+].join('|'), 'i')
+
 function matchVocabulary(text, table) {
   const found = new Set()
   for (const [pattern, value] of table) {
@@ -298,58 +359,107 @@ const NON_SCOPE_TOKENS = new Set([
   'chase', 'chasing', 'nudge', 'contact', 'contacting', 'remind', 'reminding',
   'do', 'act', 'acting', 'handle', 'handling', 'proceed', 'go', 'be', 'have',
   'a', 'an', 'the', 'my', 'our', 'your', 'their', 'his', 'her', 'its',
+  // Domain nouns and modifiers that can sit in object position without ever
+  // naming a scope target: "waive late fees", "settle the invoice".
+  'late', 'overdue', 'outstanding', 'unpaid', 'final', 'first', 'second',
+  'third', 'gentle', 'friendly', 'polite', 'firm', 'formal', 'another',
+  'invoice', 'invoices', 'inv', 'payment', 'payments', 'balance', 'balances',
+  'statement', 'statements', 'bill', 'bills', 'amount', 'amounts', 'off',
+  'out', 'up', 'back', 'all', 'one', 'two', 'three', 'draft', 'copy', 'letter',
+  'letters', 'chaser', 'chasers', 'dunning', 'no', 'not', 'never', 'only',
 ])
 
-const COMPANY_SCOPE = /\bcompany[- ]wide\b|\bacross\s+the\s+(?:company|business|portfolio)\b|\bportfolio[- ]wide\b|\bglobally\b|\bcompany\s+level\b|\ball\s+clients\b|\bevery\s+client\b|\ball\s+customers\b|\bacross\s+all\b/i
+/**
+ * A token in DIRECT OBJECT or DATIVE position after a controlled act. This is
+ * how "send Atlas an email reminder" names Atlas: no preposition, no "client"
+ * head noun, just word order.
+ *
+ * It is deliberately the INVERSE of a target-name catalogue. Nothing here
+ * knows any entity name; a token is a candidate scope target unless it is in
+ * the closed non-scope vocabulary above. An unrecognised token therefore
+ * becomes an unresolved entity and fails closed, rather than being silently
+ * dropped so the conversation's focus can fill the gap.
+ */
+const DIRECT_OBJECT_CUE = /\b(?:send|sends|sending|email|emails|emailing|text|texts|texting|message|messages|messaging|contact|contacts|contacting|chase|chasing|nudge|nudging|remind|reminds|reminding|call|calls|calling|charge|charges|charging|invoice|invoicing|settle|settles|settling|refund|refunds|refunding|waive|waives|waiving|apply|applies|applying|collect|collects|collecting|escalate|escalates|escalating)\s+(?:the\s+|our\s+|their\s+|a\s+|an\s+)?([A-Za-z][A-Za-z0-9&.'-]*)/gi
+
+// Broader-than-client scope, however it is phrased. Any of these must stop a
+// client-focus fallback: "everywhere" cannot be satisfied by one client grant.
+const COMPANY_SCOPE = /\bcompany[- ]wide\b|\bacross\s+(?:the|our|all)\s+(?:company|business|organi[sz]ation|portfolio|book|accounts?|clients?)\b|\bthroughout\s+(?:the|our)\s+(?:company|business|organi[sz]ation|portfolio|book)\b|\bportfolio[- ]wide\b|\borgani[sz]ation[- ]wide\b|\benterprise[- ]wide\b|\bgroup[- ]wide\b|\bfirm[- ]wide\b|\bbusiness[- ]wide\b|\bglobally\b|\beverywhere\b|\bcompany\s+level\b|\ball\s+clients\b|\bevery\s+client\b|\ball\s+customers\b|\ball\s+accounts\b|\bany\s+client\b/i
 
 // An explicitly OTHER target names a scope that by construction is not the one
 // in hand, so it can never resolve.
 const OTHER_SCOPE = /\b(?:another|other|a\s+different|some\s+other|different)\s+(?:client|customer|account|entity|company)\b|\bother\s+clients\b/i
 
-// Cues that a scope target is being named at all.
-const SCOPE_CUE = /\b(?:for|to|on|against|with|at)\s+\S|\bclient\b|\bcustomer\b|\baccount\b|\bcompany\b|\bportfolio\b|\bglobally\b/i
+// A token position that could be naming an entity. Used only to decide whether
+// a scope was ASSERTED; resolution itself is done against known entities.
+const ENTITY_CUE = /\b(?:for|to|on|against|regarding|about|re|with|at)\s+(?:the\s+)?([A-Za-z][A-Za-z0-9&.'-]*)|\b(?:client|customer|account)\s+([A-Za-z][A-Za-z0-9&.'-]*)/gi
 
-// Global so every candidate target in the sentence is considered: "to send
-// ... for globex" must not stop at "send".
-const NAMED_TARGET = [
-  // "for client Globex", "for the Globex account", "for customer Globex"
-  /\b(?:client|customer|account)\s+([A-Za-z][A-Za-z0-9&.'-]*)/gi,
-  /\bthe\s+([A-Za-z][A-Za-z0-9&.'-]*)\s+(?:account|client|customer)\b/gi,
-  // "for Globex", "to globex"
-  /\b(?:for|to|on|against)\s+(?:the\s+)?([A-Za-z][A-Za-z0-9&.'-]*)/gi,
-]
+/** Every surface form a known entity can be named by. */
+function entityForms(entity) {
+  if (typeof entity === 'string') return [entity]
+  return [entity?.id, entity?.name, ...(Array.isArray(entity?.aliases) ? entity.aliases : [])]
+    .filter((value) => typeof value === 'string' && value.trim())
+}
 
 /**
- * Scope asserted BY THE TEXT. The distinction that matters is between "no
- * scope was mentioned" (UNSPECIFIED, where conversational focus may stand in)
- * and "a scope was mentioned but could not be resolved" (UNKNOWN, which must
- * fail closed). Letting the second silently become the first is how an Atlas
- * grant came to support "for globex".
+ * Scope asserted BY THE TEXT, resolved against the tenant's actual known
+ * entities rather than by guessing at syntax. "send Atlas an email reminder"
+ * names Atlas as surely as "for Atlas" does, and neither may be answered with
+ * a Globex grant because the conversation happens to be focused on Globex.
+ *
+ * UNSPECIFIED (no entity or scope language at all) is the ONLY state in which
+ * conversational focus may stand in. UNKNOWN means something was named and did
+ * not resolve, which always fails closed.
  */
-function parseScope(text) {
+function parseScope(text, knownEntities = []) {
   const none = { scopeType: ASK_DW_SCOPE_ASSERTION.UNSPECIFIED, clientName: null, entityId: null }
-  const companyWide = COMPANY_SCOPE.test(text)
   const entityMatch = /\b(?:invoice|inv)[-\s#]?([A-Za-z0-9][A-Za-z0-9-]*\d[A-Za-z0-9-]*)\b/i.exec(text)
+  const companyWide = COMPANY_SCOPE.test(text)
 
   if (OTHER_SCOPE.test(text)) {
     return { scopeType: ASK_DW_SCOPE_ASSERTION.UNKNOWN, clientName: null, entityId: null }
   }
+
+  // Resolve any known entity named anywhere in the proposition, in any
+  // syntactic position: direct object, dative, prepositional phrase.
+  const named = new Map()
+  for (const entity of knownEntities) {
+    for (const form of entityForms(entity)) {
+      const pattern = new RegExp(`\\b${form.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/[-_]/g, '[-_ ]')}\\b`, 'i')
+      if (pattern.test(text)) {
+        named.set(typeof entity === 'string' ? entity : entity.id, true)
+        break
+      }
+    }
+  }
+  if (named.size > 1) return { scopeType: ASK_DW_SCOPE_ASSERTION.AMBIGUOUS, clientName: null, entityId: null }
+  if (named.size === 1) {
+    const id = [...named.keys()][0]
+    if (companyWide) return { scopeType: ASK_DW_SCOPE_ASSERTION.AMBIGUOUS, clientName: null, entityId: null }
+    return { scopeType: ASK_DW_SCOPE_ASSERTION.CLIENT, clientName: id, entityId: null }
+  }
+
   if (companyWide && entityMatch) {
     return { scopeType: ASK_DW_SCOPE_ASSERTION.AMBIGUOUS, clientName: null, entityId: null }
   }
   if (companyWide) return { scopeType: ASK_DW_SCOPE_ASSERTION.COMPANY, clientName: null, entityId: null }
   if (entityMatch) return { scopeType: ASK_DW_SCOPE_ASSERTION.ENTITY, clientName: null, entityId: entityMatch[1] }
 
-  for (const pattern of NAMED_TARGET) {
-    for (const match of text.matchAll(pattern)) {
-      const token = match[1]
-      if (NON_SCOPE_TOKENS.has(token.toLowerCase())) continue
-      return { scopeType: ASK_DW_SCOPE_ASSERTION.CLIENT, clientName: token, entityId: null }
-    }
+  // Nothing known was named. If the prose nonetheless appears to name a target,
+  // it is an unresolved entity and must fail closed rather than borrow focus.
+  ENTITY_CUE.lastIndex = 0
+  for (const match of text.matchAll(ENTITY_CUE)) {
+    const token = (match[1] ?? match[2] ?? '').trim()
+    if (!token || NON_SCOPE_TOKENS.has(token.toLowerCase())) continue
+    return { scopeType: ASK_DW_SCOPE_ASSERTION.UNKNOWN, clientName: token, entityId: null }
   }
-  // A cue with no extractable target still asserts a scope; it must not fall
-  // back to focus.
-  if (/\b(?:client|customer|account)\b/i.test(text) && SCOPE_CUE.test(text)) {
+  DIRECT_OBJECT_CUE.lastIndex = 0
+  for (const match of text.matchAll(DIRECT_OBJECT_CUE)) {
+    const token = (match[1] ?? '').trim()
+    if (!token || NON_SCOPE_TOKENS.has(token.toLowerCase())) continue
+    return { scopeType: ASK_DW_SCOPE_ASSERTION.UNKNOWN, clientName: token, entityId: null }
+  }
+  if (/\b(?:client|customer|account)\b/i.test(text)) {
     return { scopeType: ASK_DW_SCOPE_ASSERTION.UNKNOWN, clientName: null, entityId: null }
   }
   return none
@@ -363,7 +473,22 @@ function parseScope(text) {
 // "No approval is needed" negates the APPROVAL requirement, not the
 // authority. It is an authority-bearing POSITIVE claim, and it is validated
 // against the grant's approvalRequirement separately.
-const APPROVAL_NEGATION = /\bno\s+approval\b|\bapproval\s+is\s+not\s+(?:needed|required)\b|\bwithout\s+(?:asking|approval|checking)\b|\bdon'?t\s+need\s+to\s+ask\b|\bdo\s+not\s+need\s+to\s+ask\b/gi
+// Approval, sign-off and consent are ONE dimension. Negating a requirement to
+// ask is not negating the authority itself, so this is removed from the text
+// before polarity is computed. Missing this is what let
+// "I can send email reminders without your sign-off." read as a denial.
+const APPROVAL_TERM = "(?:approval|approvals|sign[- ]?off|signoff|consent|authorisation|authorization|permission\\s+slip|the\\s+ok|okay)"
+const APPROVAL_NEGATION = new RegExp([
+  `\\bno\\s+${APPROVAL_TERM}`,
+  `\\b${APPROVAL_TERM}\\s+(?:is|was|are)\\s+not\\s+(?:needed|required|necessary)`,
+  `\\bwithout\\s+(?:your\\s+|my\\s+|the\\s+|any\\s+|first\\s+)?(?:asking|checking|needing\\s+)?${APPROVAL_TERM}`,
+  '\\bwithout\\s+(?:asking|checking|clearing\\s+it)',
+  `\\bdo(?:es)?\\s+not\\s+(?:need|require)\\s+(?:your\\s+|my\\s+|any\\s+)?${APPROVAL_TERM}`,
+  `\\bdon'?t\\s+(?:need|require)\\s+(?:your\\s+|my\\s+|any\\s+)?${APPROVAL_TERM}`,
+  "\\bdo(?:es)?\\s+not\\s+need\\s+to\\s+ask",
+  "\\bdon'?t\\s+need\\s+to\\s+ask",
+  "\\bneed\\s+not\\s+ask",
+].join('|'), 'gi')
 
 function parsePolarity(text, approvalState) {
   if (DOUBLE_NEGATION_HINT.test(text)) return ASK_DW_POLARITY.AMBIGUOUS
@@ -378,10 +503,12 @@ function parsePolarity(text, approvalState) {
 }
 
 function parseApproval(text) {
-  if (/\bno\s+approval\b|\bapproval\s+is\s+not\s+(?:needed|required)\b|\bwithout\s+(?:asking|approval)\b|\bdon'?t\s+need\s+to\s+ask\b|\bdo\s+not\s+need\s+to\s+ask\b|\bwithout\s+checking\b/i.test(text)) {
-    return 'NONE'
-  }
-  if (/\bapproval\s+(?:is\s+)?(?:needed|required)\b|\bneed\s+(?:your\s+)?approval\b|\bask\s+(?:you\s+)?first\b/i.test(text)) {
+  // Asserting that no approval is needed is a POSITIVE claim about acting
+  // alone, so it is detected before polarity and validated against the
+  // grant's approvalRequirement.
+  APPROVAL_NEGATION.lastIndex = 0
+  if (APPROVAL_NEGATION.test(text)) return 'NONE'
+  if (new RegExp(`\\b${APPROVAL_TERM}\\s+(?:is\\s+)?(?:needed|required|necessary)|\\b(?:need|require)s?\\s+(?:your\\s+|my\\s+)?${APPROVAL_TERM}|\\bask\\s+(?:you\\s+)?first|\\bcheck\\s+with\\s+you\\s+first`, 'i').test(text)) {
     return 'FOUNDER'
   }
   return null
@@ -394,9 +521,29 @@ const VAGUE_CAPABILITY = /\bgreen\s?light\b|\bcleared\s+to\b|\bfree\s+to\b|\bgoo
  * Parses ONE proposition. Every dimension comes from this proposition's own
  * text; nothing is inherited from a sibling clause, sentence or field.
  */
-export function parseAuthorityProposition(proposition) {
+export function parseAuthorityProposition(proposition, { knownEntities = [], mode = ASK_DW_PARSE_MODE.ASSERTION } = {}) {
   const text = proposition.text
-  const authorityBearing = AUTHORITY_TRIGGER.test(text) || (MODAL.test(text) && AR_ACT.test(text))
+  const dwActor = parseActor(text)
+  const controlledAct = AR_ACT.test(text)
+  const explicitDeontic = EXPLICIT_DEONTIC.test(text) || AUTHORITY_TRIGGER.test(text)
+  const modalDeontic = MODAL_DEONTIC.test(text)
+  // In a question, a leading wh-word is an interrogative, not the conditional
+  // "when"/"if" of a hypothetical. "When may I send a reminder?" is a
+  // permission question; "when I send a reminder" is a condition.
+  const frameText = mode === ASK_DW_PARSE_MODE.QUESTION
+    ? text.replace(/^(?:so\s+|and\s+|but\s+)?(?:what|which|when|where|who|whom|whose|why|how)\b/i, ' ')
+    : text
+  const safeFrame = SAFE_FRAME.test(frameText)
+  // Authority-bearing when DW (or the grant itself) is tied to a controlled
+  // accounts-receivable act in anything other than a recommendation,
+  // condition, hypothetical or already-executed frame -- OR when explicit
+  // deontic language appears at all. The first clause is what closes the
+  // open-ended synonym problem.
+  const authorityBearing =
+    (controlledAct && (dwActor === ASK_DW_ACTOR.DW || dwActor === ASK_DW_ACTOR.GRANT_SUBJECT ||
+      dwActor === ASK_DW_ACTOR.OTHER) && !safeFrame) ||
+    explicitDeontic ||
+    (modalDeontic && (controlledAct || GRANT_SUBJECT.test(text)))
   const base = {
     ...proposition,
     authorityBearing,
@@ -406,12 +553,12 @@ export function parseAuthorityProposition(proposition) {
   }
   if (!authorityBearing) return Object.freeze(base)
 
-  const scope = parseScope(text)
+  const scope = parseScope(text, knownEntities)
   const approvalState = parseApproval(text)
   return Object.freeze({
     ...base,
     polarity: parsePolarity(text, approvalState),
-    actor: parseActor(text),
+    actor: dwActor,
     canonicalAction: parseAction(text),
     scopeType: scope.scopeType,
     clientName: scope.clientName,
@@ -428,7 +575,7 @@ export function parseAuthorityProposition(proposition) {
  * Parses every model-authored field independently. Fields are never joined,
  * so a claim in one field cannot borrow specifics from another.
  */
-export function parseCandidateAuthorityPropositions(candidate) {
+export function parseCandidateAuthorityPropositions(candidate, { knownEntities = [] } = {}) {
   const fields = [
     ['executiveConclusion', candidate?.executiveConclusion],
     ...(Array.isArray(candidate?.evidenceBasis) ? candidate.evidenceBasis.map((v, i) => [`evidenceBasis[${i}]`, v]) : []),
@@ -440,8 +587,109 @@ export function parseCandidateAuthorityPropositions(candidate) {
   for (const [field, value] of fields) {
     if (typeof value !== 'string' || !value.trim()) continue
     for (const segment of segmentPropositions(value, { field })) {
-      propositions.push(parseAuthorityProposition(segment))
+      propositions.push(parseAuthorityProposition(segment, { knownEntities }))
     }
   }
   return Object.freeze(propositions)
+}
+
+
+// ── the shared typed authority-request boundary ──────────────────────────────
+
+/**
+ * An interrogative or directed shape. A founder turn is only routed to the
+ * deterministic authority answer when it BOTH asks something AND carries an
+ * authority-bearing proposition under the same closed boundary used to police
+ * DW's own sentences. There is deliberately no phrase list here: a request is
+ * recognised from the controlled-act / DW-actor relationship, exactly as an
+ * assertion is.
+ */
+const INTERROGATIVE_OPENER = /^(?:so\s+|and\s+|but\s+|ok(?:ay)?,?\s+|hey,?\s+)*(?:may|might|can|could|should|would|will|shall|must|do|does|did|are|is|am|was|were|have|has|had|what|which|when|where|who|whom|whose|why|how|tell\s+me|remind\s+me|confirm)\b/i
+
+/**
+ * A bare capability overview aimed at DW: "what can you do?", "what can't you
+ * do?", "what are you able to handle?".
+ *
+ * This is the one shape the act/actor relationship cannot decide, because the
+ * question names no act at all — its predicate is a pro-verb. Capability and
+ * permission are indistinguishable here, so it FAILS CLOSED by routing to the
+ * deterministic authority answer, which can only ever describe real grants.
+ * It is anchored end to end so it can never widen: "what can you tell me about
+ * Atlas?" names a real complement and is not this shape.
+ */
+const CAPABILITY_OVERVIEW = /^(?:so\s+|and\s+)?(?:what|how\s+much)\s+(?:exactly\s+)?(?:can|can'?t|cannot|cant|could|may|might|are|am)\s+(?:you|dw|duewatch|i\s+letting\s+you)\s*(?:able\s+to\s+|allowed\s+to\s+)?(?:do|handle|act\s+on|help\s+with|manage|run)?\s*$/i
+
+/**
+ * A turn that names authority itself is a request even in declarative shape:
+ * "I want to know what you are allowed to do."
+ */
+const AUTHORITY_ENQUIRY = /\b(?:what|which|whether|if)\b[^.?!]{0,80}\b(?:authoris\w*|authoriz\w*|permission|permitted|allowed|entitled|grants?|granted|approval|clearance|remit|mandate)\b/i
+
+/**
+ * Classifies one founder turn as an authority request, using the SAME typed
+ * proposition boundary that governs DW's own authority sentences.
+ *
+ * This replaces the previous independent, sentence-shaped recogniser. Both the
+ * turn classifier and the deterministic authority answer consume this one
+ * boundary, so a phrase that reaches the answer path can never fail to reach
+ * the routing path, and vice versa.
+ */
+export function classifyAskDwAuthorityRequest(text, { knownEntities = [] } = {}) {
+  const raw = String(text || '')
+  const normalized = normalizeAuthorityText(raw)
+  if (!normalized) {
+    return Object.freeze({ isAuthorityRequest: false, interrogative: false, proposition: null })
+  }
+  const stripped = normalized.replace(/[?!.,]+$/g, '')
+  const proposition = parseAuthorityProposition(
+    { field: 'question', text: stripped, quoted: false, attributedTo: null },
+    { knownEntities, mode: ASK_DW_PARSE_MODE.QUESTION },
+  )
+  const interrogative = /\?/.test(raw) || INTERROGATIVE_OPENER.test(stripped)
+  const isAuthorityRequest = Boolean(
+    (proposition.authorityBearing && interrogative) ||
+    AUTHORITY_ENQUIRY.test(stripped) ||
+    CAPABILITY_OVERVIEW.test(stripped),
+  )
+  return Object.freeze({ isAuthorityRequest, interrogative, proposition })
+}
+
+// ── known entities ───────────────────────────────────────────────────────────
+
+/**
+ * The tenant's actually-known entities, gathered from the same read-only
+ * sources the answer is resolved against. This is the deterministic reference
+ * seam scope resolution uses; it is NOT a catalogue of target names, and it
+ * never invents an entity that does not appear in admitted state.
+ */
+export function collectAskDwKnownEntities({
+  authorityProjection = null, companyBrainContext = null, caseContext = null,
+} = {}) {
+  const byId = new Map()
+  const add = (id, ...names) => {
+    if (id == null || String(id).trim() === '') return
+    const key = String(id)
+    const entry = byId.get(key) || { id: key, name: null, aliases: new Set() }
+    for (const name of names) {
+      if (typeof name === 'string' && name.trim()) entry.aliases.add(name.trim())
+    }
+    byId.set(key, entry)
+  }
+  const list = (value) => (Array.isArray(value) ? value : [])
+  for (const grant of list(authorityProjection?.currentGrants)) {
+    add(grant?.scope?.clientId ?? grant?.clientId, grant?.scope?.clientName)
+  }
+  for (const key of ['understanding', 'conflicts', 'roles', 'pendingFounderDecisions', 'changedSinceReview']) {
+    for (const item of list(companyBrainContext?.[key])) {
+      add(item?.clientId, item?.clientName, item?.scope?.clientName)
+    }
+  }
+  const focus = caseContext?.focus ?? null
+  add(focus?.clientRef?.id, focus?.clientRef?.name, focus?.clientRef?.label)
+  for (const candidate of list(caseContext?.candidates)) {
+    add(candidate?.id ?? candidate?.clientRef?.id, candidate?.name, candidate?.label)
+  }
+  return Object.freeze([...byId.values()].map((entry) => Object.freeze({
+    id: entry.id, name: entry.name, aliases: Object.freeze([...entry.aliases]),
+  })))
 }

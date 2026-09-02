@@ -19,10 +19,12 @@
 
 import {
   ASK_DW_ACTOR,
+  ASK_DW_PARSE_MODE,
   ASK_DW_POLARITY,
   ASK_DW_SCOPE_ASSERTION,
   G5_ACTIONS,
   UNMAPPABLE,
+  collectAskDwKnownEntities,
   normalizeAuthorityText,
   parseAuthorityProposition,
 } from './askDwAuthorityProposition.js'
@@ -297,12 +299,14 @@ export function evaluateAuthorityPropositions({
   const focusClientId = caseContext?.focus?.clientRef?.id ?? null
   const focusInvoiceId = caseContext?.focus?.invoiceRef?.id ?? null
 
-  // Fields where the answer endorses a quotation it just reported.
-  const endorsedFields = new Set()
-  for (const proposition of propositions) {
-    if (proposition.quoted) continue
-    if (ENDORSEMENT.test(proposition.text)) endorsedFields.add(proposition.field)
-  }
+  // Endorsement is evaluated ACROSS THE CANDIDATE AS A WHOLE. Propositions stay
+  // isolated for action, channel, scope and actor -- nothing is borrowed there.
+  // Endorsement is different in kind: "Atlas wrote: '...'." in the evidence
+  // basis and "That is our current policy." in the conclusion is one act of
+  // endorsement split across two fields, and field-scoping it let exactly that
+  // split carry an authority-bearing quotation past the boundary.
+  const candidateEndorsesQuotedMaterial = propositions.some(
+    (proposition) => !proposition.quoted && ENDORSEMENT.test(proposition.text))
 
   for (const proposition of propositions) {
     if (!proposition.authorityBearing) continue
@@ -315,7 +319,7 @@ export function evaluateAuthorityPropositions({
       // is not an unconditional escape hatch: endorsing the quoted permission,
       // or presenting it as the current rule, asserts it, so it must then be
       // grounded against G5 like any other claim.
-      const endorsed = endorsedFields.has(proposition.field)
+      const endorsed = candidateEndorsesQuotedMaterial
       if (proposition.polarity === ASK_DW_POLARITY.POSITIVE && !proposition.attributedTo) {
         issues.push({
           code: ASK_DW_AUTHORITY_ISSUE.QUOTED_AUTHORITY_AS_GOVERNING,
@@ -370,13 +374,19 @@ export function evaluateAuthorityPropositions({
     const granteeDeterminate =
       proposition.actor === ASK_DW_ACTOR.DW ||
       proposition.actor === ASK_DW_ACTOR.GRANT_SUBJECT
-    if (positive && !granteeDeterminate) {
+    // Determinacy is required in BOTH polarities. A denial resolved against
+    // DW's grants is a statement about DW, so "Atlas is not allowed to send
+    // email reminders." and "Someone is not permitted to issue refunds."
+    // must not silently inherit DW's G5 state and be judged accurate by it.
+    if (!granteeDeterminate) {
       issues.push({
         code: ASK_DW_AUTHORITY_ISSUE.AMBIGUOUS_AUTHORITY_ACTOR,
         detail: proposition.actor === ASK_DW_ACTOR.OTHER
           ? `Authority asserted for an actor that is not the G5 grantee: "${proposition.text}"`
           : `Authority asserted without identifying the G5 grantee: "${proposition.text}"`,
-        severity: 'BLOCK', field: proposition.field, umbrella: true,
+        // A refused DENIAL is not a claim of authority, so the umbrella only
+        // fires on the positive side.
+        severity: 'BLOCK', field: proposition.field, umbrella: positive,
       })
       continue
     }
@@ -525,10 +535,15 @@ export const ASK_DW_AUTHORITY_QUESTION_MODE = Object.freeze({
  * cannot be mapped is UNRESOLVABLE and is answered by asking for the missing
  * dimension rather than by listing unrelated grants.
  */
-export function parseAuthorityQuestion(text, { authorityProjection = null, companyBrainContext = null } = {}) {
+export function parseAuthorityQuestion(text, {
+  authorityProjection = null, companyBrainContext = null, caseContext = null,
+  knownEntities = null,
+} = {}) {
+  const entities = knownEntities ??
+    collectAskDwKnownEntities({ authorityProjection, companyBrainContext, caseContext })
   const proposition = parseAuthorityProposition({
     text: normalizeAuthorityText(text), field: 'question', quoted: false, attributedTo: null,
-  })
+  }, { knownEntities: entities, mode: ASK_DW_PARSE_MODE.QUESTION })
   const overview = /\bwhat\s+(?:authority|permissions?|grants?)\b|\bwhich\s+(?:authority|permissions?|grants?)\b|\bwhat\s+(?:can|are)\s+you\b|\bwhat\s+can'?t\s+you\b|\bdo\s+you\s+have\s+(?:any\s+)?(?:authority|permission)\b/i.test(text)
   const namesAction = proposition.canonicalAction !== UNMAPPABLE.ACTION_UNKNOWN
   if (overview && !namesAction) {
@@ -584,10 +599,12 @@ function describeGrantLine(entry) {
  */
 export function buildAskDwAuthorityAnswer({
   question, authorityProjection = null, companyBrainContext = null,
-  caseContext = null, evaluatedAt = null,
+  caseContext = null, evaluatedAt = null, knownEntities = null,
 } = {}) {
   const rendering = renderAskDwAuthority({ authorityProjection, evaluatedAt })
-  const parsed = parseAuthorityQuestion(question, { authorityProjection, companyBrainContext })
+  const parsed = parseAuthorityQuestion(question, {
+    authorityProjection, companyBrainContext, caseContext, knownEntities,
+  })
 
   const answer = (conclusion, extra = {}) => freeze({
     executiveConclusion: conclusion,

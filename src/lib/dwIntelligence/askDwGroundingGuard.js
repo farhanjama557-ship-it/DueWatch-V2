@@ -11,7 +11,10 @@
  * can never turn REVISE or BLOCK into PASS.
  */
 
-import { parseCandidateAuthorityPropositions } from './askDwAuthorityProposition.js'
+import {
+  collectAskDwKnownEntities,
+  parseCandidateAuthorityPropositions,
+} from './askDwAuthorityProposition.js'
 import {
   ASK_DW_AUTHORITY_ISSUE,
   evaluateAuthorityPropositions,
@@ -171,8 +174,16 @@ export function enforceAskDwGrounding({
   // Authority is evaluated PER PROPOSITION, per field. Nothing is flattened,
   // so no clause can borrow an action, channel, scope, actor or polarity from
   // another sentence, conjunct, quotation or answer field.
+  // Scope resolution reuses the tenant's actually-known entities rather than a
+  // catalogue of target-name shapes, so "send Atlas a reminder" is recognised
+  // as naming Atlas wherever the name sits in the sentence.
+  const knownEntities = collectAskDwKnownEntities({
+    authorityProjection: companyBrainContext?.authority ?? null,
+    companyBrainContext,
+    caseContext,
+  })
   const authorityEvaluation = evaluateAuthorityPropositions({
-    propositions: parseCandidateAuthorityPropositions(candidate),
+    propositions: parseCandidateAuthorityPropositions(candidate, { knownEntities }),
     authorityProjection: companyBrainContext?.authority ?? null,
     companyBrainContext,
     evaluatedAt: companyBrainContext?.authority?.evaluatedAt,
