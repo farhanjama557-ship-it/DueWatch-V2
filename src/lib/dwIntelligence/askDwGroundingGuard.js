@@ -11,6 +11,12 @@
  * can never turn REVISE or BLOCK into PASS.
  */
 
+import { parseCandidateAuthorityPropositions } from './askDwAuthorityProposition.js'
+import {
+  ASK_DW_AUTHORITY_ISSUE,
+  evaluateAuthorityPropositions,
+} from './askDwAuthorityRenderer.js'
+
 export const ASK_DW_GROUNDING_ISSUE = Object.freeze({
   UNGROUNDED_AMOUNT: 'UNGROUNDED_AMOUNT',
   UNGROUNDED_IDENTIFIER: 'UNGROUNDED_IDENTIFIER',
@@ -20,6 +26,8 @@ export const ASK_DW_GROUNDING_ISSUE = Object.freeze({
   RESOLVED_AN_UNRESOLVED_CONFLICT: 'RESOLVED_AN_UNRESOLVED_CONFLICT',
   COMPANY_BRAIN_CLAIM_UNAVAILABLE: 'COMPANY_BRAIN_CLAIM_UNAVAILABLE',
   SYCOPHANTIC_REVERSAL: 'SYCOPHANTIC_REVERSAL',
+  // Every authority-specific outcome from the closed proposition boundary.
+  ...ASK_DW_AUTHORITY_ISSUE,
 })
 
 const MONEY_PATTERN = /(?:[$£€]\s?)(\d[\d,]*(?:\.\d{1,2})?)|(\d[\d,]*\.\d{2})\b/g
@@ -112,149 +120,12 @@ function downgrade(verdict, target) {
   return 'REVISE'
 }
 
-function activeFocus(caseContext) {
-  return {
-    clientId: caseContext?.focus?.clientRef?.id ?? null,
-    invoiceId: caseContext?.focus?.invoiceRef?.id ?? null,
-  }
-}
-
-function hasMaterialDimensions(value) {
-  if (value == null || value === '') return false
-  if (Array.isArray(value)) return value.some(hasMaterialDimensions)
-  if (typeof value === 'object') return Object.values(value).some(hasMaterialDimensions)
-  return true
-}
-
-function grantIsCurrentAt(grant, evaluatedAt) {
-  const at = Date.parse(evaluatedAt)
-  if (!Number.isFinite(at)) return false
-  const from = Date.parse(grant?.effectiveFrom)
-  if (!Number.isFinite(from)) return false
-  const hasExpiry = grant?.expiresAt != null
-  const expires = hasExpiry ? Date.parse(grant.expiresAt) : null
-  if (hasExpiry && !Number.isFinite(expires)) return false
-  if (at < from) return false
-  if (expires != null && at >= expires) return false
-  return true
-}
-
-function grantMatchesFocus(grant, caseContext, evaluatedAt) {
-  if (grant?.status !== 'GRANTED') return false
-  if (!grantIsCurrentAt(grant, evaluatedAt)) return false
-  if (grant?.approvalRequirement !== 'NONE') return false
-  if (hasMaterialDimensions(grant?.conditions) || hasMaterialDimensions(grant?.limits)) return false
-  const focus = activeFocus(caseContext)
-  const level = String(grant?.scope?.level || '').toUpperCase()
-  if (level === 'COMPANY') return true
-  if (level === 'CLIENT') {
-    return Boolean(focus.clientId && grant?.scope?.clientId === focus.clientId)
-  }
-  if (level === 'ENTITY') {
-    return Boolean(
-      focus.invoiceId &&
-      String(grant?.scope?.entityType || '').toUpperCase() === 'INVOICE' &&
-      grant?.scope?.entityId === focus.invoiceId
-    )
-  }
-  return false
-}
-
-function authorityClauses(text) {
-  return String(text || '')
-    .split(/(?:[.!?;\n]+|\bbut\b|\bhowever\b)/i)
-    .map((clause) => clause.trim().toLowerCase())
-    .filter(Boolean)
-}
-
-const NEGATED_AUTHORITY_PREDICATES = [
-  /\b(?:i|we|dw|duewatch)\s+(?:am|is|are|was|were)\s+(?:currently\s+)?(?:not|never)\s+(?:authori[sz]ed|allowed|permitted)\b/gi,
-  /\b(?:i|we|dw|duewatch)\s+(?:isn't|aren't|wasn't|weren't)\s+(?:currently\s+)?(?:authori[sz]ed|allowed|permitted)\b/gi,
-  /\b(?:i|we|dw|duewatch)\s+(?:cannot|can't)\s+(?:send|email|text|apply|waive|settle|write|issue|refund|charge|process|reconcile|handle|act|do)\b/gi,
-  /\bno\s+(?:(?:current|active|standing|explicit|authority)\s+)*(?:grant|permission|authority|authori[sz]ation)\s+(?:covers|allows|permits|authori[sz]es|includes|exists)\b/gi,
-  /\b(?:the|this|a)?\s*(?:(?:current|active|standing|explicit|authority)\s+)*(?:grant|permission|authority|authori[sz]ation)\s+(?:does|did|is|was|has)\s+not\s+(?:cover|allow|permit|authori[sz]e|include|exist|been\s+granted)\b/gi,
-  /\b(?:permission|authority|authori[sz]ation)\s+(?:was|is|has been)\s+not\s+granted\b/gi,
-]
-
-function withoutNegatedAuthorityPredicates(clause) {
-  return NEGATED_AUTHORITY_PREDICATES.reduce(
-    (remaining, pattern) => remaining.replace(pattern, ' '),
-    clause,
-  )
-}
-
-function clauseClaimsAuthority(clause) {
-  // Remove only negation that scopes over an authority predicate. Unrelated
-  // negatives ("without approval", "do not need approval") must not erase a
-  // positive assertion elsewhere in the same clause.
-  const asserted = withoutNegatedAuthorityPredicates(clause)
-  return [
-    /\b(?:i(?:'m|\s+(?:am|was))|we(?:'re|\s+(?:are|were))|(?:dw|duewatch)\s+(?:is|was))\s+(?:currently\s+)?(?:authori[sz]ed|allowed|permitted)\b/,
-    /\b(?:i|we|dw|duewatch)\s+(?:have|has)\s+(?:the\s+)?(?:permission|authority|authori[sz]ation)\b/,
-    /\b(?:i|we|dw|duewatch)\s+can\s+(?:go ahead(?:\s+and)?|send|email|text|apply|waive|settle|write|issue|refund|charge|process|reconcile|handle|act|do)\b/,
-    /\b(?:(?:the|this|a)\s+)?(?:(?:current|active|standing|explicit)\s+)?(?:authority\s+)?grant\s+(?:currently\s+)?(?:covers|allows|permits|authori[sz]es|includes)\b/,
-    /\b(?:permission|authority|authori[sz]ation)\s+(?:currently\s+)?(?:covers|allows|permits|authori[sz]es|includes|exists|is active|(?:has been|was|is) granted)\b/,
-    /\byou\s+(?:(?:have|'ve)\s+)?(?:granted|given|gave)\s+(?:(?:me|us|dw|duewatch)\s+)?(?:permission|authority)\b/,
-    /\byou(?:'ve|\s+have)?\s+authori[sz]ed\s+(?:me|us|dw|duewatch)\b/,
-    /\b(?:i|we|dw|duewatch)\s+(?:was|were)\s+granted\s+(?:the\s+)?(?:permission|authority|authori[sz]ation)\b/,
-    /\b(?:i(?:'ve|\s+have)|we(?:'ve|\s+have)|(?:dw|duewatch)\s+has)\s+been\s+granted\s+(?:the\s+)?(?:permission|authority|authori[sz]ation)\b/,
-    /\b(?:sending|emailing|texting)\b[^.;]{0,48}\b(?:is|are|was|were|has been|have been)\s+(?:currently\s+)?(?:authori[sz]ed|allowed|permitted)\b/,
-    /\b(?:e-?mail|sms|text|collection)?\s*reminders?\s+(?:is|are|was|were|has been|have been)\s+(?:currently\s+)?(?:authori[sz]ed|allowed|permitted)\b/,
-    /\bthere\s+(?:is|are)\s+(?:an?\s+)?(?:(?:current|active|standing|explicit|authority)\s+)*grant\s+for\b/,
-    /\b(?:i|we|dw|duewatch)\s+(?:have|has)\s+(?:an?\s+)?(?:(?:current|active|standing|explicit|authority)\s+)*grant\s+for\b/,
-    /\b(?:(?:the|this|a)\s+)?(?:(?:current|active|standing|explicit|authority)\s+)*grant\s+gives\s+(?:me|us|dw|duewatch)\s+(?:the\s+)?(?:permission|authority|authori[sz]ation)\b/,
-  ].some((pattern) => pattern.test(asserted))
-}
-
-function claimsAuthority(text) {
-  return authorityClauses(text).some(clauseClaimsAuthority)
-}
-
-function claimedAction(text) {
-  const actions = new Set()
-  if (/\bcollection\s+(?:message|notice|email)s?\b/i.test(text)) actions.add('SEND_COLLECTION_MESSAGE')
-  if (/\breminder(?:s|\s+(?:email|message)s?)?\b/i.test(text) &&
-      !/\bcollection\s+reminder/i.test(text)) actions.add('SEND_REMINDER')
-  if (/\bapply\b[^.]{0,24}\blate fee\b/i.test(text)) actions.add('APPLY_LATE_FEE')
-  if (/\bwaive\b[^.]{0,24}\blate fee\b/i.test(text)) actions.add('WAIVE_LATE_FEE')
-  if (/\bsettle\b/i.test(text)) actions.add('SETTLE_INVOICE')
-  if (/\bwrite(?:-| )?off\b/i.test(text)) actions.add('WRITE_OFF_INVOICE')
-  if (/\brefund\b/i.test(text)) actions.add('ISSUE_REFUND')
-  return actions.size === 1 ? [...actions][0] : null
-}
-
-function claimedChannel(text) {
-  const channels = new Set()
-  if (/\be-?mail\b/i.test(text)) channels.add('EMAIL')
-  if (/\b(?:sms|text(?:\s+message)?)\b/i.test(text)) channels.add('SMS')
-  if (/\bwhats(?:app)?\b/i.test(text)) channels.add('WHATSAPP')
-  if (/\b(?:phone|telephone|call)\b/i.test(text)) channels.add('PHONE')
-  if (/\b(?:postal|post|letter)\b/i.test(text)) channels.add('POSTAL')
-  if (/\bportal\b/i.test(text)) channels.add('PORTAL')
-  if (channels.size === 1) return [...channels][0]
-  if (channels.size > 1) return 'AMBIGUOUS_CHANNEL'
-  if (/\b(?:by|via|through|over|using)\s+(?:an?\s+)?[a-z][a-z0-9-]*/i.test(text)) {
-    return 'UNRECOGNIZED_CHANNEL'
-  }
-  return null
-}
-
-function authorityClaimSupported({ text, grants, caseContext, evaluatedAt }) {
-  const action = claimedAction(text)
-  const channel = claimedChannel(text)
-  // An authority assertion must identify one exact G5 action. Vague or
-  // multi-action wording cannot borrow the breadth of any current grant.
-  if (!action) return false
-  return grants.some((grant) => {
-    if (!grantMatchesFocus(grant, caseContext, evaluatedAt)) return false
-    if (grant.action !== action) return false
-    // Channel-bound grants must be described with one exact named channel.
-    // Missing, unrecognized, or multi-channel prose is deliberately inert.
-    if (grant.channel != null && (!channel || grant.channel !== channel)) return false
-    if (grant.channel == null && channel != null) return false
-    return true
-  })
-}
+/**
+ * The former regex authority path lived here. It has been replaced by the
+ * closed typed boundary in askDwAuthorityProposition.js and
+ * askDwAuthorityRenderer.js, which parse every dimension per proposition
+ * instead of extracting action and channel from the flattened answer.
+ */
 
 /**
  * Checks a candidate answer deterministically.
@@ -297,17 +168,26 @@ export function enforceAskDwGrounding({
   if (EXECUTION_CLAIMS.some((pattern) => pattern.test(text))) {
     add(ASK_DW_GROUNDING_ISSUE.CLAIMED_EXECUTION, 'Candidate claims an action was performed.', 'BLOCK')
   }
-  if (claimsAuthority(text)) {
-    const grants = safeArray(companyBrainContext?.authority?.currentGrants)
-    if (!authorityClaimSupported({
-      text,
-      grants,
-      caseContext,
-      evaluatedAt: companyBrainContext?.authority?.evaluatedAt,
-    })) {
-      add(ASK_DW_GROUNDING_ISSUE.CLAIMED_AUTHORITY_WITHOUT_GRANT,
-        'Candidate claims authority without a current grant matching the active scope, action, and channel.', 'BLOCK')
-    }
+  // Authority is evaluated PER PROPOSITION, per field. Nothing is flattened,
+  // so no clause can borrow an action, channel, scope, actor or polarity from
+  // another sentence, conjunct, quotation or answer field.
+  const authorityEvaluation = evaluateAuthorityPropositions({
+    propositions: parseCandidateAuthorityPropositions(candidate),
+    authorityProjection: companyBrainContext?.authority ?? null,
+    companyBrainContext,
+    evaluatedAt: companyBrainContext?.authority?.evaluatedAt,
+    caseContext,
+  })
+  for (const issue of authorityEvaluation.issues) {
+    add(issue.code, `${issue.detail} [${issue.field}]`, issue.severity)
+  }
+  // The umbrella code is retained alongside the precise one so the established
+  // contract "a refused authority claim reports CLAIMED_AUTHORITY_WITHOUT_GRANT"
+  // keeps holding, while the sub-code says exactly which dimension failed.
+  if (authorityEvaluation.issues.some((issue) => issue.umbrella === true)) {
+    add(ASK_DW_GROUNDING_ISSUE.CLAIMED_AUTHORITY_WITHOUT_GRANT,
+      'Candidate asserts authority that no current grant supports for that exact action, scope, channel and actor.',
+      'BLOCK')
   }
 
   // A payment assertion needs canonical support, not conversational pressure.

@@ -1,6 +1,8 @@
 import { buildAskDwCompanyBrainContext } from './askDwCompanyBrainContext.js'
 import { classifyAskDwConversationalTurn } from './askDwConversationalTurn.js'
 import { buildAskDwDailyPriorities } from './askDwDailyPriorities.js'
+import { ASK_DW_TURN } from './askDwConversationalTurn.js'
+import { renderAskDwAuthority } from './askDwAuthorityRenderer.js'
 import { enforceAskDwGrounding } from './askDwGroundingGuard.js'
 import {
   DW_EPISTEMIC_LADDER,
@@ -90,7 +92,13 @@ function buildConversationLayer({ tenantId, text, caseContext, context }) {
     needsYouReadModel: context.needsYouReadModel ?? null,
     companyBrainContext: companyBrain,
   })
-  return freeze({ turn, companyBrain, priorities })
+  // An explicit authority question is answered from the G5 -> G6 -> G7
+  // projection, deterministically. The model may naturalise the explanation
+  // around it; it never decides or restates the permission semantics.
+  const authorityRendering = turn.turnType === ASK_DW_TURN.AUTHORITY_QUESTION
+    ? renderAskDwAuthority({ authorityProjection: companyBrain?.authority ?? null })
+    : null
+  return freeze({ turn, companyBrain, priorities, authorityRendering })
 }
 
 function toolRunId(index, request) {
@@ -133,6 +141,7 @@ function buildPlannerInput({ text, context, core, caseContext = null, conversati
     caseContext,
     conversationalTurn: conversation?.turn ?? null,
     companyBrainContext: conversation?.companyBrain ?? null,
+    authorityRendering: conversation?.authorityRendering ?? null,
     dailyPriorities: conversation?.priorities ?? null,
     truthPacket: {
       canonicalFacts: core.packet?.canonicalFacts ?? null,
@@ -207,6 +216,7 @@ function buildSynthesisInput({ text, core, plan, toolRuns, caseContext = null, c
     caseContext,
     conversationalTurn: conversation?.turn ?? null,
     companyBrainContext: conversation?.companyBrain ?? null,
+    authorityRendering: conversation?.authorityRendering ?? null,
     dailyPriorities: conversation?.priorities ?? null,
     truthLock: lockTruth(core),
     claims: core.packet?.claims ?? [],
@@ -231,6 +241,7 @@ function buildVerificationInput({ core, candidate, plan, toolRuns, caseContext =
     caseContext,
     conversationalTurn: conversation?.turn ?? null,
     companyBrainContext: conversation?.companyBrain ?? null,
+    authorityRendering: conversation?.authorityRendering ?? null,
     truthLock: lockTruth(core),
     candidate,
     hypotheses: plan.hypotheses,
@@ -431,6 +442,8 @@ export function createAskDwOrchestrator({
           conversationMemoryIsEvidence: false,
           conversationMemoryCanOverrideLiveReads: false,
           prioritiesOrderedDeterministically: true,
+          authorityRenderedDeterministically: conversation.authorityRendering != null,
+          authorityPropositionsCheckedPerProposition: true,
           deterministicGroundingEnforced: true,
         }),
       })

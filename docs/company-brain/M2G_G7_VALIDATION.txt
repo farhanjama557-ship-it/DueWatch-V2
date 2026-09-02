@@ -296,9 +296,120 @@ and allowlist before live use. This environment made no deployment or remote
 branch mutation.
 
 ==================================================
+9b. FINAL AUTHORITY-BOUNDARY REPAIR
+==================================================
+
+Base:   7136985beb7e9e664989d964e09a256fbf77ebce (portable bundle, verified)
+        bundle SHA-256 3403069de0221784050acdf75f89e71da4c137f00776f429b4fc4183469f726e
+        git bundle verify: okay, complete history
+        CP6 6dd8ede1c2afa1ad21d2a9ae42fd9cccd84e1468 confirmed an ancestor
+        imported to isolated ref g7-opus-authority-repair; the GitHub-tracking
+        branch m2g/company-brain-bootstrap-g7 was NOT moved or force-pushed
+Repair: <G7_REPAIR_SHA>
+
+THE DEFECT. Authority prose was recognised with a growing regex catalog, and
+the action and channel were then extracted from the WHOLE FLATTENED answer
+while only polarity was clause-local. One clause could therefore borrow
+another's specifics:
+
+  "I am authorized. This email reminder is only a draft."
+
+read as a supported EMAIL/SEND_REMINDER claim. Scope came from conversational
+focus rather than from the text, so an Atlas grant supported "for Globex".
+Actor was unbound, quotations governed, and a false DENIAL was never checked.
+
+THE REPAIR. Two complementary controls, neither of which is a wider regex.
+
+A. Deterministic authority rendering (askDwAuthorityRenderer.js).
+   An AUTHORITY_QUESTION now routes to renderAskDwAuthority, which computes the
+   answer from the current G5 -> G6 -> G7 projection and owns: governing
+   status, canonical G5 action, grantee, COMPANY/CLIENT/ENTITY scope, exact
+   target, channel, approval requirement, material limits, material
+   conditions, effective time, expiry, and revoked/stale/invalid state. It
+   carries deterministic:true and modelMayRewrite:false, and is identical in
+   Normal and Deep (G7-AB34). Where nothing governs it renders the
+   deterministic refusal. Authority-question routing was broadened with the
+   same closed semantics: "May I send this?", "Am I entitled...", "Do we have
+   permission?", "Is there a grant for this?", "Does our authority cover this
+   client?". The question itself never creates authority.
+
+B. Closed typed proposition boundary (askDwAuthorityProposition.js).
+   The design is inverted rather than extended. The TRIGGER is deliberately
+   broad, because over-triggering is safe; the ACCEPT is closed, and every
+   dimension must map onto an exact G5 value parsed FROM THAT PROPOSITION
+   ALONE: polarity, actor, canonicalAction, scopeType, clientId/entityId,
+   channel, approvalState, time, conditions, limits, grantIdentity. Anything
+   triggered that cannot map exactly is BLOCKed and falls back to the
+   deterministic rendering. Nothing is ever borrowed across a sentence, a
+   coordinated clause, a quotation, or an answer field: each of
+   executiveConclusion, evidenceBasis, uncertaintyAndLimitations,
+   recommendationOrNextStep and competingExplanations is parsed separately
+   (G7-AB5, G7-AB6).
+
+   Semantic families covered as equivalence classes, not string patches:
+   modal permission; authorization grammar (active/passive/future/perfect/
+   progressive/adverb-modified); grant possession and existence; coverage
+   verbs; authority nouns; approval implication; implicit capability;
+   coordinated clauses; textual scope; punctuation and Markdown; double and
+   nested negation; quotation and reported speech; actor identity; canonical
+   action integrity; channel integrity.
+
+   Fail-closed decisions worth naming: ambiguous synonyms never collapse
+   SEND_REMINDER and SEND_COLLECTION_MESSAGE ("chase", "nudge", "follow up",
+   "dunning", "collections reminders" all BLOCK); provider names (Gmail,
+   Teams, Slack) are refused rather than mapped to a channel, because
+   provider capability is not DW authority; double negation is reported
+   AMBIGUOUS rather than resolved by arithmetic; an unattributed quotation
+   fails closed while an attributed one stays inert with its attribution
+   preserved; and a NEGATIVE claim is checked for accuracy too, so a false
+   denial ("I cannot send email reminders" when a grant governs) is corrected.
+
+DEFECTS FOUND BY MY OWN MATRIX AND FIXED BEFORE COMMIT.
+ 1. NEGATORS lacked a trailing word boundary, so "no"/"not" matched inside
+    "notices" and silently flipped a positive claim to negative — which let an
+    ambiguous action through. Mutation-confirmed (M6).
+ 2. Approval negation ("no approval is needed") was read as authority
+    negation, blocking an accurate statement. Approval state is now parsed
+    separately and validated against the grant's approvalRequirement.
+ 3. The unattributed-quotation placeholder was truthy, so the unattributed
+    branch never fired.
+ 4. "I need your approval" and "cannot"/"unable" escaped the trigger
+    entirely, so inaccurate denials were never checked.
+
+PRIOR REPAIRS PRESERVED: exact action separation; exact channel matching;
+null projected limits treated as unrestricted (G7-AB26); material limits,
+conditions and approval requirements fail closed; revocation, expiry,
+staleness and malformed-timestamp hardening (G7-AB25); tenant isolation; scope
+matching; conversation cannot grant authority; model cannot grant authority;
+guard only downgrades a verdict (G7-AB27); no execution path added. The
+umbrella code CLAIMED_AUTHORITY_WITHOUT_GRANT is still emitted alongside the
+new precise sub-code, so established contracts keep holding.
+
+MUTATION TESTS (each applied, observed failing, then reverted; no mutant is in
+the committed tree):
+  proposition-local parsing disabled -> 4 failures
+  scope match disabled               -> 2 failures
+  actor match disabled               -> 1 failure
+  action separation disabled         -> 1 failure
+  deterministic rendering disabled   -> 2 failures
+  negator word boundary removed      -> 1 failure
+
+RESULTS (actual): G5 362/362, G6 503/503, Ask DW 316/316, G7 focused 137/137,
+FULL SUITE 1634/1634, production build PASS, git diff --check CLEAN.
+SCANS: credentials, financial-write, execution/IO, authority-mutation and
+tenant-isolation all clean across the changed modules. No file under
+src/lib/companyBrain/ was modified, so G5 semantics are untouched. M2D locks
+verified unchanged: askDwOpenAiContract.js e3870f6ffc62fea71118a9202d79af00cdf70477,
+ask-dw-model/index.ts b687f54b07ac7f9f31596a7cdf42a472d4ab8855.
+
+STILL NOT CLAIMED: no live model, no browser verification, no human
+naturalness evaluation. Those limitations from section 9 are unchanged.
+
+==================================================
 10. EXIT DECISION
 ==================================================
 
-The committed source tree is a G7 FREEZE CANDIDATE. All material source-level
+The committed source tree, including the final authority-boundary repair in
+section 9b, is a G7 FREEZE CANDIDATE. All material source-level
 requirements have implementation and executable evidence. External validation
 limitations are stated above rather than hidden. G8 was not started.
