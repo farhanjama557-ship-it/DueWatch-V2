@@ -39,12 +39,6 @@ const EXECUTION_CLAIMS = [
   new RegExp(`\\bi(?:'ve| have| just)?\\s+${EXECUTION_ADVERB}updated\\b[^.]{0,30}\\binvoice\\b`, 'i'),
 ]
 
-const AUTHORITY_CLAIMS = [
-  /\bi'?m allowed to\b/i, /\bi am allowed to\b/i, /\bi have (?:the )?authority\b/i,
-  /\bi can go ahead and\b/i, /\bi'?m authori[sz]ed\b/i, /\bi am authori[sz]ed\b/i,
-  /\byou'?ve authori[sz]ed me\b/i, /\bi have permission\b/i,
-]
-
 const PAID_CLAIMS = [
   /\b(?:is|was|has been) (?:now )?paid\b/i, /\bpayment (?:is )?confirmed\b/i,
   /\bthey (?:have )?paid\b/i, /\bfully settled\b/i, /\bpaid in full\b/i,
@@ -125,17 +119,23 @@ function activeFocus(caseContext) {
   }
 }
 
-function hasDimensions(value) {
-  return Boolean(value && typeof value === 'object' && Object.keys(value).length > 0)
+function hasMaterialDimensions(value) {
+  if (value == null || value === '') return false
+  if (Array.isArray(value)) return value.some(hasMaterialDimensions)
+  if (typeof value === 'object') return Object.values(value).some(hasMaterialDimensions)
+  return true
 }
 
 function grantIsCurrentAt(grant, evaluatedAt) {
   const at = Date.parse(evaluatedAt)
-  if (!Number.isFinite(at)) return true
+  if (!Number.isFinite(at)) return false
   const from = Date.parse(grant?.effectiveFrom)
-  const expires = grant?.expiresAt == null ? null : Date.parse(grant.expiresAt)
-  if (Number.isFinite(from) && at < from) return false
-  if (Number.isFinite(expires) && at >= expires) return false
+  if (!Number.isFinite(from)) return false
+  const hasExpiry = grant?.expiresAt != null
+  const expires = hasExpiry ? Date.parse(grant.expiresAt) : null
+  if (hasExpiry && !Number.isFinite(expires)) return false
+  if (at < from) return false
+  if (expires != null && at >= expires) return false
   return true
 }
 
@@ -143,7 +143,7 @@ function grantMatchesFocus(grant, caseContext, evaluatedAt) {
   if (grant?.status !== 'GRANTED') return false
   if (!grantIsCurrentAt(grant, evaluatedAt)) return false
   if (grant?.approvalRequirement !== 'NONE') return false
-  if (hasDimensions(grant?.conditions) || hasDimensions(grant?.limits)) return false
+  if (hasMaterialDimensions(grant?.conditions) || hasMaterialDimensions(grant?.limits)) return false
   const focus = activeFocus(caseContext)
   const level = String(grant?.scope?.level || '').toUpperCase()
   if (level === 'COMPANY') return true
@@ -160,27 +160,69 @@ function grantMatchesFocus(grant, caseContext, evaluatedAt) {
   return false
 }
 
-function claimedActions(text) {
-  const actions = new Set()
-  if (/\b(?:send|email|reminder|collection message)\b/i.test(text)) {
-    actions.add('SEND_REMINDER')
-    actions.add('SEND_COLLECTION_MESSAGE')
+function authorityClauses(text) {
+  return String(text || '')
+    .split(/(?:[.!?;\n]+|\bbut\b|\bhowever\b)/i)
+    .map((clause) => clause.trim().toLowerCase())
+    .filter(Boolean)
+}
+
+function clauseClaimsAuthority(clause) {
+  if (/\b(?:no|not|never|without|cannot|can't|isn't|aren't|doesn't|didn't|hasn't|haven't)\b/.test(clause)) {
+    return false
   }
+  return [
+    /\b(?:i(?:'m|\s+am)|we(?:'re|\s+are)|(?:dw|duewatch)\s+is)\s+(?:currently\s+)?(?:authori[sz]ed|allowed|permitted)\b/,
+    /\b(?:i|we|dw|duewatch)\s+(?:have|has)\s+(?:the\s+)?(?:permission|authority)\b/,
+    /\b(?:i|we|dw|duewatch)\s+can\s+(?:go ahead(?:\s+and)?|send|email|text|apply|waive|settle|write|issue|refund|charge|process|reconcile|handle|act|do)\b/,
+    /\b(?:(?:the|this|a)\s+)?(?:(?:current|active|standing|explicit)\s+)?(?:authority\s+)?grant\s+(?:currently\s+)?(?:covers|allows|permits|authori[sz]es|includes)\b/,
+    /\b(?:permission|authority)\s+(?:currently\s+)?(?:covers|allows|permits|authori[sz]es|includes|exists|(?:has been|was|is) granted)\b/,
+    /\byou\s+(?:(?:have|'ve)\s+)?(?:granted|given|gave)\s+(?:(?:me|us|dw|duewatch)\s+)?(?:permission|authority)\b/,
+    /\byou(?:'ve|\s+have)?\s+authori[sz]ed\s+(?:me|us|dw|duewatch)\b/,
+  ].some((pattern) => pattern.test(clause))
+}
+
+function claimsAuthority(text) {
+  return authorityClauses(text).some(clauseClaimsAuthority)
+}
+
+function claimedAction(text) {
+  const actions = new Set()
+  if (/\bcollection\s+(?:message|notice|email)s?\b/i.test(text)) actions.add('SEND_COLLECTION_MESSAGE')
+  if (/\breminder(?:s|\s+(?:email|message)s?)?\b/i.test(text) &&
+      !/\bcollection\s+reminder/i.test(text)) actions.add('SEND_REMINDER')
   if (/\bapply\b[^.]{0,24}\blate fee\b/i.test(text)) actions.add('APPLY_LATE_FEE')
   if (/\bwaive\b[^.]{0,24}\blate fee\b/i.test(text)) actions.add('WAIVE_LATE_FEE')
   if (/\bsettle\b/i.test(text)) actions.add('SETTLE_INVOICE')
   if (/\bwrite(?:-| )?off\b/i.test(text)) actions.add('WRITE_OFF_INVOICE')
   if (/\brefund\b/i.test(text)) actions.add('ISSUE_REFUND')
-  return actions
+  return actions.size === 1 ? [...actions][0] : null
+}
+
+function claimedChannel(text) {
+  const channels = new Set()
+  if (/\be-?mail\b/i.test(text)) channels.add('EMAIL')
+  if (/\b(?:sms|text(?:\s+message)?)\b/i.test(text)) channels.add('SMS')
+  if (/\bwhats(?:app)?\b/i.test(text)) channels.add('WHATSAPP')
+  if (/\b(?:phone|telephone|call)\b/i.test(text)) channels.add('PHONE')
+  if (/\b(?:postal|post|letter)\b/i.test(text)) channels.add('POSTAL')
+  if (/\bportal\b/i.test(text)) channels.add('PORTAL')
+  return channels.size === 1 ? [...channels][0] : null
 }
 
 function authorityClaimSupported({ text, grants, caseContext, evaluatedAt }) {
-  const actions = claimedActions(text)
-  const channel = /\b(?:email|emailed)\b/i.test(text) ? 'EMAIL' : null
+  const action = claimedAction(text)
+  const channel = claimedChannel(text)
+  // An authority assertion must identify one exact G5 action. Vague or
+  // multi-action wording cannot borrow the breadth of any current grant.
+  if (!action) return false
   return grants.some((grant) => {
     if (!grantMatchesFocus(grant, caseContext, evaluatedAt)) return false
-    if (actions.size > 0 && !actions.has(grant.action)) return false
-    if (channel && grant.channel !== channel) return false
+    if (grant.action !== action) return false
+    // Channel-bound grants must be described with one exact named channel.
+    // Missing, unrecognized, or multi-channel prose is deliberately inert.
+    if (grant.channel != null && (!channel || grant.channel !== channel)) return false
+    if (grant.channel == null && channel != null) return false
     return true
   })
 }
@@ -226,7 +268,7 @@ export function enforceAskDwGrounding({
   if (EXECUTION_CLAIMS.some((pattern) => pattern.test(text))) {
     add(ASK_DW_GROUNDING_ISSUE.CLAIMED_EXECUTION, 'Candidate claims an action was performed.', 'BLOCK')
   }
-  if (AUTHORITY_CLAIMS.some((pattern) => pattern.test(text))) {
+  if (claimsAuthority(text)) {
     const grants = safeArray(companyBrainContext?.authority?.currentGrants)
     if (!authorityClaimSupported({
       text,

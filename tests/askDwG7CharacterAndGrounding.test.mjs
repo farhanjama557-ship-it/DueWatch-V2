@@ -63,12 +63,13 @@ function conflictedBrain({ available = true, grants = 0 } = {}) {
       }],
       summary: { understandingReviewed: 0, needsReview: 1, conflictsUnresolved: 1, changedSinceReview: 0 },
       authority: {
-        evaluatedAt: 'x', activeGrantCount: grants, proposalCount: 0,
+        evaluatedAt: '2026-09-02T09:00:00.000Z', activeGrantCount: grants, proposalCount: 0,
         noStandingAuthorityConfigured: grants === 0,
         currentAuthorityGrants: grants > 0 ? [{
           id: 'g1', action: 'SEND_REMINDER', scope: { level: 'CLIENT', clientId: 'atlas' },
           channel: 'EMAIL', approvalRequirement: 'NONE', conditions: {},
-          effectiveWindow: { effectiveFrom: 'x', expiresAt: null }, status: 'GRANTED',
+          limits: { maxAmountMinor: null, currency: null },
+          effectiveWindow: { effectiveFrom: '2026-09-01T00:00:00.000Z', expiresAt: null }, status: 'GRANTED',
         }] : [],
         proposedAuthority: [], revokedAuthority: [], staleAuthority: [],
         supersededAuthority: [], invalidatedAuthority: [],
@@ -188,7 +189,7 @@ test('G7-G4 claiming authority without a current grant is blocked', () => {
   const withoutGrant = guard('I am authorized to send this.', { companyBrainContext: conflictedBrain() })
   assert.ok(withoutGrant.groundingIssues.includes(ASK_DW_GROUNDING_ISSUE.CLAIMED_AUTHORITY_WITHOUT_GRANT))
   // Only a real grant matching the active scope and action permits the claim.
-  const withGrant = guard('I am authorized to send this.', {
+  const withGrant = guard('I am authorized to send email reminders.', {
     companyBrainContext: conflictedBrain({ grants: 1 }),
     caseContext: { focus: { clientRef: { kind: 'client', id: 'atlas' }, invoiceRef: null } },
   })

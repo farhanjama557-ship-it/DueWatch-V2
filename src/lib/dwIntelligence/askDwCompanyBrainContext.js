@@ -108,13 +108,14 @@ function relevantTo(item, focus) {
 
 function grantIsCurrentAt(grant, evaluatedAt) {
   const at = Date.parse(evaluatedAt)
-  if (!Number.isFinite(at)) return true
+  if (!Number.isFinite(at)) return false
   const from = Date.parse(grant?.effectiveWindow?.effectiveFrom)
-  const expires = grant?.effectiveWindow?.expiresAt == null
-    ? null
-    : Date.parse(grant.effectiveWindow.expiresAt)
-  if (Number.isFinite(from) && at < from) return false
-  if (Number.isFinite(expires) && at >= expires) return false
+  if (!Number.isFinite(from)) return false
+  const hasExpiry = grant?.effectiveWindow?.expiresAt != null
+  const expires = hasExpiry ? Date.parse(grant.effectiveWindow.expiresAt) : null
+  if (hasExpiry && !Number.isFinite(expires)) return false
+  if (at < from) return false
+  if (expires != null && at >= expires) return false
   return true
 }
 
