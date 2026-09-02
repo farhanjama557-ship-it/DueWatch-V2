@@ -120,7 +120,13 @@ function buildConversationLayer({ tenantId, text, caseContext, context }) {
       knownEntities,
     })
     : null
-  return freeze({ turn, companyBrain, knownEntities, priorities, authorityRendering, authorityAnswer })
+  // Reported authority travels as a typed, non-governing structure beside the
+  // answer, so historical permission evidence has a home that is not free
+  // model prose.
+  return freeze({
+    turn, companyBrain, knownEntities, priorities, authorityRendering, authorityAnswer,
+    authorityQuestionSemantic: authorityAnswer?.questionSemantic ?? null,
+  })
 }
 
 function toolRunId(index, request) {
@@ -472,6 +478,12 @@ export function createAskDwOrchestrator({
           authorityRenderedDeterministically: conversation.authorityRendering != null,
           authorityAnswerOwnedByDeterministicCode: conversation.authorityAnswer != null,
           modelCanOwnAuthorityProposition: false,
+          // The question's semantic kind is preserved rather than collapsed to
+          // a governing/not-governing boolean, and the actor is validated
+          // before any G5 grant is read.
+          authorityQuestionSemanticPreserved: conversation.authorityQuestionSemantic != null,
+          authorityQuestionActorValidatedBeforeResolution: true,
+          quotedAuthorityCanGovern: false,
           authorityPropositionsCheckedPerProposition: true,
           deterministicGroundingEnforced: true,
         }),

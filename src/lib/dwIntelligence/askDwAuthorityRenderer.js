@@ -20,10 +20,12 @@
 import {
   ASK_DW_ACTOR,
   ASK_DW_PARSE_MODE,
+  ASK_DW_QUESTION_SEMANTIC,
   ASK_DW_POLARITY,
   ASK_DW_SCOPE_ASSERTION,
   G5_ACTIONS,
   UNMAPPABLE,
+  classifyAskDwAuthorityRequest,
   collectAskDwKnownEntities,
   normalizeAuthorityText,
   parseAuthorityProposition,
@@ -55,13 +57,28 @@ export const ASK_DW_AUTHORITY_ISSUE = Object.freeze({
   VAGUE_CAPABILITY_CLAIM: 'VAGUE_CAPABILITY_CLAIM',
   INACCURATE_AUTHORITY_DENIAL: 'INACCURATE_AUTHORITY_DENIAL',
   QUOTED_AUTHORITY_AS_GOVERNING: 'QUOTED_AUTHORITY_AS_GOVERNING',
+  AUTHORITY_ACTOR_NOT_GRANTEE: 'AUTHORITY_ACTOR_NOT_GRANTEE',
 })
 
 /**
- * Endorsement of a neighbouring quotation: agreeing with it, or presenting it
- * as currently applicable, converts reported speech into an assertion.
+ * QUOTATION OWNERSHIP.
+ *
+ * There is no endorsement detector here any more, and there must never be one.
+ * Detecting agreement was a losing game: "Exactly.", "Correct.", "Yes.",
+ * "I concur.", "That remains true.", "That still holds." and every future way
+ * of agreeing with a sentence all had to be enumerated, and each miss turned a
+ * quoted permission into governing authority.
+ *
+ * The structural closure is to remove the capability instead of policing it:
+ * an authority-bearing quotation in FREE MODEL PROSE can never become
+ * governing authority. It is grounded against G5 exactly like an assertion,
+ * whatever surrounds it and whoever it is attributed to. Attribution stops
+ * being an escape hatch, so nothing has to be detected.
+ *
+ * Genuine reported authority is not lost: it belongs in the typed, deterministic
+ * evidence structure built by buildAskDwReportedAuthorityEvidence below, which
+ * is marked nonGoverning and rendered separately from model prose.
  */
-const ENDORSEMENT = /\bthat(?:'s| is) (?:correct|right|true|accurate)\b|\bi agree\b|\bagreed\b|\bthis is (?:the )?(?:current|our|the) (?:rule|policy|position|authority)\b|\bthat(?:'s| is) (?:the )?(?:current|our) (?:rule|policy|position|authority)\b|\bwhich is correct\b|\band that (?:still )?applies\b|\bso i am\b|\bso i can\b/i
 
 function freeze(value) {
   if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value
@@ -265,7 +282,7 @@ export function renderAskDwAuthority({ authorityProjection, evaluatedAt = null }
   })
 }
 
-function resolveClientId(clientName, authorityProjection, companyBrainContext) {
+function resolveClientId(clientName, authorityProjection, companyBrainContext, knownEntities = []) {
   if (!clientName) return null
   const needle = String(clientName).trim().toLowerCase()
   const known = new Set()
@@ -274,6 +291,12 @@ function resolveClientId(clientName, authorityProjection, companyBrainContext) {
   }
   for (const item of safeArray(companyBrainContext?.understanding)) {
     if (item?.clientId) known.add(String(item.clientId))
+  }
+  // The conversation's own admitted references count as known: a question can
+  // name a client the current grants do not mention, and answering "I need the
+  // exact scope" there hides the real answer, which is that no grant covers it.
+  for (const entity of safeArray(knownEntities)) {
+    if (entity?.id) known.add(String(entity.id))
   }
   for (const id of known) {
     const normalized = id.toLowerCase()
@@ -299,15 +322,6 @@ export function evaluateAuthorityPropositions({
   const focusClientId = caseContext?.focus?.clientRef?.id ?? null
   const focusInvoiceId = caseContext?.focus?.invoiceRef?.id ?? null
 
-  // Endorsement is evaluated ACROSS THE CANDIDATE AS A WHOLE. Propositions stay
-  // isolated for action, channel, scope and actor -- nothing is borrowed there.
-  // Endorsement is different in kind: "Atlas wrote: '...'." in the evidence
-  // basis and "That is our current policy." in the conclusion is one act of
-  // endorsement split across two fields, and field-scoping it let exactly that
-  // split carry an authority-bearing quotation past the boundary.
-  const candidateEndorsesQuotedMaterial = propositions.some(
-    (proposition) => !proposition.quoted && ENDORSEMENT.test(proposition.text))
-
   for (const proposition of propositions) {
     if (!proposition.authorityBearing) continue
 
@@ -315,21 +329,23 @@ export function evaluateAuthorityPropositions({
     // A quoted authority sentence is only a problem if it is presented as
     // currently governing; attribution keeps it inert.
     if (proposition.quoted) {
-      // A quotation is inert only while it stays reported speech. Attribution
-      // is not an unconditional escape hatch: endorsing the quoted permission,
-      // or presenting it as the current rule, asserts it, so it must then be
-      // grounded against G5 like any other claim.
-      const endorsed = candidateEndorsesQuotedMaterial
-      if (proposition.polarity === ASK_DW_POLARITY.POSITIVE && !proposition.attributedTo) {
+      // A POSITIVE authority quotation in model prose is refused outright.
+      // Attribution is not an escape hatch, because nothing in free prose can
+      // establish that a quoted permission is current -- and asking the guard
+      // to notice agreement meant enumerating every way of agreeing.
+      // Reported authority belongs in the typed non-governing evidence
+      // structure, not in a sentence the model wrote.
+      if (proposition.polarity === ASK_DW_POLARITY.POSITIVE) {
         issues.push({
           code: ASK_DW_AUTHORITY_ISSUE.QUOTED_AUTHORITY_AS_GOVERNING,
-          detail: `Unattributed quoted authority text presented as governing: "${proposition.text}"`,
+          detail: proposition.attributedTo
+            ? `Quoted authority text cannot establish current authority in model prose: "${proposition.text}"`
+            : `Unattributed quoted authority text presented as governing: "${proposition.text}"`,
           severity: 'BLOCK', field: proposition.field, umbrella: true,
         })
-        continue
       }
-      if (!endorsed) continue
-      // Fall through: an endorsed quotation is evaluated as an assertion.
+      // A negated or non-positive quotation asserts no permission and stays inert.
+      continue
     }
 
     // Reported speech outside quotes: "The founder said I could send ..."
@@ -516,6 +532,44 @@ export function evaluateAuthorityPropositions({
   })
 }
 
+/**
+ * TYPED NON-GOVERNING REPORTED AUTHORITY.
+ *
+ * Historical statements about permission are legitimate evidence — what a
+ * founder wrote, what a contract said — and removing them from model prose
+ * must not delete the capability. It relocates it: reported authority becomes
+ * a typed structure, produced deterministically, every entry marked
+ * governing:false and authorityEffect:'NONE', rendered separately from the
+ * model's own sentences.
+ *
+ * Nothing here reads or writes G5. It records that something was SAID.
+ */
+export function buildAskDwReportedAuthorityEvidence({ propositions = [] } = {}) {
+  const entries = []
+  for (const proposition of propositions) {
+    if (!proposition?.quoted || !proposition.authorityBearing) continue
+    entries.push(freeze({
+      kind: 'ASK_DW_REPORTED_AUTHORITY_V0',
+      text: proposition.text,
+      attributedTo: proposition.attributedTo ?? null,
+      field: proposition.field,
+      polarity: proposition.polarity,
+      // The whole point of the structure: it can never be current authority.
+      governing: false,
+      authorityEffect: 'NONE',
+      grantsAuthority: false,
+      supersedesG5: false,
+      renderedSeparatelyFromModelProse: true,
+    }))
+  }
+  return freeze({
+    kind: 'ASK_DW_REPORTED_AUTHORITY_SET_V0',
+    entries: freeze(entries),
+    governing: false,
+    g5RemainsAuthorityOwner: true,
+  })
+}
+
 export { G5_ACTIONS }
 
 // ── deterministic authority ANSWER ownership ─────────────────────────────────
@@ -524,7 +578,14 @@ export const ASK_DW_AUTHORITY_QUESTION_MODE = Object.freeze({
   OVERVIEW: 'OVERVIEW',
   EXACT: 'EXACT',
   UNRESOLVABLE: 'UNRESOLVABLE',
+  // The question is about someone other than the G5 grantee, so no grant can
+  // answer it. This is decided BEFORE any resolution is attempted.
+  ACTOR_NOT_GRANTEE: 'ACTOR_NOT_GRANTEE',
 })
+
+const ASK_DW_AUTHORITY_QUESTION_SEMANTIC_DEFAULT = ASK_DW_QUESTION_SEMANTIC.CAN_ACT
+
+export { ASK_DW_QUESTION_SEMANTIC }
 
 /**
  * Reads the founder's authority question into a typed request.
@@ -541,38 +602,73 @@ export function parseAuthorityQuestion(text, {
 } = {}) {
   const entities = knownEntities ??
     collectAskDwKnownEntities({ authorityProjection, companyBrainContext, caseContext })
+  // The SAME shared typed boundary the orchestrator routes with. Reading the
+  // question twice, with two recognisers, is how routing and answering drifted
+  // apart in the first place.
+  const request = classifyAskDwAuthorityRequest(text, { knownEntities: entities })
   const proposition = parseAuthorityProposition({
     text: normalizeAuthorityText(text), field: 'question', quoted: false, attributedTo: null,
   }, { knownEntities: entities, mode: ASK_DW_PARSE_MODE.QUESTION })
-  const overview = /\bwhat\s+(?:authority|permissions?|grants?)\b|\bwhich\s+(?:authority|permissions?|grants?)\b|\bwhat\s+(?:can|are)\s+you\b|\bwhat\s+can'?t\s+you\b|\bdo\s+you\s+have\s+(?:any\s+)?(?:authority|permission)\b/i.test(text)
-  const namesAction = proposition.canonicalAction !== UNMAPPABLE.ACTION_UNKNOWN
+  const semantic = request.semantic ?? ASK_DW_AUTHORITY_QUESTION_SEMANTIC_DEFAULT
+
+  // ACTOR FIRST, before any G5 resolution. A G5 grant is held by DW. If the
+  // founder asks about themselves, the client, the system or a provider, no
+  // grant can answer it, and resolving one anyway is how "Can I send email
+  // reminders for Atlas?" was answered "Yes" out of DW's own permission.
+  const actor = request.actor ?? proposition.actor
+  const granteeDeterminate =
+    actor === ASK_DW_ACTOR.DW || actor === ASK_DW_ACTOR.GRANT_SUBJECT || actor == null
+  if (!granteeDeterminate) {
+    return freeze({
+      mode: ASK_DW_AUTHORITY_QUESTION_MODE.ACTOR_NOT_GRANTEE,
+      semantic, actor, missing: freeze([]),
+    })
+  }
+
+  const overview = semantic === ASK_DW_QUESTION_SEMANTIC.AUTHORITY_OVERVIEW
+  const namesAction = proposition.canonicalAction !== UNMAPPABLE.ACTION_UNKNOWN &&
+    proposition.canonicalAction != null
   if (overview && !namesAction) {
-    return freeze({ mode: ASK_DW_AUTHORITY_QUESTION_MODE.OVERVIEW, missing: [] })
+    return freeze({
+      mode: ASK_DW_AUTHORITY_QUESTION_MODE.OVERVIEW, semantic, actor, missing: freeze([]),
+    })
   }
   const missing = []
-  if (proposition.canonicalAction === UNMAPPABLE.ACTION_UNKNOWN) missing.push('action')
+  if (proposition.canonicalAction == null ||
+      proposition.canonicalAction === UNMAPPABLE.ACTION_UNKNOWN) missing.push('action')
   if (proposition.canonicalAction === UNMAPPABLE.ACTION_AMBIGUOUS) missing.push('action')
   if (proposition.channel === UNMAPPABLE.CHANNEL_AMBIGUOUS ||
       proposition.channel === UNMAPPABLE.CHANNEL_UNKNOWN) missing.push('channel')
   if (proposition.scopeType === ASK_DW_SCOPE_ASSERTION.AMBIGUOUS ||
       proposition.scopeType === ASK_DW_SCOPE_ASSERTION.UNKNOWN) missing.push('scope')
   if (missing.length > 0) {
-    if (overview) return freeze({ mode: ASK_DW_AUTHORITY_QUESTION_MODE.OVERVIEW, missing: [] })
-    return freeze({ mode: ASK_DW_AUTHORITY_QUESTION_MODE.UNRESOLVABLE, missing: freeze(missing) })
+    if (overview) {
+      return freeze({
+        mode: ASK_DW_AUTHORITY_QUESTION_MODE.OVERVIEW, semantic, actor, missing: freeze([]),
+      })
+    }
+    return freeze({
+      mode: ASK_DW_AUTHORITY_QUESTION_MODE.UNRESOLVABLE,
+      semantic, actor, missing: freeze(missing),
+    })
   }
   let scopeType = proposition.scopeType
   let clientId = null
-  let entityId = proposition.entityId
+  const entityId = proposition.entityId
   if (scopeType === ASK_DW_SCOPE_ASSERTION.CLIENT) {
-    clientId = resolveClientId(proposition.clientName, authorityProjection, companyBrainContext)
+    clientId = resolveClientId(proposition.clientName, authorityProjection, companyBrainContext, entities)
     if (!clientId) {
-      return freeze({ mode: ASK_DW_AUTHORITY_QUESTION_MODE.UNRESOLVABLE, missing: freeze(['scope']) })
+      return freeze({
+        mode: ASK_DW_AUTHORITY_QUESTION_MODE.UNRESOLVABLE,
+        semantic, actor, missing: freeze(['scope']),
+      })
     }
   } else if (scopeType === ASK_DW_SCOPE_ASSERTION.UNSPECIFIED) {
     scopeType = null
   }
   return freeze({
     mode: ASK_DW_AUTHORITY_QUESTION_MODE.EXACT,
+    semantic, actor,
     missing: freeze([]),
     request: freeze({
       canonicalAction: proposition.canonicalAction,
@@ -625,17 +721,34 @@ export function buildAskDwAuthorityAnswer({
     return answer(rendering.statement, { authorityStatus: ASK_DW_AUTHORITY_STATUS.UNREADABLE })
   }
 
+  // The question is not about DW. No G5 grant can answer it, and none is read.
+  if (parsed.mode === ASK_DW_AUTHORITY_QUESTION_MODE.ACTOR_NOT_GRANTEE) {
+    return answer(
+      'My standing authority is held by me, not by you or anyone else, so it cannot answer what someone else is allowed to do.',
+      {
+        evidenceBasis: freeze([]),
+        authorityStatus: 'ACTOR_NOT_GRANTEE',
+        questionSemantic: parsed.semantic,
+        actor: parsed.actor,
+        governing: false,
+      },
+    )
+  }
+
   if (parsed.mode === ASK_DW_AUTHORITY_QUESTION_MODE.UNRESOLVABLE) {
     // Never answer an under-specified check by listing unrelated authority.
     const missing = parsed.missing.join(' and ')
     return answer(
       `I need the exact ${missing} before I can tell you whether I am allowed to do that.`,
-      { evidenceBasis: freeze([]), authorityStatus: 'CLARIFICATION_REQUIRED', clarificationNeeded: parsed.missing },
+      {
+        evidenceBasis: freeze([]), authorityStatus: 'CLARIFICATION_REQUIRED',
+        clarificationNeeded: parsed.missing, questionSemantic: parsed.semantic,
+      },
     )
   }
 
   if (parsed.mode === ASK_DW_AUTHORITY_QUESTION_MODE.OVERVIEW) {
-    return answer(rendering.statement)
+    return answer(rendering.statement, { questionSemantic: parsed.semantic })
   }
 
   const request = parsed.request
@@ -651,9 +764,54 @@ export function buildAskDwAuthorityAnswer({
     }
   const resolution = resolveAskDwAuthority({ authorityProjection, request: scoped, evaluatedAt })
   const label = `${scoped.canonicalAction.toLowerCase().replace(/_/g, ' ')}${scoped.channel ? ` by ${scoped.channel.toLowerCase()}` : ''}`
-  const conclusion = resolution.governing
-    ? `Yes — a current grant covers ${label}${scoped.clientId ? ` for ${scoped.clientId}` : ''}.`
-    : `No. ${resolution.reason}`
+  const forScope = scoped.clientId ? ` for ${scoped.clientId}` : ''
+
+  // EACH SEMANTIC IS ANSWERED IN ITS OWN TERMS. Collapsing them all onto
+  // "governing ? Yes : No" inverted every question whose surface polarity was
+  // not plain, and answered an approval question with a capability fact.
+  //
+  // The wording is declarative wherever a bare yes/no would be ambiguous
+  // against a negative question, so the founder never has to work out which
+  // proposition the "yes" attaches to.
+  if (parsed.semantic === ASK_DW_QUESTION_SEMANTIC.APPROVAL_REQUIRED) {
+    // Answered from approvalRequirement, never from whether a grant governs.
+    const grantFound = resolution.grant != null &&
+      resolution.status !== ASK_DW_AUTHORITY_STATUS.NO_MATCHING_GRANT &&
+      resolution.status !== ASK_DW_AUTHORITY_STATUS.NOT_CONFIGURED
+    const approvalConclusion = !grantFound
+      ? 'There is no matching current grant; approval alone would not authorize that action.'
+      : resolution.grant.approvalRequirement !== 'NONE'
+        ? 'Yes — the current grant requires your approval each time.'
+        : 'The current grant does not require your approval for that action.'
+    return answer(approvalConclusion, {
+      evidenceBasis: resolution.grant ? freeze([describeGrantLine({
+        canonicalAction: resolution.grant.action,
+        scopeLabel: describeScope(resolution.grant),
+        channel: resolution.grant.channel,
+        approvalRequirement: resolution.grant.approvalRequirement,
+      })]) : freeze([]),
+      authorityStatus: resolution.status,
+      questionSemantic: parsed.semantic,
+      approvalRequirement: resolution.grant?.approvalRequirement ?? null,
+      governing: resolution.governing,
+    })
+  }
+
+  const conclusion = parsed.semantic === ASK_DW_QUESTION_SEMANTIC.NEGATED_CAPABILITY
+    // A negative question gets a declarative answer, so polarity survives.
+    ? (resolution.governing
+      ? `I can: a current grant covers ${label}${forScope}.`
+      : `I cannot. ${resolution.reason}`)
+    : parsed.semantic === ASK_DW_QUESTION_SEMANTIC.FUTURE_CONTROLLED_ACTION
+      // A commitment to act needs the same authority as acting. Saying what DW
+      // is permitted to do is not the same as scheduling it, so the answer says
+      // so rather than implying an action has been queued.
+      ? (resolution.governing
+        ? `A current grant covers ${label}${forScope}, so I can — but I do not act from this conversation alone.`
+        : `No. ${resolution.reason}`)
+      : (resolution.governing
+        ? `Yes — a current grant covers ${label}${forScope}.`
+        : `No. ${resolution.reason}`)
   return answer(conclusion, {
     evidenceBasis: resolution.grant
       ? freeze([describeGrantLine({
@@ -664,6 +822,7 @@ export function buildAskDwAuthorityAnswer({
       })])
       : freeze([]),
     authorityStatus: resolution.status,
+    questionSemantic: parsed.semantic,
     governing: resolution.governing,
   })
 }

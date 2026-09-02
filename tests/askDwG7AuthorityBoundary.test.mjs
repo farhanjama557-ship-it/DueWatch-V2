@@ -21,11 +21,15 @@ import {
 import {
   ASK_DW_AUTHORITY_ISSUE,
   ASK_DW_AUTHORITY_STATUS,
+  ASK_DW_QUESTION_SEMANTIC,
+  buildAskDwAuthorityAnswer,
+  buildAskDwReportedAuthorityEvidence,
   evaluateAuthorityPropositions,
   renderAskDwAuthority,
   resolveAskDwAuthority,
 } from '../src/lib/dwIntelligence/askDwAuthorityRenderer.js'
 import {
+  ASK_DW_ACTOR,
   ASK_DW_POLARITY,
   ASK_DW_SCOPE_ASSERTION,
   G5_ACTIONS,
@@ -338,17 +342,27 @@ test('G7-AB15 reported speech never creates authority', () => {
   }
 })
 
-test('G7-AB15b an attributed quotation is inert, and an unattributed one is not', () => {
-  // Attribution is preserved: reporting what Atlas wrote is not DW asserting
-  // authority, and it grants nothing.
+test('G7-AB15b no quoted permission in model prose can govern, attributed or not', () => {
+  // SUPERSEDES the original G7-AB15b, which asserted that an ATTRIBUTED
+  // quotation is inert. Attribution was an escape hatch: the guard then had to
+  // detect every way of agreeing with the quotation to close it again. The
+  // requirement is now stricter -- a positive authority quotation in free model
+  // prose never establishes authority, whoever it is attributed to. Genuine
+  // reported authority lives in the typed non-governing evidence structure
+  // (G7-QC7), not in a sentence the model wrote.
   const attributed = check('Atlas wrote: "DW is authorized to send email reminders."', [])
-  assert.ok(!attributed.groundingIssues.includes(ASK_DW_AUTHORITY_ISSUE.UNSUPPORTED_AUTHORITY_CLAIM))
-  assert.ok(!umbrella(attributed))
-  // A bare quotation with no source cannot be told apart from an assertion.
+  assert.equal(attributed.verdict, 'BLOCK')
+  assert.ok(attributed.groundingIssues.includes(
+    ASK_DW_AUTHORITY_ISSUE.QUOTED_AUTHORITY_AS_GOVERNING))
+  // A bare quotation with no source is refused for the same reason.
   const unattributed = check('"DW is authorized to send email reminders."', [])
   assert.equal(unattributed.verdict, 'BLOCK')
   assert.ok(unattributed.groundingIssues.includes(
     ASK_DW_AUTHORITY_ISSUE.QUOTED_AUTHORITY_AS_GOVERNING))
+  // A quotation that asserts NO permission stays inert: the closure removes an
+  // escape hatch, it does not refuse all reported speech.
+  const negated = check('Atlas wrote: "DW is not authorized to send email reminders."', [])
+  assert.ok(!umbrella(negated))
 })
 
 test('G7-AB15c a quotation cannot supply specifics to a separate claim', () => {
@@ -769,14 +783,28 @@ test('G7-AUD3 an exact check resolves that request, not an unrelated listing', a
 })
 
 test('G7-AUD4 an under-specified authority question asks for the missing dimension', async () => {
+  // Re-pointed from "Am I entitled to chase this?" to the DW-directed form.
+  // The original phrasing is a question about the FOUNDER, which is now
+  // answered by the actor gate before any dimension is considered; the
+  // under-specification property it was written to prove is unchanged and is
+  // proven here, and the founder-perspective form is asserted just below.
   const result = await colludingOrchestrator('Yes.').run({
-    mode: 'normal', text: 'Am I entitled to chase this?',
+    mode: 'normal', text: 'Are you entitled to chase this?',
     context: { tenantId: 'tenant-a', companyBrainReadModel: brainReadModel([grant()]) },
   })
   assert.equal(result.answer.authorityStatus, 'CLARIFICATION_REQUIRED')
   assert.match(result.answer.executiveConclusion, /need the exact action/i)
   // No unrelated authority is listed in place of an answer.
   assert.deepEqual(result.answer.evidenceBasis, [])
+
+  // The actor gate runs FIRST: an under-specified question about the founder
+  // is refused for the actor, not answered with a clarification about DW.
+  const founder = await colludingOrchestrator('Yes.').run({
+    mode: 'normal', text: 'Am I entitled to chase this?',
+    context: { tenantId: 'tenant-a', companyBrainReadModel: brainReadModel([grant()]) },
+  })
+  assert.equal(founder.answer.authorityStatus, 'ACTOR_NOT_GRANTEE')
+  assert.deepEqual(founder.answer.evidenceBasis, [])
 })
 
 test('G7-AUD5 an overview question lists standing authority deterministically', async () => {
@@ -832,19 +860,22 @@ test('G7-AUD8 negative claims need the same complete mapping', () => {
   }
 })
 
-test('G7-AUD9 endorsing a quoted permission grounds it against G5', () => {
+test('G7-AUD9 a quoted permission is refused with or without an endorsement', () => {
+  // The original form of this test proved that ENDORSED quotations are
+  // grounded. That property still holds, but it is no longer what closes the
+  // hole: endorsement is not detected at all any more, so the endorsed and the
+  // neutral case must both be refused for the same structural reason.
   for (const text of [
     'Atlas said "DW is authorized to send email reminders." That is correct.',
     'The founder said "DW may send email reminders." I agree.',
     'Atlas wrote "DW is authorized to send email reminders." This is the current rule.',
+    // Neutral reported speech, with no endorsement of any kind.
+    'Atlas wrote: "DW is authorized to send email reminders."',
   ]) {
     const result = check(text, [])
     assert.equal(result.verdict, 'BLOCK', text)
     assert.ok(umbrella(result), text)
   }
-  // Neutral reported speech stays inert.
-  const neutral = check('Atlas wrote: "DW is authorized to send email reminders."', [])
-  assert.ok(!umbrella(neutral))
 })
 
 test('G7-AUD10 ordinary non-authority prose is not caught by the modal trigger', () => {
@@ -1088,4 +1119,280 @@ test('G7-CL10 a negative permission statement never inherits DW G5 state', () =>
   ]) {
     assert.equal(check(text, []).verdict, 'PASS', text)
   }
+})
+
+// ── G7 question semantics and conditional-action closure ─────────────────────
+//
+// Four structural repairs: actor perspective, typed question semantics,
+// routing from the action relation, and conditional-action semantics; plus the
+// removal of endorsement detection in favour of quotation ownership.
+
+/** The deterministic answer for one founder question, at a given grant state. */
+function ask(question, grants, { clientId = 'atlas' } = {}) {
+  return buildAskDwAuthorityAnswer({
+    question,
+    authorityProjection: context(grants).authority,
+    companyBrainContext: context(grants),
+    caseContext: { focus: { clientRef: clientId ? { kind: 'client', id: clientId } : null, invoiceRef: null } },
+    evaluatedAt: AS_OF,
+  })
+}
+
+test('G7-QS1 a G5 grant to DW never answers authority for another actor', () => {
+  // Each of these was answered "Yes" out of DW's own Atlas grant.
+  for (const question of [
+    'Can I send email reminders for Atlas?',
+    'May I send email reminders for Atlas?',
+    'Can we send email reminders for Atlas?',
+    'Can Atlas send an email reminder?',
+    'Is Atlas authorized to send email reminders?',
+    'Can the system send email reminders for Atlas?',
+  ]) {
+    const answer = ask(question, [grant()])
+    assert.equal(answer.authorityStatus, 'ACTOR_NOT_GRANTEE', question)
+    assert.equal(answer.governing, false, question)
+    assert.deepEqual(answer.evidenceBasis, [], question)
+    assert.equal(answer.modelOwnsAuthorityProposition, false, question)
+  }
+})
+
+test('G7-QS2 the actor is bound to the controlled action, not to any pronoun', () => {
+  // "May I let you send ..." embeds DW as the actor of the controlled act even
+  // though the founder is the subject of the matrix clause. Losing that would
+  // refuse a legitimate question.
+  const embedded = ask('May I let you send email reminders for Atlas?', [grant()])
+  assert.equal(embedded.governing, true)
+  assert.match(embedded.executiveConclusion, /^Yes —/)
+
+  const direct = ask('Can you send email reminders for Atlas?', [grant()])
+  assert.equal(direct.governing, true)
+
+  // And in DW's own prose the perspective is the other way round: "I" is DW.
+  const assertion = parseAuthorityProposition(
+    { text: 'I am authorized to send email reminders for Atlas.', field: 'f', quoted: false, attributedTo: null }, {})
+  assert.equal(assertion.actor, ASK_DW_ACTOR.DW)
+  // A named third party after the verb is the target, never the actor.
+  const dative = parseAuthorityProposition(
+    { text: 'I am authorized to send Atlas an email reminder.', field: 'f', quoted: false, attributedTo: null }, {})
+  assert.equal(dative.actor, ASK_DW_ACTOR.DW)
+})
+
+test('G7-QS3 actor perspective crossed against every speaker role', () => {
+  const cases = [
+    ['Can I send email reminders?', ASK_DW_ACTOR.OTHER],
+    ['Can we send email reminders?', ASK_DW_ACTOR.OTHER],
+    ['Can you send email reminders?', ASK_DW_ACTOR.DW],
+    ['Can DW send email reminders?', ASK_DW_ACTOR.DW],
+    ['Can DueWatch send email reminders?', ASK_DW_ACTOR.DW],
+    ['Can Atlas send email reminders?', ASK_DW_ACTOR.OTHER],
+    ['Can the system send email reminders?', ASK_DW_ACTOR.OTHER],
+    ['Can the provider send email reminders?', ASK_DW_ACTOR.OTHER],
+    ['May I let you send email reminders?', ASK_DW_ACTOR.DW],
+  ]
+  for (const [question, expected] of cases) {
+    assert.equal(classifyAskDwAuthorityRequest(question).actor, expected, question)
+  }
+  // The same pronouns read the other way in DW-authored prose.
+  for (const [text, expected] of [
+    ['I am authorized to send email reminders.', ASK_DW_ACTOR.DW],
+    ['We are authorized to send email reminders.', ASK_DW_ACTOR.DW],
+    ['You are authorized to send email reminders.', ASK_DW_ACTOR.OTHER],
+  ]) {
+    const parsed = parseAuthorityProposition(
+      { text, field: 'f', quoted: false, attributedTo: null }, {})
+    assert.equal(parsed.actor, expected, text)
+  }
+})
+
+test('G7-QS4 approval questions are answered from approvalRequirement', () => {
+  const question = 'Do you need my approval to send email reminders for Atlas?'
+  assert.equal(classifyAskDwAuthorityRequest(question).semantic,
+    ASK_DW_QUESTION_SEMANTIC.APPROVAL_REQUIRED)
+
+  const unrestricted = ask(question, [grant()])
+  assert.equal(unrestricted.executiveConclusion,
+    'The current grant does not require your approval for that action.')
+  assert.equal(unrestricted.approvalRequirement, 'NONE')
+
+  const approvalRequired = ask(question, [grant({ approvalRequirement: 'FOUNDER' })])
+  assert.equal(approvalRequired.executiveConclusion,
+    'Yes — the current grant requires your approval each time.')
+  assert.equal(approvalRequired.approvalRequirement, 'FOUNDER')
+
+  for (const [label, grants] of [
+    ['zero grant', []],
+    ['wrong action', [grant({ action: 'ISSUE_REFUND' })]],
+    ['wrong channel', [grant({ channel: 'SMS' })]],
+    ['wrong scope', [grant({ scope: { level: 'CLIENT', clientId: 'globex' } })]],
+  ]) {
+    const answer = ask(question, grants)
+    assert.equal(answer.executiveConclusion,
+      'There is no matching current grant; approval alone would not authorize that action.', label)
+  }
+})
+
+test('G7-QS5 question polarity survives parsing', () => {
+  for (const question of [
+    "Can't you send email reminders for Atlas?",
+    "Aren't you allowed to send email reminders for Atlas?",
+    'Do you lack permission to send email reminders for Atlas?',
+  ]) {
+    assert.equal(classifyAskDwAuthorityRequest(question).semantic,
+      ASK_DW_QUESTION_SEMANTIC.NEGATED_CAPABILITY, question)
+    // A declarative answer, so "yes"/"no" cannot attach to the wrong proposition.
+    const governing = ask(question, [grant()])
+    assert.match(governing.executiveConclusion, /^I can:/, question)
+    assert.equal(governing.governing, true, question)
+    const refused = ask(question, [])
+    assert.match(refused.executiveConclusion, /^I cannot\./, question)
+    assert.equal(refused.governing, false, question)
+  }
+})
+
+test('G7-QS6 direct DW controlled-action questions route from the action relation', () => {
+  // None of these carries authority vocabulary the boundary could look up.
+  for (const question of [
+    'Are you forbidden from sending email reminders for Atlas?',
+    'Are you prohibited from sending email reminders for Atlas?',
+    'Are you barred from sending email reminders for Atlas?',
+    'Are you restricted from sending email reminders for Atlas?',
+    'Will you send email reminders for Atlas?',
+    'Would you send email reminders for Atlas?',
+    'Should you send email reminders for Atlas?',
+    'Are you going to send email reminders for Atlas?',
+    'Do you plan to send email reminders for Atlas?',
+  ]) {
+    const request = classifyAskDwAuthorityRequest(question)
+    assert.equal(request.isAuthorityRequest, true, question)
+    assert.equal(request.actor, ASK_DW_ACTOR.DW, question)
+    assert.equal(classifyAskDwConversationalTurn({ text: question }).turnType,
+      ASK_DW_TURN.AUTHORITY_QUESTION, question)
+  }
+})
+
+test('G7-QS7 a colluding model cannot answer a controlled-action question at zero grants', async () => {
+  for (const question of [
+    'Are you forbidden from sending email reminders for Atlas?',
+    'Are you prohibited from sending email reminders for Atlas?',
+    'Are you barred from sending email reminders for Atlas?',
+    'Are you restricted from sending email reminders for Atlas?',
+    'Will you send email reminders for Atlas?',
+    'Would you send email reminders for Atlas?',
+    'Should you send email reminders for Atlas?',
+    'Are you going to send email reminders for Atlas?',
+    'Do you plan to send email reminders for Atlas?',
+  ]) {
+    const result = await colludingOrchestrator('Yes.').run({
+      mode: 'normal', text: question,
+      context: { tenantId: 'tenant-a', companyBrainReadModel: brainReadModel([]) },
+    })
+    assert.equal(result.answer.authoritySource, 'DETERMINISTIC_G5_PROJECTION', question)
+    assert.notEqual(result.answer.executiveConclusion, 'Yes.', question)
+    assert.notEqual(result.answer.governing, true, question)
+  }
+})
+
+test('G7-QS8 historical execution questions stay with the execution path', () => {
+  for (const question of [
+    'Did you send email reminders for Atlas?',
+    'Did you email Atlas?',
+    'Have you sent the reminder?',
+  ]) {
+    const request = classifyAskDwAuthorityRequest(question)
+    assert.equal(request.isAuthorityRequest, false, question)
+    assert.equal(request.semantic, ASK_DW_QUESTION_SEMANTIC.HISTORICAL_EXECUTION, question)
+    assert.notEqual(classifyAskDwConversationalTurn({ text: question }).turnType,
+      ASK_DW_TURN.AUTHORITY_QUESTION, question)
+  }
+})
+
+test('G7-CA1 a condition does not exempt a DW action commitment', () => {
+  for (const text of [
+    'I send email reminders when invoices are overdue.',
+    'When invoices are overdue, I send email reminders.',
+    'I will send email reminders after seven days.',
+    'I will send email reminders once they become overdue.',
+    'I handle reminders when they are due.',
+    'I contact clients after invoices age 30 days.',
+    'I will email Atlas when the invoice is overdue.',
+  ]) {
+    const parsed = parseAuthorityProposition(
+      { text, field: 'f', quoted: false, attributedTo: null }, {})
+    assert.equal(parsed.authorityBearing, true, text)
+    // The condition is recorded as a dimension, not consumed as an exemption.
+    assert.equal(parsed.conditional, true, text)
+    assert.equal(check(text, []).verdict, 'BLOCK', text)
+  }
+})
+
+test('G7-CA2 a conditioned commitment is still checked against the exact grant', () => {
+  // With the exact grant it maps and is allowed; with a mismatched one it is not.
+  assert.equal(check('I send email reminders when invoices are overdue.', [grant()]).verdict, 'PASS')
+  assert.equal(check('I send email reminders when invoices are overdue.',
+    [grant({ channel: 'SMS' })]).verdict, 'BLOCK')
+  assert.equal(check('I send email reminders when invoices are overdue.',
+    [grant({ action: 'ISSUE_REFUND' })]).verdict, 'BLOCK')
+  assert.equal(check('I will email Atlas when the invoice is overdue.',
+    [grant({ scope: { level: 'CLIENT', clientId: 'globex' } })], { clientId: 'globex' }).verdict, 'BLOCK')
+})
+
+test('G7-CA3 ambiguous self-capability fails closed, recommendation still does not', () => {
+  // "I would send ..." is not a recommendation and not a deferral; it is an
+  // unresolved claim about what DW may do, so it must fail closed.
+  assert.equal(check('I would send email reminders.', []).verdict, 'BLOCK')
+  // Genuine recommendation and genuine deferral remain non-authoritative.
+  for (const text of [
+    'I recommend sending an email reminder.',
+    'I would recommend sending an email reminder.',
+    'I suggest an email reminder.',
+    'I would need your approval before sending an email reminder.',
+  ]) {
+    const parsed = parseAuthorityProposition(
+      { text, field: 'f', quoted: false, attributedTo: null }, {})
+    assert.ok(parsed.frames.length > 0, text)
+  }
+  assert.equal(check('I recommend sending an email reminder.', []).verdict, 'PASS')
+  assert.equal(check('I suggest an email reminder.', []).verdict, 'PASS')
+})
+
+test('G7-QC6 no free-text agreement can make a quoted permission govern', () => {
+  // Endorsement is no longer detected at all, so none of these needs to be.
+  for (const closing of [
+    'Exactly.', 'Correct.', 'Yes.', 'I concur.', 'That remains true.',
+    'That still holds.', 'This remains our policy.',
+    // And an agreement nobody enumerated.
+    'Quite so.', 'Indeed it does.', 'Still the case.',
+  ]) {
+    const result = enforceAskDwGrounding({
+      candidate: {
+        executiveConclusion: closing,
+        evidenceBasis: ['Atlas wrote: "DW is authorized to send email reminders."'],
+        uncertaintyAndLimitations: [], recommendationOrNextStep: null, competingExplanations: [],
+      },
+      verification: PASS, truthLock: { canonicalFacts: { paid: false } },
+      companyBrainContext: context([]),
+    })
+    assert.equal(result.verdict, 'BLOCK', closing)
+    assert.ok(result.groundingIssues.includes(
+      ASK_DW_AUTHORITY_ISSUE.QUOTED_AUTHORITY_AS_GOVERNING), closing)
+  }
+})
+
+test('G7-QC7 reported authority survives as typed non-governing evidence', () => {
+  const propositions = parseCandidateAuthorityPropositions({
+    executiveConclusion: 'Atlas wrote: "DW is authorized to send email reminders."',
+  })
+  const evidence = buildAskDwReportedAuthorityEvidence({ propositions })
+  assert.equal(evidence.kind, 'ASK_DW_REPORTED_AUTHORITY_SET_V0')
+  assert.equal(evidence.governing, false)
+  assert.equal(evidence.g5RemainsAuthorityOwner, true)
+  assert.ok(evidence.entries.length >= 1)
+  for (const entry of evidence.entries) {
+    assert.equal(entry.governing, false)
+    assert.equal(entry.authorityEffect, 'NONE')
+    assert.equal(entry.grantsAuthority, false)
+    assert.equal(entry.supersedesG5, false)
+    assert.equal(entry.renderedSeparatelyFromModelProse, true)
+  }
+  assert.equal(evidence.entries[0].attributedTo, 'Atlas')
 })
