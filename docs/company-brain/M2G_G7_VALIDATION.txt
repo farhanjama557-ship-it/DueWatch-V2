@@ -783,11 +783,116 @@ SHA-256 is reported alongside the implementation and validation SHAs, not
 stored in the tree it hashes.
 
 ==================================================
+9f. FINAL SAFE-BY-DEFAULT ACTION BOUNDARY
+==================================================
+
+Base:           0aa199e53548872c8121b774dd6a70d2b6ab31ea
+Bundle SHA-256: 2aa9a9ea345cb1f88fa9fa313593420bc08ec71b0e3201af2f96bb57a7c7ae52
+Implementation: 16876a39a5ef9cd869ffb44c22798f994db87238
+Branch:         g7-safe-by-default-action-boundary (isolated local repair)
+
+The supplied base bundle was verified before import: its SHA-256 matched, git
+bundle verify reported complete history, and list-heads reported exactly
+0aa199e53548872c8121b774dd6a70d2b6ab31ea at
+refs/heads/g7-opus-authority-repair. The imported worktree was clean at that
+exact commit. The local GitHub-tracking branch
+m2g/company-brain-bootstrap-g7 remained at
+7136985beb7e9e664989d964e09a256fbf77ebce and was not reset, overwritten,
+rebased, force-pushed, or otherwise moved.
+
+ROOT DEFECT AND REPAIR. Unknown wording previously meant that neither the
+authority question path nor the model-output guard owned the sentence unless
+AR_ACT/AR_ACT_VERB already knew its verb. Ownership is now decided before
+canonical action recognition:
+
+  known safe/read-only operation -> model may answer
+  known canonical G5 action      -> exact G5 projection resolution
+  unknown operational language  -> deterministic clarification/block
+
+A closed read-only predicate family covers explanation, summarization,
+inspection, calculation and passive monitoring. Direct founder modal/future
+questions addressed to DW and first-person DW modal/future commitments are
+structurally owned first. Unknown action wording therefore maps to
+ACTION_UNKNOWN and can never reach a colluding model/verifier as an answer.
+No audit example verb was added to AR_ACT or AR_ACT_VERB. A bare late-fee noun
+no longer guesses APPLY_LATE_FEE; without an exact apply/waive mapping it is
+unmappable.
+
+EMBEDDED CONTROLLERS. The controlled-action actor is resolved from the
+controller of the embedded infinitive before the matrix subject. ask, tell,
+allow, have, get, let and make are covered in both directions:
+
+  you ask me to send -> founder is sender -> DW grant cannot answer
+  I ask you to send  -> DW is sender      -> exact G5 resolution
+
+Named third parties and generic client actors are likewise OTHER. Passive
+"allowed to send" is explicitly not mistaken for the controller construction.
+
+APPROVAL RELATION. Verbal approve/authorize/consent/sign-off/say-yes forms are
+parsed as a founder authorization act that is a prerequisite for a DW
+controlled operation. The question semantic is APPROVAL_REQUIRED and the
+answer is derived from approvalRequirement, not from the generic CAN_ACT
+boolean. Explicit and structurally inherited actors are distinguished:
+"Do you need me to approve before sending" has DW as the implied actor, while
+"Do I approve before sending" keeps the founder as the implied actor. The
+matrix covers zero grants, unrestricted authority, FOUNDER approval, wrong
+action, wrong channel and wrong scope.
+
+HOSTILE AND MUTATION PROOF. G7-SD1..SD5 cover every supplied unknown action
+question and first-person commitment, all required modal/contraction forms,
+closed safe read-only counterexamples, controller directionality, named third
+parties and approval relations. Four source mutants are imported independently
+inside the test process and prove that each repair is load-bearing:
+
+  unknown question returned to AR_JOB       -> ownership regression exposed
+  unknown first-person operation made safe  -> zero-grant guard bypass exposed
+  embedded-controller resolution removed    -> DW grant spent on founder actor
+  approval-relation semantics removed       -> question collapses to CAN_ACT
+
+The pre-existing benchmark answer "I will reconcile it" was operational
+language outside G5 and correctly began failing closed. Its read-only evidence
+promise is now "I will review it"; the benchmark's pressure and grounding
+assertion is unchanged and stricter ownership remains intact.
+
+VALIDATION (actual, final implementation tree):
+
+  G5 gate               362 tests; 362 pass; 0 fail; 0 skip
+  G6 gate               504 tests; 490 pass; 0 fail; 14 skip
+  Ask DW                355 tests; 355 pass; 0 fail; 0 skip
+  G7 focused            176 tests; 176 pass; 0 fail; 0 skip
+  Full npm test        1674 tests; 1660 pass; 0 fail; 14 skip
+  Production build     PASS (existing externalized-node/chunk warnings only)
+  git diff --check     CLEAN
+
+The fourteen G6 PostgreSQL runtime tests remain honestly skipped because no
+PostgreSQL server/socket was available. No live-model or browser-naturalness
+claim was added.
+
+SCANS AND LOCKS. Credential/secret literals, canonical financial writes,
+authority mutation/execution primitives and provider/network I/O are absent
+from the changed production module. Tenant/scope checks remain in the existing
+closed projection path. No file under src/lib/companyBrain changed, so G5
+semantics are untouched. No G8 path or file exists. Historical M2D hash locks
+remain exactly:
+
+  supabase/functions/_shared/askDwOpenAiContract.js
+    e3870f6ffc62fea71118a9202d79af00cdf70477
+  supabase/functions/ask-dw-model/index.ts
+    b687f54b07ac7f9f31596a7cdf42a472d4ab8855
+
+The final standalone bundle is created only after the validation commit so it
+contains this record. Its git-bundle verification, clean-room import/fsck/test
+proof, head and SHA-256 are reported in the final handoff rather than embedded
+inside the object whose hash they depend on.
+
+==================================================
 10. EXIT DECISION
 ==================================================
 
 The committed source tree, including the final authority-boundary repair in
 section 9b, the independent-audit targeted repair in section 9c, and the
-input/output authority closure in section 9d, is a G7 FREEZE CANDIDATE. All material source-level
+input/output authority closure in section 9d, the question-semantics closure
+in section 9e, and the safe-by-default action boundary in section 9f, is a
+G7 FREEZE CANDIDATE. All material source-level
 requirements have implementation and executable evidence. External validation
 limitations are stated above rather than hidden. G8 was not started.
