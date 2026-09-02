@@ -1,5 +1,8 @@
 import { createDefaultAskDwOrchestrator } from './askDwOrchestratorDefault.js'
-import { createAskDwLiveModels } from './askDwLiveModelProvider.js'
+import {
+  ASK_DW_MODEL_EDGE_FUNCTION,
+  createAskDwLiveModels,
+} from './askDwLiveModelProvider.js'
 import { createAskDwSupabaseReadTools } from './askDwSupabaseReadTools.js'
 import { loadAskDwLiveInvoiceInput } from './askDwLiveDataLoader.js'
 import { createAskDwCaseAwareRuntime } from './askDwConversationRuntime.js'
@@ -21,7 +24,7 @@ function freeze(value) {
  */
 export function createAskDwLiveRuntime({
   supabase,
-  modelFunctionName = 'ask-dw-model',
+  modelFunctionName = ASK_DW_MODEL_EDGE_FUNCTION,
   resolveCaseEvents = null,
 } = {}) {
   const models = createAskDwLiveModels({ supabase, functionName: modelFunctionName })

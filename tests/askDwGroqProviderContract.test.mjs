@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 
-const providerUrl = new URL('../supabase/functions/ask-dw-model/index.ts', import.meta.url)
+const providerUrl = new URL('../supabase/functions/ask-dw-g7-model/index.ts', import.meta.url)
 const source = fs.readFileSync(providerUrl, 'utf8')
 
 test('Ask DW provider is wired to Groq, not the paid OpenAI endpoint', () => {
@@ -52,4 +52,5 @@ test('successful responses identify Groq and preserve usage receipt', () => {
   assert.match(source, /inputTokens/)
   assert.match(source, /outputTokens/)
   assert.match(source, /totalTokens/)
+  assert.match(source, /ASK_DW_G7_MODEL_CONTRACT_VERSION/)
 })

@@ -1,6 +1,6 @@
 import { createAskDwModelAdapter } from './askDwModelAdapter.js'
 
-export const ASK_DW_MODEL_EDGE_FUNCTION = 'ask-dw-model'
+export const ASK_DW_MODEL_EDGE_FUNCTION = 'ask-dw-g7-model'
 
 function freeze(value) {
   if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value

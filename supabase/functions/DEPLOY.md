@@ -22,7 +22,16 @@ supabase secrets list
 ```bash
 supabase functions deploy send-reminder-email
 supabase functions deploy autopilot-scheduler
+supabase functions deploy ask-dw-g7-model
 ```
+
+`ask-dw-g7-model` is the forward-versioned G7 reasoning function. It preserves
+the historical `ask-dw-model` replay artifact unchanged while placing the G7 DW
+character, epistemic separation, prompt-injection boundary, and Normal/Deep
+doctrine at provider instruction priority. It remains authenticated, gated by
+`ASK_DW_MODEL_ENABLED`, strict-schema, read-only, and unable to execute AR
+actions. Configure the same controlled Groq and caller-allowlist secrets used
+by the historical function before enabling it.
 
 `send-reminder-email` is called by the app (Approve & Send, Edit First, and
 the manual Send Reminder button) — it requires a valid user session and

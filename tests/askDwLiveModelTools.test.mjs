@@ -154,7 +154,7 @@ test('live model transport is closed-world to the Ask DW Edge Function', () => {
   const supabase = makeSupabase()
   const live = createAskDwLiveModels({ supabase })
   assert.equal(live.functionName, ASK_DW_MODEL_EDGE_FUNCTION)
-  assert.equal(ASK_DW_MODEL_EDGE_FUNCTION, 'ask-dw-model')
+  assert.equal(ASK_DW_MODEL_EDGE_FUNCTION, 'ask-dw-g7-model')
   assert.throws(
     () => createAskDwLiveModels({ supabase, functionName: 'some-other-function' }),
     /fixed by the controlled provider contract/,

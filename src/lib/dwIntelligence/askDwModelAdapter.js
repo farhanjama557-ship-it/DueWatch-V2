@@ -11,6 +11,8 @@ const FORBIDDEN_MODEL_KEYS = new Set([
 const VERDICTS = new Set(['PASS', 'REVISE', 'BLOCK'])
 const HYPOTHESIS_STATUS = new Set(['OPEN', 'SUPPORTED', 'WEAKENED', 'REJECTED'])
 
+export const ASK_DW_G7_LANGUAGE_CONTRACT_VERSION = 'ASK_DW_G7_MODEL_CONTRACT_V1'
+
 function freeze(value) {
   if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value
   Object.freeze(value)
@@ -125,6 +127,7 @@ export function createAskDwModelAdapter({
     const raw = await invoke(freeze({
       stage,
       contract: Object.freeze({
+        languageContract: ASK_DW_G7_LANGUAGE_CONTRACT_VERSION,
         financialTruthAuthority: 'DW_CONTROLLED_STATE_ONLY',
         executionAuthority: 'NEVER_GRANTED_BY_MODEL',
         rawChainOfThoughtVisible: false,
