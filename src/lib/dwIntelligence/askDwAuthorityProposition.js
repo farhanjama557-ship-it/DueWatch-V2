@@ -36,6 +36,9 @@ export const ASK_DW_POLARITY = Object.freeze({
 
 export const ASK_DW_ACTOR = Object.freeze({
   DW: 'DW',
+  // The subject is the grant/permission itself ("the current grant covers...").
+  // G5 grants are always to DW, so the grantee is determinate.
+  GRANT_SUBJECT: 'GRANT_SUBJECT',
   OTHER: 'OTHER',
   UNKNOWN: 'UNKNOWN',
 })
@@ -44,7 +47,10 @@ export const ASK_DW_SCOPE_ASSERTION = Object.freeze({
   COMPANY: 'COMPANY',
   CLIENT: 'CLIENT',
   ENTITY: 'ENTITY',
+  // No scope cue at all: the conversation's focus may stand in.
   UNSPECIFIED: 'UNSPECIFIED',
+  // A scope IS asserted but cannot be resolved. Focus must never stand in.
+  UNKNOWN: 'UNKNOWN',
   AMBIGUOUS: 'AMBIGUOUS',
 })
 
@@ -145,7 +151,8 @@ const AUTHORITY_TRIGGER = new RegExp([
   'authoris|authoriz|permission|permitted|allowed|entitled|licen[cs]ed',
   'authority|mandate|clearance|cleared to|green ?light|free to|good to go',
   '\\bgrant\\b|\\bgrants\\b|\\bgranted\\b|standing authority',
-  '\\bcan\\b|\\bcannot\\b|\\bcan\'t\\b|\\bmay\\b|\\bcould\\b|\\bmight\\b|\\bable to\\b|\\bunable to\\b|\\bcapable of\\b',
+  // A bare modal is handled separately: modality alone is not an authority
+  // claim ("I cannot confirm a payment" is not about permission).
   'nothing (?:is )?(?:prevent|stopp|block)',
   '\\bapprovals?\\b|\\bask\\s+(?:you\\s+)?first\\b',
   "don'?t need to ask|do not need to ask|without asking|without approval",
@@ -194,8 +201,19 @@ const CHANNEL_TERMS = Object.freeze([
   [/\bgmail\b|\boutlook\b|\bteams\b|\bslack\b|\btwilio\b|\bsendgrid\b/i, UNMAPPABLE.CHANNEL_UNKNOWN],
 ])
 
-const DW_ACTOR = /\b(?:i|i'm|we|we're|dw|duewatch|due\s?watch)\b/i
-const OTHER_ACTOR = /\b(?:the\s+(?:system|assistant|agent|bot|platform|tool|service)|automation|gmail|stripe|quickbooks|the\s+provider)\b/i
+// First person includes object pronouns: "no approval is needed for me to send".
+const DW_ACTOR = /\b(?:i|i'm|me|my|myself|we|we're|us|our|ourselves|dw|duewatch|due\s?watch)\b/i
+
+// Named or generic third parties. Permission attributed to any of these is not
+// DW's permission, whatever a grant happens to say.
+const OTHER_ACTOR = /\b(?:the\s+(?:system|assistant|agent|bot|platform|tool|service|provider|customer|client|vendor|partner|team)|automation|gmail|stripe|quickbooks|someone|somebody|anyone|anybody|everyone|they|he|she|third\s+part(?:y|ies))\b/i
+
+// The subject is a grant/permission noun rather than an actor.
+const GRANT_SUBJECT = /^(?:the|this|that|a|an|our|your)?\s*(?:current|active|standing|explicit)?\s*(?:grant|permission|authori[sz]ation|authority|clearance)\b|\b(?:grant|permission|authori[sz]ation|authority)\s+(?:currently\s+)?(?:covers|allows|permits|authori[sz]es|includes|exists|extends|gives|applies)/i
+
+// A capitalised subject that is neither DW nor a grant noun: "Atlas is allowed
+// to send email reminders."
+const NAMED_SUBJECT = /^(?:the\s+)?([A-Z][A-Za-z0-9&.'-]*)\s+(?:is|are|was|were|may|can|could|might|will|has|have|holds?|gets?)\b/
 
 // Negation that scopes over an authority predicate.
 // Every negator is word-bounded on BOTH sides. Without the trailing boundary
@@ -207,6 +225,15 @@ const DOUBLE_NEGATION_HINT = /\bnot\s+un(?:authoris|authoriz)|\bnot\s+true\s+tha
 
 // ── per-proposition parsing ──────────────────────────────────────────────────
 
+/**
+ * A modal only raises an authority question when it governs an accounts-
+ * receivable act. This is a closed verb list, not a sentence blacklist: it
+ * keeps "I cannot confirm a payment" out while keeping "I cannot contact
+ * Atlas" in, so an unmapped denial about a real AR act still fails closed.
+ */
+const MODAL = /\b(?:can|cannot|can't|cant|may|could|might|able\s+to|unable\s+to|capable\s+of|allowed\s+to|permitted\s+to)\b/i
+const AR_ACT = /\b(?:send|sends|sending|sent|email|emails|emailing|text|texts|texting|message|messages|messaging|contact|contacts|contacting|chase|chasing|nudge|nudging|remind|reminds|reminding|reminder|reminders|follow[- ]up|call|calls|calling|apply|applies|applying|waive|waives|waiving|settle|settles|settling|write[- ]?off|wrote[- ]?off|refund|refunds|refunding|charge|charges|charging|collect|collects|collecting|escalate|escalating|dunning|act|acts|acting|handle|handles|handling|do\s+(?:this|that|it))\b/i
+
 function matchVocabulary(text, table) {
   const found = new Set()
   for (const [pattern, value] of table) {
@@ -217,6 +244,9 @@ function matchVocabulary(text, table) {
 
 function parseAction(text) {
   const found = matchVocabulary(text, ACTION_TERMS)
+  // "waive late fees" is uniquely WAIVE_LATE_FEE; the bare "late fees" term
+  // must not also register APPLY_LATE_FEE and make it look ambiguous.
+  if (found.has('WAIVE_LATE_FEE')) found.delete('APPLY_LATE_FEE')
   if (found.has(UNMAPPABLE.ACTION_AMBIGUOUS)) return UNMAPPABLE.ACTION_AMBIGUOUS
   const actions = [...found].filter((value) => G5_ACTIONS.includes(value))
   if (actions.length === 0) return UNMAPPABLE.ACTION_UNKNOWN
@@ -234,10 +264,14 @@ function parseChannel(text) {
 }
 
 function parseActor(text) {
-  const dw = DW_ACTOR.test(text)
-  const other = OTHER_ACTOR.test(text)
-  if (other) return ASK_DW_ACTOR.OTHER
-  if (dw) return ASK_DW_ACTOR.DW
+  if (OTHER_ACTOR.test(text)) return ASK_DW_ACTOR.OTHER
+  const named = NAMED_SUBJECT.exec(text)
+  if (named && !/^(?:i|we|dw|duewatch)$/i.test(named[1]) &&
+      !/^(?:the|this|that|a|an|our|your|current|active|standing|explicit|grant|permission|authori[sz]ation|authority|clearance|email|sms|sending|no|permission)$/i.test(named[1])) {
+    return ASK_DW_ACTOR.OTHER
+  }
+  if (DW_ACTOR.test(text)) return ASK_DW_ACTOR.DW
+  if (GRANT_SUBJECT.test(text)) return ASK_DW_ACTOR.GRANT_SUBJECT
   return ASK_DW_ACTOR.UNKNOWN
 }
 
@@ -245,15 +279,80 @@ function parseActor(text) {
  * Scope asserted BY THE TEXT, which is not the same as the conversation's
  * focus. An Atlas grant must not support "for Globex" or "company-wide".
  */
+/**
+ * Words that follow a preposition without naming a scope target. "for SMS
+ * reminders" and "for me to send" assert no scope; "for globex" does.
+ */
+const NON_SCOPE_TOKENS = new Set([
+  'email', 'e-mail', 'emails', 'sms', 'text', 'texts', 'whatsapp', 'phone', 'postal',
+  'portal', 'reminder', 'reminders', 'message', 'messages', 'notice', 'notices',
+  'collection', 'collections', 'fee', 'fees', 'refund', 'refunds', 'approval',
+  'permission', 'authority', 'authorisation', 'authorization', 'grant', 'grants',
+  'me', 'us', 'you', 'them', 'it', 'this', 'that', 'these', 'those', 'now', 'today',
+  'anything', 'something', 'nothing', 'sending', 'emailing', 'texting', 'asking',
+  'each', 'every', 'any', 'both',
+  // Verbs and function words that can follow a preposition without ever
+  // naming a scope target: "to send", "for applying", "to act".
+  'send', 'sends', 'sending', 'apply', 'applying', 'waive', 'waiving', 'settle',
+  'settling', 'write', 'writing', 'issue', 'issuing', 'charge', 'charging',
+  'chase', 'chasing', 'nudge', 'contact', 'contacting', 'remind', 'reminding',
+  'do', 'act', 'acting', 'handle', 'handling', 'proceed', 'go', 'be', 'have',
+  'a', 'an', 'the', 'my', 'our', 'your', 'their', 'his', 'her', 'its',
+])
+
+const COMPANY_SCOPE = /\bcompany[- ]wide\b|\bacross\s+the\s+(?:company|business|portfolio)\b|\bportfolio[- ]wide\b|\bglobally\b|\bcompany\s+level\b|\ball\s+clients\b|\bevery\s+client\b|\ball\s+customers\b|\bacross\s+all\b/i
+
+// An explicitly OTHER target names a scope that by construction is not the one
+// in hand, so it can never resolve.
+const OTHER_SCOPE = /\b(?:another|other|a\s+different|some\s+other|different)\s+(?:client|customer|account|entity|company)\b|\bother\s+clients\b/i
+
+// Cues that a scope target is being named at all.
+const SCOPE_CUE = /\b(?:for|to|on|against|with|at)\s+\S|\bclient\b|\bcustomer\b|\baccount\b|\bcompany\b|\bportfolio\b|\bglobally\b/i
+
+// Global so every candidate target in the sentence is considered: "to send
+// ... for globex" must not stop at "send".
+const NAMED_TARGET = [
+  // "for client Globex", "for the Globex account", "for customer Globex"
+  /\b(?:client|customer|account)\s+([A-Za-z][A-Za-z0-9&.'-]*)/gi,
+  /\bthe\s+([A-Za-z][A-Za-z0-9&.'-]*)\s+(?:account|client|customer)\b/gi,
+  // "for Globex", "to globex"
+  /\b(?:for|to|on|against)\s+(?:the\s+)?([A-Za-z][A-Za-z0-9&.'-]*)/gi,
+]
+
+/**
+ * Scope asserted BY THE TEXT. The distinction that matters is between "no
+ * scope was mentioned" (UNSPECIFIED, where conversational focus may stand in)
+ * and "a scope was mentioned but could not be resolved" (UNKNOWN, which must
+ * fail closed). Letting the second silently become the first is how an Atlas
+ * grant came to support "for globex".
+ */
 function parseScope(text) {
-  const companyWide = /\bcompany[- ]wide\b|\ball\s+clients\b|\bevery\s+client\b|\bacross\s+the\s+portfolio\b|\bportfolio[- ]wide\b/i.test(text)
-  const clientMatch = /\b(?:for|with|to|on|against)\s+(?!the\b|all\b|every\b|any\b|this\b|that\b|us\b|them\b|you\b|me\b)([A-Z][A-Za-z0-9&.'-]*(?:\s+[A-Z][A-Za-z0-9&.'-]*)?)/.exec(text)
+  const none = { scopeType: ASK_DW_SCOPE_ASSERTION.UNSPECIFIED, clientName: null, entityId: null }
+  const companyWide = COMPANY_SCOPE.test(text)
   const entityMatch = /\b(?:invoice|inv)[-\s#]?([A-Za-z0-9][A-Za-z0-9-]*\d[A-Za-z0-9-]*)\b/i.exec(text)
-  if (companyWide && clientMatch) return { scopeType: ASK_DW_SCOPE_ASSERTION.AMBIGUOUS, clientName: null, entityId: null }
+
+  if (OTHER_SCOPE.test(text)) {
+    return { scopeType: ASK_DW_SCOPE_ASSERTION.UNKNOWN, clientName: null, entityId: null }
+  }
+  if (companyWide && entityMatch) {
+    return { scopeType: ASK_DW_SCOPE_ASSERTION.AMBIGUOUS, clientName: null, entityId: null }
+  }
   if (companyWide) return { scopeType: ASK_DW_SCOPE_ASSERTION.COMPANY, clientName: null, entityId: null }
   if (entityMatch) return { scopeType: ASK_DW_SCOPE_ASSERTION.ENTITY, clientName: null, entityId: entityMatch[1] }
-  if (clientMatch) return { scopeType: ASK_DW_SCOPE_ASSERTION.CLIENT, clientName: clientMatch[1].trim(), entityId: null }
-  return { scopeType: ASK_DW_SCOPE_ASSERTION.UNSPECIFIED, clientName: null, entityId: null }
+
+  for (const pattern of NAMED_TARGET) {
+    for (const match of text.matchAll(pattern)) {
+      const token = match[1]
+      if (NON_SCOPE_TOKENS.has(token.toLowerCase())) continue
+      return { scopeType: ASK_DW_SCOPE_ASSERTION.CLIENT, clientName: token, entityId: null }
+    }
+  }
+  // A cue with no extractable target still asserts a scope; it must not fall
+  // back to focus.
+  if (/\b(?:client|customer|account)\b/i.test(text) && SCOPE_CUE.test(text)) {
+    return { scopeType: ASK_DW_SCOPE_ASSERTION.UNKNOWN, clientName: null, entityId: null }
+  }
+  return none
 }
 
 /**
@@ -297,7 +396,7 @@ const VAGUE_CAPABILITY = /\bgreen\s?light\b|\bcleared\s+to\b|\bfree\s+to\b|\bgoo
  */
 export function parseAuthorityProposition(proposition) {
   const text = proposition.text
-  const authorityBearing = AUTHORITY_TRIGGER.test(text)
+  const authorityBearing = AUTHORITY_TRIGGER.test(text) || (MODAL.test(text) && AR_ACT.test(text))
   const base = {
     ...proposition,
     authorityBearing,

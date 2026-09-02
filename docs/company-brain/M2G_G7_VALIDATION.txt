@@ -406,6 +406,110 @@ STILL NOT CLAIMED: no live model, no browser verification, no human
 naturalness evaluation. Those limitations from section 9 are unchanged.
 
 ==================================================
+9c. INDEPENDENT-AUDIT TARGETED REPAIR
+==================================================
+
+Base:   84fb79fe94b70945a1a8ce50cd5db957f358f9fc
+Repair: <G7_REPAIR2_SHA>
+
+An independent audit reproduced Ask DW 316/316 and G7 137/137 and then found
+five structural failures. All five reproduced exactly before any edit.
+
+1. AUTHORITY_QUESTION RENDERING DID NOT OWN THE ANSWER (highest priority).
+   The rendering was built and passed to the model stages, but the final answer
+   still came from the model candidate whenever verification passed. Probed at
+   zero grants: deterministic "I have no standing authority configured", model
+   "Yes.", verifier PASS, final answer "Yes.".
+   Repair: buildAskDwAuthorityAnswer owns the proposition. The orchestrator
+   returns it directly, so a colluding model and verifier cannot answer the
+   permission question at all. It also distinguishes an OVERVIEW ("what
+   authority do you have?") from an EXACT check ("may you send email reminders
+   for Atlas?"), resolving the requested action/scope/channel specifically; an
+   under-specified check returns a deterministic clarification naming the
+   missing dimension instead of listing unrelated grants.
+   Proof: G7-AUD1..AUD5, including "Yes.", "Absolutely.", "That works.",
+   "You got it.", "No.", and a false denial while a grant exists.
+
+2. UNKNOWN ACTOR INHERITED DW AUTHORITY.
+   With an exact Atlas EMAIL SEND_REMINDER grant, "Atlas is allowed to send
+   email reminders.", "The customer may send email reminders.", "Someone may
+   send email reminders." and "Email reminders are permitted." all passed.
+   Repair: a governing positive claim now requires a DETERMINATE grantee. That
+   is satisfied when the actor is explicitly DW, and when the subject is the
+   grant itself ("the current grant covers...") because a G5 grant is always to
+   DW. A third party, an unnamed subject, or a bare passive fails closed.
+   NOTE ON A LITERAL CONFLICT: taking "unknown actor -> BLOCK" absolutely would
+   have broken inherited test G7-CP9R, which requires "The current grant covers
+   sending email reminders for Atlas." to remain describable. Determinacy of
+   the grantee is the invariant that satisfies both, and it is what the audit's
+   four hostile phrases actually violate. First-person object pronouns
+   ("for me to send") were also added to the DW actor vocabulary.
+   Proof: G7-AUD6.
+
+3. UNPARSED TEXTUAL SCOPE FELL BACK TO CONVERSATIONAL FOCUS.
+   With an Atlas grant and Atlas focus, "for globex", "for client Globex",
+   "for the Globex account", "for another client", "across the company" and
+   "globally" all passed, because the parser labelled the scope UNSPECIFIED and
+   the evaluator then substituted the focused client.
+   Repair: the parser now distinguishes UNSPECIFIED (no scope cue at all, where
+   focus may stand in) from UNKNOWN (a scope IS asserted but cannot be
+   resolved, which fails closed). Company-wide and "another/other client"
+   markers are recognised, named targets are extracted across all matches
+   rather than stopping at the first preposition, a closed stop-list keeps
+   verbs and channel nouns from being read as targets ("to send", "for SMS
+   reminders"), and known clients resolve case-insensitively.
+   Proof: G7-AUD7, plus "for atlas" lowercase still resolving correctly.
+
+4. NEGATIVE AUTHORITY CLAIMS WERE NOT CLOSED.
+   "I cannot contact Atlas.", "I cannot chase Atlas." and "I cannot send email
+   reminders through Gmail." passed, because unmapped action/channel blocked
+   only positive propositions.
+   Repair: a denial now requires the same complete typed mapping before its
+   accuracy can be judged. Unmapped action, ambiguous action, unknown or
+   multiple channel, and an asserted-but-unresolvable scope all fail closed
+   regardless of polarity. A refused denial does not carry the umbrella code,
+   because it is not a claim of authority.
+   Proof: G7-AUD8, G7-AB18b.
+
+5. ATTRIBUTED QUOTATIONS COULD BE ENDORSED WITHOUT GROUNDING.
+   At zero grants, 'Atlas said "DW is authorized..." That is correct.',
+   '... I agree.' and '... This is the current rule.' all passed.
+   Repair: attribution is no longer an unconditional escape hatch. Neutral
+   reported speech stays inert, but an endorsement or current-applicability
+   claim in the same field converts the quoted permission into an assertion
+   that is grounded against G5.
+   Proof: G7-AUD9, with the neutral quotation still inert.
+
+OVER-TRIGGERING GUARDED. Making negatives strict exposed a false positive: the
+broad trigger caught any modal, so "I still cannot confirm a payment on this
+invoice." became an unmapped authority denial and blocked. A bare modal is now
+authority-bearing only when it governs an accounts-receivable act, from a
+closed verb list. "cannot confirm" is out; "cannot contact" stays in.
+Proof: G7-AUD10. A second precision defect was fixed at the same time: "waive
+late fees" matched both WAIVE_LATE_FEE and APPLY_LATE_FEE and looked ambiguous.
+
+MUTATION TESTS (applied, observed failing, reverted; no mutant in the tree):
+  deterministic answer ownership disabled     -> 5 failures
+  actor determinacy disabled                  -> 2 failures
+  asserted-scope UNKNOWN downgraded           -> 1 failure
+  quotation endorsement ignored               -> 1 failure
+  negative-claim mapping made positive-only   -> 2 failures
+  (plus the six mutations from section 9b, still failing correctly)
+
+BUNDLE PORTABILITY. The previous bundle was not standalone because this working
+repository was a SHALLOW clone (119 commits, five grafted roots in .git/shallow),
+so bundle creation truncated history at the graft boundary. Fixed at the source:
+git fetch --unshallow restored the full 234-commit history and removed the
+graft file. The final bundle is proved standalone by a clean-room import into
+an empty repository with no prior bundle, followed by git fsck --full.
+
+RESULTS (actual): G5 362/362, G6 503/503, Ask DW 327/327, G7 focused 148/148,
+FULL SUITE 1645/1645, production build PASS, git diff --check CLEAN.
+SCANS: credentials, financial-write, execution/IO, authority-mutation and
+tenant-isolation all clean. No file under src/lib/companyBrain/ changed, so G5
+semantics are untouched. M2D locks verified unchanged.
+
+==================================================
 10. EXIT DECISION
 ==================================================
 

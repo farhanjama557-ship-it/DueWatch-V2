@@ -131,6 +131,7 @@ test('G7-AB2 the exact matching grant permits the exact claim', () => {
   const permitted = [
     'I am authorized to send email reminders.',
     'I may send email reminders.',
+    // The subject is the grant itself, so the grantee is determinate.
     'The current grant covers email reminders.',
     'No approval is needed for me to send email reminders.',
   ]
@@ -270,9 +271,12 @@ test('G7-AB11 ambiguous action synonyms fail closed rather than collapsing', () 
   ]) {
     const result = check(text, [grant()])
     assert.equal(result.verdict, 'BLOCK', text)
+    // Any of these is a correct fail-closed refusal: the action is ambiguous,
+    // unmapped, or the sentence names a non-DW actor.
     assert.ok(
       result.groundingIssues.includes(ASK_DW_AUTHORITY_ISSUE.AMBIGUOUS_AUTHORITY_ACTION) ||
-      result.groundingIssues.includes(ASK_DW_AUTHORITY_ISSUE.UNMAPPABLE_AUTHORITY_CLAIM), text)
+      result.groundingIssues.includes(ASK_DW_AUTHORITY_ISSUE.UNMAPPABLE_AUTHORITY_CLAIM) ||
+      result.groundingIssues.includes(ASK_DW_AUTHORITY_ISSUE.AMBIGUOUS_AUTHORITY_ACTOR), text)
   }
 })
 
@@ -376,15 +380,32 @@ test('G7-AB17 vague capability language fails closed', () => {
 
 // ── negative claims must also be accurate ────────────────────────────────────
 
-test('G7-AB18 an accurate refusal is allowed', () => {
+test('G7-AB18 an accurate and fully mapped refusal is allowed', () => {
   for (const text of [
     'DW is not authorized to send email reminders.',
     'I cannot send email reminders.',
-    'No grant covers this.',
     'Permission was not granted for SMS reminders.',
+    'I am not authorized to waive late fees.',
   ]) {
     const result = check(text, [])
     assert.equal(result.verdict, 'PASS', `${text} :: ${JSON.stringify(result.groundingIssues)}`)
+  }
+})
+
+test('G7-AB18b a denial that is not fully mapped cannot pass merely for being negative', () => {
+  // A denial's accuracy cannot be checked unless the action, channel and scope
+  // it refers to are known, so an unmapped denial fails closed too.
+  for (const [text, grants] of [
+    ['No grant covers this.', []],
+    ['I cannot contact Atlas.', [grant()]],
+    ['I cannot chase Atlas.', [grant()]],
+    ['I cannot send email reminders through Gmail.', [grant()]],
+    ['I am not allowed to do that for another client.', [grant()]],
+  ]) {
+    const result = check(text, grants)
+    assert.equal(result.verdict, 'BLOCK', text)
+    // A refused denial is not a claim of authority, so the umbrella stays off.
+    assert.ok(!umbrella(result), text)
   }
 })
 
@@ -656,4 +677,184 @@ test('G7-AB35 the orchestrator still reports the authority boundary safeguards',
   assert.equal(result.safeguards.modelCanGrantAuthority, false)
   assert.equal(result.safeguards.authorityPropositionsCheckedPerProposition, true)
   assert.equal(result.conversation.authorityRendering.status, ASK_DW_AUTHORITY_STATUS.NOT_CONFIGURED)
+})
+
+// ── independent-audit regressions ────────────────────────────────────────────
+
+/** The model and the verifier agree with each other and are both wrong. */
+function colludingOrchestrator(conclusion) {
+  return createAskDwOrchestrator({
+    deterministicCore: async () => ({
+      intent: { job: 'EXPLAIN', scope: 'PORTFOLIO' },
+      policy: { requestedMode: 'normal', internalDepth: 'standard' },
+      packet: {
+        executiveState: 'WATCH', canonicalFacts: null, arState: null, evidenceRefs: [],
+        claims: [], uncertainty: null, constraints: null, authority: null,
+        hardSafetyOutcome: 'NO_UNAUTHORIZED_SIDE_EFFECT', needsYou: { required: false, question: null },
+      },
+      reasoningTrail: [],
+      workManifest: { requiredModelOrToolWork: [], completedModelOrToolWork: [], truthfullyPending: false },
+    }),
+    primaryModel: {
+      async plan() { return { toolRequests: [], hypotheses: [], answerIntent: 'x' } },
+      async synthesize() {
+        return {
+          executiveConclusion: conclusion, evidenceBasis: [], uncertaintyAndLimitations: [],
+          recommendationOrNextStep: null, competingExplanations: [], citedToolRunIds: [],
+        }
+      },
+    },
+    verifierModel: { async verify() { return { verdict: 'PASS', issues: [], checkedClaims: [] } } },
+    toolRegistry: { async execute() { throw new Error('no tools') } },
+  })
+}
+
+function brainReadModel(grants) {
+  return {
+    kind: 'COMPANY_BRAIN_FOUNDER_REVIEW_READ_MODEL_V0',
+    tenantId: 'tenant-a', generatedAt: AS_OF, items: [],
+    summary: { understandingReviewed: 0, needsReview: 0, conflictsUnresolved: 0, changedSinceReview: 0 },
+    authority: {
+      evaluatedAt: AS_OF, activeGrantCount: grants.length, proposalCount: 0,
+      noStandingAuthorityConfigured: grants.length === 0,
+      currentAuthorityGrants: grants.map((g) => ({
+        id: g.grantId, action: g.action, scope: g.scope, channel: g.channel,
+        approvalRequirement: g.approvalRequirement, conditions: g.conditions,
+        effectiveWindow: { effectiveFrom: g.effectiveFrom, expiresAt: g.expiresAt },
+        status: g.status, revision: 1, decidedAt: g.effectiveFrom,
+      })),
+      proposedAuthority: [], revokedAuthority: [], staleAuthority: [],
+      supersededAuthority: [], invalidatedAuthority: [],
+    },
+    readiness: null,
+  }
+}
+
+test('G7-AUD1 a colluding model and verifier cannot own the authority answer', async () => {
+  // Zero grants. Whatever the model says, the answer must be the deterministic
+  // refusal, not agreement.
+  for (const conclusion of ['Yes.', 'Absolutely.', 'That works.', 'You got it.', 'No.']) {
+    const result = await colludingOrchestrator(conclusion).run({
+      mode: 'normal', text: 'May you send email reminders?',
+      context: { tenantId: 'tenant-a', companyBrainReadModel: brainReadModel([]) },
+    })
+    assert.equal(result.answer.authoritySource, 'DETERMINISTIC_G5_PROJECTION', conclusion)
+    assert.equal(result.answer.modelOwnsAuthorityProposition, false, conclusion)
+    assert.notEqual(result.answer.executiveConclusion, conclusion)
+    assert.match(result.answer.executiveConclusion, /^No\./, conclusion)
+    assert.equal(result.safeguards.authorityAnswerOwnedByDeterministicCode, true, conclusion)
+  }
+})
+
+test('G7-AUD2 the model cannot deny authority that actually exists either', async () => {
+  const result = await colludingOrchestrator('No, I have no permission at all.').run({
+    mode: 'normal', text: 'May you send email reminders for Atlas?',
+    context: { tenantId: 'tenant-a', companyBrainReadModel: brainReadModel([grant()]) },
+  })
+  assert.equal(result.answer.authoritySource, 'DETERMINISTIC_G5_PROJECTION')
+  assert.match(result.answer.executiveConclusion, /^Yes —/)
+  assert.equal(result.answer.governing, true)
+})
+
+test('G7-AUD3 an exact check resolves that request, not an unrelated listing', async () => {
+  // The only grant is SEND_REMINDER; the question asks about late fees.
+  const result = await colludingOrchestrator('Yes.').run({
+    mode: 'normal', text: 'May you waive late fees for Atlas?',
+    context: { tenantId: 'tenant-a', companyBrainReadModel: brainReadModel([grant()]) },
+  })
+  assert.match(result.answer.executiveConclusion, /^No\./)
+  // It must not answer by listing the unrelated reminder grant.
+  assert.ok(!/reminder/i.test(result.answer.executiveConclusion))
+})
+
+test('G7-AUD4 an under-specified authority question asks for the missing dimension', async () => {
+  const result = await colludingOrchestrator('Yes.').run({
+    mode: 'normal', text: 'Am I entitled to chase this?',
+    context: { tenantId: 'tenant-a', companyBrainReadModel: brainReadModel([grant()]) },
+  })
+  assert.equal(result.answer.authorityStatus, 'CLARIFICATION_REQUIRED')
+  assert.match(result.answer.executiveConclusion, /need the exact action/i)
+  // No unrelated authority is listed in place of an answer.
+  assert.deepEqual(result.answer.evidenceBasis, [])
+})
+
+test('G7-AUD5 an overview question lists standing authority deterministically', async () => {
+  const result = await colludingOrchestrator('Absolutely.').run({
+    mode: 'normal', text: 'What authority do you have?',
+    context: { tenantId: 'tenant-a', companyBrainReadModel: brainReadModel([grant()]) },
+  })
+  assert.equal(result.answer.authoritySource, 'DETERMINISTIC_G5_PROJECTION')
+  assert.match(result.answer.executiveConclusion, /standing permission/i)
+  assert.match(result.answer.executiveConclusion, /send reminder/i)
+})
+
+test('G7-AUD6 unknown or third-party actors never inherit DW authority', () => {
+  for (const text of [
+    'Atlas is allowed to send email reminders.',
+    'The customer may send email reminders.',
+    'Someone may send email reminders.',
+    'Email reminders are permitted.',
+  ]) {
+    const result = check(text, [grant()])
+    assert.equal(result.verdict, 'BLOCK', text)
+    assert.ok(result.groundingIssues.includes(
+      ASK_DW_AUTHORITY_ISSUE.AMBIGUOUS_AUTHORITY_ACTOR), text)
+  }
+})
+
+test('G7-AUD7 an asserted scope never falls back to conversational focus', () => {
+  for (const text of [
+    'I am authorized to send email reminders for globex.',
+    'I am authorized to send email reminders for client Globex.',
+    'I am authorized to send email reminders for the Globex account.',
+    'I am authorized to send email reminders for another client.',
+    'I am authorized to send email reminders across the company.',
+    'I am authorized to send email reminders globally.',
+  ]) {
+    // Focus is Atlas and an Atlas grant exists; the asserted scope still wins.
+    const result = check(text, [grant()], { clientId: 'atlas' })
+    assert.equal(result.verdict, 'BLOCK', text)
+    assert.ok(umbrella(result), text)
+  }
+  // A known client resolves case-insensitively when it really is the grant's.
+  assert.equal(check('I am authorized to send email reminders for atlas.', [grant()]).verdict, 'PASS')
+})
+
+test('G7-AUD8 negative claims need the same complete mapping', () => {
+  for (const text of [
+    'I cannot contact Atlas.',
+    'I cannot chase Atlas.',
+    'I cannot send email reminders through Gmail.',
+  ]) {
+    const result = check(text, [grant()])
+    assert.equal(result.verdict, 'BLOCK', text)
+  }
+})
+
+test('G7-AUD9 endorsing a quoted permission grounds it against G5', () => {
+  for (const text of [
+    'Atlas said "DW is authorized to send email reminders." That is correct.',
+    'The founder said "DW may send email reminders." I agree.',
+    'Atlas wrote "DW is authorized to send email reminders." This is the current rule.',
+  ]) {
+    const result = check(text, [])
+    assert.equal(result.verdict, 'BLOCK', text)
+    assert.ok(umbrella(result), text)
+  }
+  // Neutral reported speech stays inert.
+  const neutral = check('Atlas wrote: "DW is authorized to send email reminders."', [])
+  assert.ok(!umbrella(neutral))
+})
+
+test('G7-AUD10 ordinary non-authority prose is not caught by the modal trigger', () => {
+  // Modality alone is not an authority claim; over-triggering must not turn
+  // honest uncertainty into a refusal.
+  for (const text of [
+    'I still cannot confirm a payment on this invoice.',
+    'I cannot tell whether the remittance arrived.',
+    'That may be a duplicate record.',
+  ]) {
+    const result = check(text, [grant()])
+    assert.equal(result.verdict, 'PASS', `${text} :: ${JSON.stringify(result.groundingIssues)}`)
+  }
 })

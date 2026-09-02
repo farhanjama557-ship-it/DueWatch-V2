@@ -2,7 +2,7 @@ import { buildAskDwCompanyBrainContext } from './askDwCompanyBrainContext.js'
 import { classifyAskDwConversationalTurn } from './askDwConversationalTurn.js'
 import { buildAskDwDailyPriorities } from './askDwDailyPriorities.js'
 import { ASK_DW_TURN } from './askDwConversationalTurn.js'
-import { renderAskDwAuthority } from './askDwAuthorityRenderer.js'
+import { buildAskDwAuthorityAnswer, renderAskDwAuthority } from './askDwAuthorityRenderer.js'
 import { enforceAskDwGrounding } from './askDwGroundingGuard.js'
 import {
   DW_EPISTEMIC_LADDER,
@@ -98,7 +98,18 @@ function buildConversationLayer({ tenantId, text, caseContext, context }) {
   const authorityRendering = turn.turnType === ASK_DW_TURN.AUTHORITY_QUESTION
     ? renderAskDwAuthority({ authorityProjection: companyBrain?.authority ?? null })
     : null
-  return freeze({ turn, companyBrain, priorities, authorityRendering })
+  // For an authority question the ANSWER itself is deterministic. It is built
+  // here so the model cannot own, replace or answer around the permission
+  // proposition, whatever it and the verifier return.
+  const authorityAnswer = turn.turnType === ASK_DW_TURN.AUTHORITY_QUESTION
+    ? buildAskDwAuthorityAnswer({
+      question: text,
+      authorityProjection: companyBrain?.authority ?? null,
+      companyBrainContext: companyBrain,
+      caseContext,
+    })
+    : null
+  return freeze({ turn, companyBrain, priorities, authorityRendering, authorityAnswer })
 }
 
 function toolRunId(index, request) {
@@ -411,7 +422,12 @@ export function createAskDwOrchestrator({
         caseContext,
       })
 
-      const answer = verification.verdict === 'PASS' ? candidate : answerFallback(core)
+      // Answer ownership. An authority question is answered by deterministic
+      // code even when the model and the verifier agree with each other: a
+      // colluding "Yes." cannot become the permission answer.
+      const answer = conversation.authorityAnswer
+        ? conversation.authorityAnswer
+        : verification.verdict === 'PASS' ? candidate : answerFallback(core)
       const reasoningTrail = buildReasoningTrail({ core, plan, toolRuns, verification })
       const workManifest = buildWorkManifest({ core, plan, toolRuns, verification })
 
@@ -443,6 +459,8 @@ export function createAskDwOrchestrator({
           conversationMemoryCanOverrideLiveReads: false,
           prioritiesOrderedDeterministically: true,
           authorityRenderedDeterministically: conversation.authorityRendering != null,
+          authorityAnswerOwnedByDeterministicCode: conversation.authorityAnswer != null,
+          modelCanOwnAuthorityProposition: false,
           authorityPropositionsCheckedPerProposition: true,
           deterministicGroundingEnforced: true,
         }),

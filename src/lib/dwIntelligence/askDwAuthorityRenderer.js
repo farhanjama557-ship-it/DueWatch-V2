@@ -23,6 +23,8 @@ import {
   ASK_DW_SCOPE_ASSERTION,
   G5_ACTIONS,
   UNMAPPABLE,
+  normalizeAuthorityText,
+  parseAuthorityProposition,
 } from './askDwAuthorityProposition.js'
 
 export const ASK_DW_AUTHORITY_STATUS = Object.freeze({
@@ -52,6 +54,12 @@ export const ASK_DW_AUTHORITY_ISSUE = Object.freeze({
   INACCURATE_AUTHORITY_DENIAL: 'INACCURATE_AUTHORITY_DENIAL',
   QUOTED_AUTHORITY_AS_GOVERNING: 'QUOTED_AUTHORITY_AS_GOVERNING',
 })
+
+/**
+ * Endorsement of a neighbouring quotation: agreeing with it, or presenting it
+ * as currently applicable, converts reported speech into an assertion.
+ */
+const ENDORSEMENT = /\bthat(?:'s| is) (?:correct|right|true|accurate)\b|\bi agree\b|\bagreed\b|\bthis is (?:the )?(?:current|our|the) (?:rule|policy|position|authority)\b|\bthat(?:'s| is) (?:the )?(?:current|our) (?:rule|policy|position|authority)\b|\bwhich is correct\b|\band that (?:still )?applies\b|\bso i am\b|\bso i can\b/i
 
 function freeze(value) {
   if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value
@@ -266,7 +274,8 @@ function resolveClientId(clientName, authorityProjection, companyBrainContext) {
     if (item?.clientId) known.add(String(item.clientId))
   }
   for (const id of known) {
-    if (id.toLowerCase() === needle || id.toLowerCase().replace(/[-_]/g, ' ') === needle) return id
+    const normalized = id.toLowerCase()
+    if (normalized === needle || normalized.replace(/[-_]/g, ' ') === needle) return id
   }
   return null
 }
@@ -288,6 +297,13 @@ export function evaluateAuthorityPropositions({
   const focusClientId = caseContext?.focus?.clientRef?.id ?? null
   const focusInvoiceId = caseContext?.focus?.invoiceRef?.id ?? null
 
+  // Fields where the answer endorses a quotation it just reported.
+  const endorsedFields = new Set()
+  for (const proposition of propositions) {
+    if (proposition.quoted) continue
+    if (ENDORSEMENT.test(proposition.text)) endorsedFields.add(proposition.field)
+  }
+
   for (const proposition of propositions) {
     if (!proposition.authorityBearing) continue
 
@@ -295,14 +311,21 @@ export function evaluateAuthorityPropositions({
     // A quoted authority sentence is only a problem if it is presented as
     // currently governing; attribution keeps it inert.
     if (proposition.quoted) {
+      // A quotation is inert only while it stays reported speech. Attribution
+      // is not an unconditional escape hatch: endorsing the quoted permission,
+      // or presenting it as the current rule, asserts it, so it must then be
+      // grounded against G5 like any other claim.
+      const endorsed = endorsedFields.has(proposition.field)
       if (proposition.polarity === ASK_DW_POLARITY.POSITIVE && !proposition.attributedTo) {
         issues.push({
           code: ASK_DW_AUTHORITY_ISSUE.QUOTED_AUTHORITY_AS_GOVERNING,
           detail: `Unattributed quoted authority text presented as governing: "${proposition.text}"`,
           severity: 'BLOCK', field: proposition.field, umbrella: true,
         })
+        continue
       }
-      continue
+      if (!endorsed) continue
+      // Fall through: an endorsed quotation is evaluated as an assertion.
     }
 
     // Reported speech outside quotes: "The founder said I could send ..."
@@ -337,53 +360,65 @@ export function evaluateAuthorityPropositions({
 
     const positive = proposition.polarity === ASK_DW_POLARITY.POSITIVE
 
-    if (positive && proposition.actor === ASK_DW_ACTOR.OTHER) {
+    // A governing claim must identify the G5 grantee unambiguously. UNKNOWN
+    // must never silently become DW, so "Email reminders are permitted." and
+    // "Atlas is allowed to send email reminders." both fail closed.
+    // The grantee must be DETERMINATE. It is when the actor is explicitly DW,
+    // and when the subject is the grant itself (a G5 grant is always to DW).
+    // It is not when a third party, an unnamed subject, or a bare passive is
+    // given the permission.
+    const granteeDeterminate =
+      proposition.actor === ASK_DW_ACTOR.DW ||
+      proposition.actor === ASK_DW_ACTOR.GRANT_SUBJECT
+    if (positive && !granteeDeterminate) {
       issues.push({
         code: ASK_DW_AUTHORITY_ISSUE.AMBIGUOUS_AUTHORITY_ACTOR,
-        detail: `Authority asserted for an actor that is not the G5 grantee: "${proposition.text}"`,
+        detail: proposition.actor === ASK_DW_ACTOR.OTHER
+          ? `Authority asserted for an actor that is not the G5 grantee: "${proposition.text}"`
+          : `Authority asserted without identifying the G5 grantee: "${proposition.text}"`,
         severity: 'BLOCK', field: proposition.field, umbrella: true,
       })
       continue
     }
 
     if (proposition.canonicalAction === UNMAPPABLE.ACTION_AMBIGUOUS) {
-      if (positive) {
-        issues.push({
-          code: ASK_DW_AUTHORITY_ISSUE.AMBIGUOUS_AUTHORITY_ACTION,
-          detail: `Action wording maps to more than one G5 action: "${proposition.text}"`,
-          severity: 'BLOCK', field: proposition.field, umbrella: true,
-        })
-      }
+      // A negative claim needs the same complete mapping before its accuracy
+      // can be judged; an unmapped denial is not "safe because it is a denial".
+      issues.push({
+        code: ASK_DW_AUTHORITY_ISSUE.AMBIGUOUS_AUTHORITY_ACTION,
+        detail: `Action wording maps to more than one G5 action: "${proposition.text}"`,
+        severity: 'BLOCK', field: proposition.field, umbrella: positive,
+      })
       continue
     }
     if (proposition.canonicalAction === UNMAPPABLE.ACTION_UNKNOWN) {
-      if (positive) {
-        issues.push({
-          code: ASK_DW_AUTHORITY_ISSUE.UNMAPPABLE_AUTHORITY_CLAIM,
-          detail: `Authority asserted without an identifiable G5 action: "${proposition.text}"`,
-          severity: 'BLOCK', field: proposition.field, umbrella: true,
-        })
-      }
+      // A negative claim needs the same complete mapping before its accuracy
+      // can be judged; an unmapped denial is not "safe because it is a denial".
+      issues.push({
+        code: ASK_DW_AUTHORITY_ISSUE.UNMAPPABLE_AUTHORITY_CLAIM,
+        detail: `Authority asserted without an identifiable G5 action: "${proposition.text}"`,
+        severity: 'BLOCK', field: proposition.field, umbrella: positive,
+      })
       continue
     }
     if (proposition.channel === UNMAPPABLE.CHANNEL_AMBIGUOUS) {
-      if (positive) {
-        issues.push({
-          code: ASK_DW_AUTHORITY_ISSUE.AMBIGUOUS_AUTHORITY_CHANNEL,
-          detail: `More than one channel asserted: "${proposition.text}"`,
-          severity: 'BLOCK', field: proposition.field, umbrella: true,
-        })
-      }
+      // A negative claim needs the same complete mapping before its accuracy
+      // can be judged; an unmapped denial is not "safe because it is a denial".
+      issues.push({
+        code: ASK_DW_AUTHORITY_ISSUE.AMBIGUOUS_AUTHORITY_CHANNEL,
+        detail: `More than one channel asserted: "${proposition.text}"`,
+        severity: 'BLOCK', field: proposition.field, umbrella: positive,
+      })
       continue
     }
     if (proposition.channel === UNMAPPABLE.CHANNEL_UNKNOWN) {
-      if (positive) {
-        issues.push({
-          code: ASK_DW_AUTHORITY_ISSUE.UNKNOWN_AUTHORITY_CHANNEL,
-          detail: `Channel or provider does not map to a G5 channel: "${proposition.text}"`,
-          severity: 'BLOCK', field: proposition.field, umbrella: true,
-        })
-      }
+      // A negative claim needs the same complete mapping before its accuracy
+      // can be judged; an unmapped denial is not "safe because it is a denial".
+      issues.push({
+        code: ASK_DW_AUTHORITY_ISSUE.UNKNOWN_AUTHORITY_CHANNEL,
+        detail: `Channel or provider does not map to a G5 channel: "${proposition.text}"`,
+        severity: 'BLOCK', field: proposition.field, umbrella: positive,
+      })
       continue
     }
 
@@ -391,26 +426,27 @@ export function evaluateAuthorityPropositions({
     let scopeType = proposition.scopeType
     let clientId = null
     let entityId = null
-    if (scopeType === ASK_DW_SCOPE_ASSERTION.AMBIGUOUS) {
-      if (positive) {
-        issues.push({
-          code: ASK_DW_AUTHORITY_ISSUE.AUTHORITY_SCOPE_MISMATCH,
-          detail: `More than one scope asserted: "${proposition.text}"`,
-          severity: 'BLOCK', field: proposition.field, umbrella: true,
-        })
-      }
+    if (scopeType === ASK_DW_SCOPE_ASSERTION.AMBIGUOUS ||
+        scopeType === ASK_DW_SCOPE_ASSERTION.UNKNOWN) {
+      issues.push({
+        code: ASK_DW_AUTHORITY_ISSUE.AUTHORITY_SCOPE_MISMATCH,
+        detail: scopeType === ASK_DW_SCOPE_ASSERTION.AMBIGUOUS
+          ? `More than one scope asserted: "${proposition.text}"`
+          : `A scope is asserted but cannot be resolved: "${proposition.text}"`,
+        severity: 'BLOCK', field: proposition.field, umbrella: positive,
+      })
       continue
     }
     if (scopeType === ASK_DW_SCOPE_ASSERTION.CLIENT) {
       clientId = resolveClientId(proposition.clientName, authorityProjection, companyBrainContext)
       if (!clientId) {
-        if (positive) {
-          issues.push({
-            code: ASK_DW_AUTHORITY_ISSUE.AUTHORITY_SCOPE_MISMATCH,
-            detail: `Asserted client "${proposition.clientName}" does not resolve to a known client: "${proposition.text}"`,
-            severity: 'BLOCK', field: proposition.field, umbrella: true,
-          })
-        }
+        // An asserted target that does not resolve is refused. It must never
+        // fall back to the conversation's focused client.
+        issues.push({
+          code: ASK_DW_AUTHORITY_ISSUE.AUTHORITY_SCOPE_MISMATCH,
+          detail: `Asserted client "${proposition.clientName}" does not resolve to a known client: "${proposition.text}"`,
+          severity: 'BLOCK', field: proposition.field, umbrella: positive,
+        })
         continue
       }
     } else if (scopeType === ASK_DW_SCOPE_ASSERTION.ENTITY) {
@@ -471,3 +507,146 @@ export function evaluateAuthorityPropositions({
 }
 
 export { G5_ACTIONS }
+
+// ── deterministic authority ANSWER ownership ─────────────────────────────────
+
+export const ASK_DW_AUTHORITY_QUESTION_MODE = Object.freeze({
+  OVERVIEW: 'OVERVIEW',
+  EXACT: 'EXACT',
+  UNRESOLVABLE: 'UNRESOLVABLE',
+})
+
+/**
+ * Reads the founder's authority question into a typed request.
+ *
+ * An overview ("what authority do you have?") lists current standing
+ * authority. An exact check ("may you send email reminders for Atlas?")
+ * resolves that specific action/scope/channel. A question whose dimensions
+ * cannot be mapped is UNRESOLVABLE and is answered by asking for the missing
+ * dimension rather than by listing unrelated grants.
+ */
+export function parseAuthorityQuestion(text, { authorityProjection = null, companyBrainContext = null } = {}) {
+  const proposition = parseAuthorityProposition({
+    text: normalizeAuthorityText(text), field: 'question', quoted: false, attributedTo: null,
+  })
+  const overview = /\bwhat\s+(?:authority|permissions?|grants?)\b|\bwhich\s+(?:authority|permissions?|grants?)\b|\bwhat\s+(?:can|are)\s+you\b|\bwhat\s+can'?t\s+you\b|\bdo\s+you\s+have\s+(?:any\s+)?(?:authority|permission)\b/i.test(text)
+  const namesAction = proposition.canonicalAction !== UNMAPPABLE.ACTION_UNKNOWN
+  if (overview && !namesAction) {
+    return freeze({ mode: ASK_DW_AUTHORITY_QUESTION_MODE.OVERVIEW, missing: [] })
+  }
+  const missing = []
+  if (proposition.canonicalAction === UNMAPPABLE.ACTION_UNKNOWN) missing.push('action')
+  if (proposition.canonicalAction === UNMAPPABLE.ACTION_AMBIGUOUS) missing.push('action')
+  if (proposition.channel === UNMAPPABLE.CHANNEL_AMBIGUOUS ||
+      proposition.channel === UNMAPPABLE.CHANNEL_UNKNOWN) missing.push('channel')
+  if (proposition.scopeType === ASK_DW_SCOPE_ASSERTION.AMBIGUOUS ||
+      proposition.scopeType === ASK_DW_SCOPE_ASSERTION.UNKNOWN) missing.push('scope')
+  if (missing.length > 0) {
+    if (overview) return freeze({ mode: ASK_DW_AUTHORITY_QUESTION_MODE.OVERVIEW, missing: [] })
+    return freeze({ mode: ASK_DW_AUTHORITY_QUESTION_MODE.UNRESOLVABLE, missing: freeze(missing) })
+  }
+  let scopeType = proposition.scopeType
+  let clientId = null
+  let entityId = proposition.entityId
+  if (scopeType === ASK_DW_SCOPE_ASSERTION.CLIENT) {
+    clientId = resolveClientId(proposition.clientName, authorityProjection, companyBrainContext)
+    if (!clientId) {
+      return freeze({ mode: ASK_DW_AUTHORITY_QUESTION_MODE.UNRESOLVABLE, missing: freeze(['scope']) })
+    }
+  } else if (scopeType === ASK_DW_SCOPE_ASSERTION.UNSPECIFIED) {
+    scopeType = null
+  }
+  return freeze({
+    mode: ASK_DW_AUTHORITY_QUESTION_MODE.EXACT,
+    missing: freeze([]),
+    request: freeze({
+      canonicalAction: proposition.canonicalAction,
+      scopeType, clientId, entityId,
+      channel: proposition.channel ?? null,
+    }),
+  })
+}
+
+function describeGrantLine(entry) {
+  const parts = [
+    entry.canonicalAction.toLowerCase().replace(/_/g, ' '),
+    `for ${entry.scopeLabel}`,
+  ]
+  if (entry.channel) parts.push(`by ${entry.channel.toLowerCase()}`)
+  if (entry.approvalRequirement === 'FOUNDER') parts.push('with your approval each time')
+  return parts.join(' ')
+}
+
+/**
+ * THE authority answer. For an authority question the returned proposition
+ * comes from here, not from the model: the model may not replace, contradict,
+ * summarise away or answer around it.
+ */
+export function buildAskDwAuthorityAnswer({
+  question, authorityProjection = null, companyBrainContext = null,
+  caseContext = null, evaluatedAt = null,
+} = {}) {
+  const rendering = renderAskDwAuthority({ authorityProjection, evaluatedAt })
+  const parsed = parseAuthorityQuestion(question, { authorityProjection, companyBrainContext })
+
+  const answer = (conclusion, extra = {}) => freeze({
+    executiveConclusion: conclusion,
+    evidenceBasis: freeze(rendering.grants.filter((entry) => entry.governing).map(describeGrantLine)),
+    uncertaintyAndLimitations: freeze([]),
+    recommendationOrNextStep: null,
+    competingExplanations: freeze([]),
+    citedToolRunIds: freeze([]),
+    // Provenance of the proposition itself, so an auditor can see it was not
+    // produced by a model.
+    authoritySource: 'DETERMINISTIC_G5_PROJECTION',
+    authorityStatus: rendering.status,
+    modelOwnsAuthorityProposition: false,
+    ...extra,
+  })
+
+  if (rendering.status === ASK_DW_AUTHORITY_STATUS.UNREADABLE) {
+    return answer(rendering.statement, { authorityStatus: ASK_DW_AUTHORITY_STATUS.UNREADABLE })
+  }
+
+  if (parsed.mode === ASK_DW_AUTHORITY_QUESTION_MODE.UNRESOLVABLE) {
+    // Never answer an under-specified check by listing unrelated authority.
+    const missing = parsed.missing.join(' and ')
+    return answer(
+      `I need the exact ${missing} before I can tell you whether I am allowed to do that.`,
+      { evidenceBasis: freeze([]), authorityStatus: 'CLARIFICATION_REQUIRED', clarificationNeeded: parsed.missing },
+    )
+  }
+
+  if (parsed.mode === ASK_DW_AUTHORITY_QUESTION_MODE.OVERVIEW) {
+    return answer(rendering.statement)
+  }
+
+  const request = parsed.request
+  const scoped = request.scopeType
+    ? request
+    : {
+      ...request,
+      ...(caseContext?.focus?.clientRef?.id
+        ? { scopeType: ASK_DW_SCOPE_ASSERTION.CLIENT, clientId: caseContext.focus.clientRef.id }
+        : caseContext?.focus?.invoiceRef?.id
+          ? { scopeType: ASK_DW_SCOPE_ASSERTION.ENTITY, entityId: caseContext.focus.invoiceRef.id }
+          : { scopeType: ASK_DW_SCOPE_ASSERTION.COMPANY }),
+    }
+  const resolution = resolveAskDwAuthority({ authorityProjection, request: scoped, evaluatedAt })
+  const label = `${scoped.canonicalAction.toLowerCase().replace(/_/g, ' ')}${scoped.channel ? ` by ${scoped.channel.toLowerCase()}` : ''}`
+  const conclusion = resolution.governing
+    ? `Yes — a current grant covers ${label}${scoped.clientId ? ` for ${scoped.clientId}` : ''}.`
+    : `No. ${resolution.reason}`
+  return answer(conclusion, {
+    evidenceBasis: resolution.grant
+      ? freeze([describeGrantLine({
+        canonicalAction: resolution.grant.action,
+        scopeLabel: describeScope(resolution.grant),
+        channel: resolution.grant.channel,
+        approvalRequirement: resolution.grant.approvalRequirement,
+      })])
+      : freeze([]),
+    authorityStatus: resolution.status,
+    governing: resolution.governing,
+  })
+}
