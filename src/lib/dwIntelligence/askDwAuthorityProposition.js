@@ -22,6 +22,11 @@
  * module only decides whether a sentence may be said.
  */
 
+import {
+  extractDirectAskDwOperationPhrase,
+  recognizeKnownReadOnlyAskDwJob,
+} from './askDwIntent.js'
+
 /** Exactly the seven G5 actions. Never widened, never collapsed. */
 export const G5_ACTIONS = Object.freeze([
   'SEND_REMINDER', 'SEND_COLLECTION_MESSAGE', 'APPLY_LATE_FEE', 'WAIVE_LATE_FEE',
@@ -252,20 +257,10 @@ const AR_ACT = /\b(?:send|sends|sending|sent|email|emails|emailing|text|texts|te
  * Only a small, closed family of clearly read-only predicates stays with the
  * model. Everything else must map exactly to G5 or fail closed.
  */
-const SAFE_READ_ONLY_OPERATION = /^(?:please\s+)?(?:explain|summari[sz]e|show|describe|list|compare|analy[sz]e|clarify|review|inspect|read|find|look\s+up|check\s+(?:whether|if|the|this|that|what|which|when|where|why|how)|calculate|watch|monitor|keep\s+(?:watching|monitoring)|help\s+(?:me|us)\s+understand|tell\s+(?:me|us)\s+(?:about|why|how|what|which|when|where|who|whether))\b/i
+const SAFE_READ_ONLY_MODEL_OUTPUT = /^(?:please\s+)?(?:explain|summari[sz]e|show|describe|list|compare|analy[sz]e|clarify|review|inspect|read|find|look\s+up|check\s+(?:whether|if|the|this|that|what|which|when|where|why|how)|calculate|watch|monitor|keep\s+(?:watching|monitoring)|help\s+(?:me|us)\s+understand|tell\s+(?:me|us)\s+(?:about|why|how|what|which|when|where|who|whether))\b/i
 
-function isSafeReadOnlyOperation(phrase) {
-  return SAFE_READ_ONLY_OPERATION.test(String(phrase || '').trim())
-}
-
-function directedDwOperationPhrase(text) {
-  const value = String(text || '').trim()
-  const direct = /^(?:so\s+|and\s+|but\s+|ok(?:ay)?,?\s+|hey,?\s+)*(?:can|may|could|would|will|should|shall)\s+(?:you|dw|due\s?watch)\s+(.+)$/i.exec(value)
-  if (direct) return direct[1]
-  const going = /^(?:so\s+|and\s+|but\s+)*(?:are|is)\s+(?:you|dw|due\s?watch)\s+going\s+to\s+(.+)$/i.exec(value)
-  if (going) return going[1]
-  const planned = /^(?:so\s+|and\s+|but\s+)*(?:do|does)\s+(?:you|dw|due\s?watch)\s+(?:plan|intend|mean)\s+to\s+(.+)$/i.exec(value)
-  return planned ? planned[1] : null
+function isSafeReadOnlyModelOutput(phrase) {
+  return SAFE_READ_ONLY_MODEL_OUTPUT.test(String(phrase || '').trim())
 }
 
 function dwSelfOperationPhrase(text) {
@@ -280,9 +275,16 @@ function dwSelfOperationPhrase(text) {
 
 function ownsUnknownOperationalLanguage(text, mode) {
   const phrase = mode === ASK_DW_PARSE_MODE.QUESTION
-    ? directedDwOperationPhrase(text)
+    ? extractDirectAskDwOperationPhrase(text)
     : dwSelfOperationPhrase(text)
-  return phrase != null && !isSafeReadOnlyOperation(phrase)
+  if (phrase == null) return false
+  const knownReadOnlyQuestion = mode === ASK_DW_PARSE_MODE.QUESTION &&
+    recognizeKnownReadOnlyAskDwJob({ text }) != null
+  if (knownReadOnlyQuestion) return false
+  // Output is deliberately stricter than input. Recognising a founder's
+  // request for analysis does not permit the model to promise future or
+  // background work; only the already-established output predicates survive.
+  return mode === ASK_DW_PARSE_MODE.QUESTION || !isSafeReadOnlyModelOutput(phrase)
 }
 
 /**

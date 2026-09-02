@@ -43,6 +43,9 @@ import {
   ASK_DW_TURN,
   classifyAskDwConversationalTurn,
 } from '../src/lib/dwIntelligence/askDwConversationalTurn.js'
+import {
+  recognizeKnownReadOnlyAskDwJob,
+} from '../src/lib/dwIntelligence/askDwIntent.js'
 import { createAskDwOrchestrator } from '../src/lib/dwIntelligence/askDwOrchestrator.js'
 
 const AS_OF = '2026-09-02T09:00:00.000Z'
@@ -1583,6 +1586,10 @@ test('G7-SD4 verbal founder approval prerequisites preserve their relation and a
 async function importAuthorityBoundaryMutant(replacements, label) {
   let source = readFileSync(
     new URL('../src/lib/dwIntelligence/askDwAuthorityProposition.js', import.meta.url), 'utf8')
+  const intentSource = readFileSync(
+    new URL('../src/lib/dwIntelligence/askDwIntent.js', import.meta.url), 'utf8')
+  const intentUrl = `data:text/javascript;base64,${Buffer.from(intentSource).toString('base64')}`
+  source = source.replace("'./askDwIntent.js'", `'${intentUrl}'`)
   for (const [from, to] of replacements) {
     assert.ok(source.includes(from), `mutation anchor missing: ${label}`)
     source = source.replace(from, to)
@@ -1621,4 +1628,91 @@ test('G7-SD5 mutation proof: every structural ownership repair is load-bearing',
     'Do I need to approve before you send email reminders for Atlas?').semantic,
   ASK_DW_QUESTION_SEMANTIC.CAN_ACT,
   'removing approval-relation semantics inverts the question into capability')
+})
+
+const KNOWN_READ_ONLY_QUESTIONS = Object.freeze([
+  ['Can you investigate why Atlas is late?', 'INVESTIGATE', ASK_DW_TURN.AR_JOB],
+  ['Could you investigate Atlas?', 'INVESTIGATE', ASK_DW_TURN.AR_JOB],
+  ['Can you dig into why Atlas is late?', 'INVESTIGATE', ASK_DW_TURN.AR_JOB],
+  ['Can you find out why Atlas is late?', 'INVESTIGATE', ASK_DW_TURN.AR_JOB],
+  ['Can you forecast cash this week?', 'PREDICT', ASK_DW_TURN.AR_JOB],
+  ['Will you forecast cash this week?', 'PREDICT', ASK_DW_TURN.AR_JOB],
+  ['Can you predict when Atlas will pay?', 'PREDICT', ASK_DW_TURN.AR_JOB],
+  ['Can you recommend what to do next?', 'DECIDE', ASK_DW_TURN.AR_JOB],
+  ['Could you recommend the best next step?', 'DECIDE', ASK_DW_TURN.AR_JOB],
+  ['Can you decide what I should focus on?', 'DECIDE', ASK_DW_TURN.AR_JOB],
+  ['Can you explain the Atlas balance?', 'EXPLAIN', ASK_DW_TURN.AR_JOB],
+  ['Will you summarize the evidence?', 'EXPLAIN', ASK_DW_TURN.EVIDENCE_REQUEST],
+  ['Could you show me what changed?', 'EXPLAIN', ASK_DW_TURN.WHAT_CHANGED],
+  ['Can you compare Atlas and Cedar?', 'EXPLAIN', ASK_DW_TURN.AR_JOB],
+  ['Can you calculate DSO?', 'EXPLAIN', ASK_DW_TURN.AR_JOB],
+])
+
+test('G7-SD6 one positive read-only recognizer preserves known Ask DW jobs end to end', async () => {
+  for (const [question, expectedJob, expectedTurn] of KNOWN_READ_ONLY_QUESTIONS) {
+    const recognized = recognizeKnownReadOnlyAskDwJob({ text: question })
+    assert.ok(recognized, question)
+    assert.equal(recognized.job, expectedJob, question)
+    assert.equal(classifyAskDwAuthorityRequest(question).isAuthorityRequest, false, question)
+
+    const turn = classifyAskDwConversationalTurn({ text: question })
+    assert.notEqual(turn.turnType, ASK_DW_TURN.AUTHORITY_QUESTION, question)
+    assert.equal(turn.turnType, expectedTurn, question)
+    if (expectedTurn === ASK_DW_TURN.AR_JOB) {
+      assert.equal(turn.job, expectedJob, question)
+    }
+
+    const result = await colludingOrchestrator('READ_ONLY MODEL ANSWER').run({
+      mode: 'normal', text: question,
+      context: { tenantId: 'tenant-a', companyBrainReadModel: brainReadModel([]) },
+    })
+    assert.equal(result.conversation.authorityAnswer, null, question)
+    assert.equal(result.safeguards.authorityAnswerOwnedByDeterministicCode, false, question)
+    assert.equal(result.answer.executiveConclusion, 'READ_ONLY MODEL ANSWER', question)
+  }
+})
+
+test('G7-SD7 intent fallback EXPLAIN is not proof that unknown operations are safe', async () => {
+  for (const question of [
+    'Can you reimburse Atlas?',
+    'Can you forgive the late fee?',
+    'Will you reach out to Atlas tomorrow?',
+    'Will you ping Atlas tomorrow?',
+    'Will you pursue Atlas tomorrow?',
+    'Can you return the payment to Atlas?',
+    "Can you write down Atlas's balance?",
+    'Can you reimburse Atlas and explain why?',
+  ]) {
+    assert.equal(recognizeKnownReadOnlyAskDwJob({ text: question }), null, question)
+    const request = classifyAskDwAuthorityRequest(question)
+    assert.equal(request.isAuthorityRequest, true, question)
+    assert.equal(request.proposition.canonicalAction, 'ACTION_UNKNOWN', question)
+    assert.equal(classifyAskDwConversationalTurn({ text: question }).turnType,
+      ASK_DW_TURN.AUTHORITY_QUESTION, question)
+
+    const result = await colludingOrchestrator('READ_ONLY MODEL ANSWER').run({
+      mode: 'normal', text: question,
+      context: { tenantId: 'tenant-a', companyBrainReadModel: brainReadModel([]) },
+    })
+    assert.ok(result.conversation.authorityAnswer, question)
+    assert.equal(result.answer.authoritySource, 'DETERMINISTIC_G5_PROJECTION', question)
+    assert.equal(result.answer.authorityStatus, 'CLARIFICATION_REQUIRED', question)
+    assert.notEqual(result.answer.executiveConclusion, 'READ_ONLY MODEL ANSWER', question)
+  }
+})
+
+test('G7-SD8 mutation proof: removing shared read-only recognition reopens routing drift', async () => {
+  const mutant = await importAuthorityBoundaryMutant([
+    [
+      'const knownReadOnlyQuestion = mode === ASK_DW_PARSE_MODE.QUESTION &&\n    recognizeKnownReadOnlyAskDwJob({ text }) != null',
+      'const knownReadOnlyQuestion = false',
+    ],
+  ], 'known-read-only-owner-removed')
+  for (const question of [
+    'Can you investigate why Atlas is late?',
+    'Can you forecast cash this week?',
+    'Can you recommend what to do next?',
+  ]) {
+    assert.equal(mutant.classifyAskDwAuthorityRequest(question).isAuthorityRequest, true, question)
+  }
 })
