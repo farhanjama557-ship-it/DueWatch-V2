@@ -13,6 +13,8 @@ Accepted CP6 SHA:     6dd8ede1c2afa1ad21d2a9ae42fd9cccd84e1468
 CP7 SHA:              707e9f279a1b26a50a4c013617ecd25f22825a9f
 CP8 SHA:              f5bb55603b56f6ddb5c04fa6fe9b6acf579f7544
 CP9 implementation:  fbd2261a8f1d0b8b90d652007d231a0a1fb04b01
+Authority audit fix:  52a5d25d0941b6a6dce35d692e6e783559e4029a
+Channel edge fix:     b707f68e2512676c66b7ca872ec67bd0b66b96de
 Validation-doc SHA:   reported in final handoff (a commit cannot embed its own SHA)
 
 Recovery proved CP7 was a real coherent local commit and CP6 its ancestor. The
@@ -131,7 +133,8 @@ chain-of-thought is not requested or exposed.
 
 The audit attacked referents, memory, financial truth, Company Brain,
 authority, prompt injection, model failure, degraded infrastructure,
-Normal/Deep parity, and the UI path. Two material G7 weaknesses were repaired:
+Normal/Deep parity, and the UI path. The initial CP9 audit repaired two material
+G7 weaknesses:
 
 1. Scoped snapshots now require exact registered tool name, scope, tenant,
    canonical-authority flag, read-only/side-effect receipt, freshness, and
@@ -143,6 +146,22 @@ Normal/Deep parity, and the UI path. Two material G7 weaknesses were repaired:
 The full suite also found a stale System Brain assertion naming the historical
 endpoint. It now inventories ask-dw-g7-model as active and proves ask-dw-model
 is historical. No G5 authority rule was changed.
+
+An independent freeze audit then found a material authority-grounding seam.
+The G7 guard now recognizes natural positive authority assertions by grammar
+and verifies them against the deterministic G5 projection instead of relying
+on a short wording blacklist. It requires exactly one canonical action and an
+exact named channel, so SEND_REMINDER and SEND_COLLECTION_MESSAGE never widen
+one another and EMAIL never supports SMS/text (or vice versa). Vague,
+unrecognized, and multi-action claims fail closed.
+
+Projected null limit dimensions are correctly non-material, allowing an actual
+unrestricted G5 -> G6 -> G7 SEND_REMINDER/EMAIL grant to support accurate
+prose. Real conditions, amount limits, approval requirements, wrong scope,
+wrong tenant, expiry, and revocation still fail closed. Missing or malformed
+evaluation/effective timestamps, and malformed non-null expiry timestamps,
+cannot establish current authority. Hostile tests also reconfirm that repeated
+approval, "go ahead", and model wording create neither authority nor execution.
 
 ==================================================
 6. HISTORICAL ARTIFACTS PRESERVED
@@ -195,16 +214,16 @@ No. | REQUIREMENT | IMPLEMENTATION | TEST / EVIDENCE | STATUS | LIMITATION
 28 | Normal/Deep | inherited policy, same runtime | mode + CP7 toggle tests | PASS | Deep adds no power
 29 | Mode truth parity | compareAskDwRuntimeModes | runtime + CP9 scoped parity | PASS | Same snapshot
 30 | Observable work/no raw CoT | structured trail | modes + adapter tests | PASS | Private reasoning hidden
-31 | Deterministic grounding | enforceAskDwGrounding | G7-G1-G11, CP9 suite | PASS | Conservative by design
-32 | Authority consistency | G5 projection + exact guard | G7-G4, CP9 attacks | PASS | Conditional prose refuses
-33 | No conversational authority | state/memory boundaries | O4, M2C, CP9 tests | PASS | G5 grant path only
+31 | Deterministic grounding | enforceAskDwGrounding | G7-G1-G11, CP9 + authority-audit suites | PASS | Conservative by design
+32 | Authority consistency | G5 projection + exact action/channel/time guard | real G5->G6->G7 fixture + hostile wording | PASS | Conditional prose refuses
+33 | No conversational authority | state/memory boundaries | O4, M2C, repeated approval/go-ahead tests | PASS | G5 grant path only
 34 | Prompt injection | quarantine + provider instructions | G7-G11, CP9 stage test | PASS | Retrieved text is data
 35 | Long-turn drift | benchmark + 30-turn memory | G7-B6-B10, CP6 30-turn | PASS | No live-model drift run
 36 | Degraded reads | unavailable/bounded states | G7-C8/P3, error UX | PASS | Simulated locally
 37 | Stale references | live revalidation clears focus | CP5 stale/deleted tests | PASS | Then clarifies
 38 | Tenant isolation | checks at every boundary | CP5/M2C/C7/CP9 tests | PASS | PG RLS runtime skipped
 39 | Model referent verification | exact resolver-event match | CP5 invented/mismatch tests | PASS | Model cannot select
-40 | Evaluation method | corpus + regression + full suite | 186 benchmark, 1,592 suite | PASS | Not human study
+40 | Evaluation method | corpus + regression + full suite | 186 benchmark, 1,598 suite | PASS | Not human study
 41 | Naturalness limitations | detectors + disclosure | G7-K/B, this record | LIMITED | No human evaluation
 42 | Live-model status | forward Groq endpoint | provider/contract tests | LIMITED | No credentials/runtime
 43 | Human evaluation | none claimed | this record | LIMITED | Not performed
@@ -224,9 +243,9 @@ run a 30-turn compaction/drift case.
   G4                    264 tests; 264 pass; 0 fail; 0 skip
   G5                    362 tests; 362 pass; 0 fail; 0 skip
   G6                    504 tests; 490 pass; 0 fail; 14 skip
-  Ask DW                273 tests; 273 pass; 0 fail; 0 skip
-  G7 focused             94 tests; 94 pass; 0 fail; 0 skip
-  Full npm test        1592 tests; 1578 pass; 0 fail; 14 skip
+  Ask DW                279 tests; 279 pass; 0 fail; 0 skip
+  G7 focused            100 tests; 100 pass; 0 fail; 0 skip
+  Full npm test        1598 tests; 1584 pass; 0 fail; 14 skip
   Production build     PASS (existing chunk-size warnings only)
   git diff --check     CLEAN
 
