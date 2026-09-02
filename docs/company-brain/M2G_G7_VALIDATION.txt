@@ -15,6 +15,7 @@ CP8 SHA:              f5bb55603b56f6ddb5c04fa6fe9b6acf579f7544
 CP9 implementation:  fbd2261a8f1d0b8b90d652007d231a0a1fb04b01
 Authority audit fix:  52a5d25d0941b6a6dce35d692e6e783559e4029a
 Channel edge fix:     b707f68e2512676c66b7ca872ec67bd0b66b96de
+Polarity audit fix:   c927e84fffa731ff38084ae2e38864e042eb3f3f
 Validation-doc SHA:   reported in final handoff (a commit cannot embed its own SHA)
 
 Recovery proved CP7 was a real coherent local commit and CP6 its ancestor. The
@@ -163,6 +164,17 @@ evaluation/effective timestamps, and malformed non-null expiry timestamps,
 cannot establish current authority. Hostile tests also reconfirm that repeated
 approval, "go ahead", and model wording create neither authority nor execution.
 
+The independent re-audit found that the first grammar repair treated any
+negation token in a clause as negating its authority assertion. The detector
+now removes only negation scoped to the authority predicate itself. Positive
+authority claims remain grounded when the same clause says "without approval"
+or "do not need approval", while actual refusals such as "not authorized",
+"cannot send", "no current grant", and "permission was not granted" remain
+permissible negative prose. Active, passive, possessive, grant-object, noun,
+and existential authority forms are covered by grammar families rather than
+an exact-sentence blacklist. Existing exact action, channel, scope, time,
+approval, conditions, and limits verification is unchanged.
+
 ==================================================
 6. HISTORICAL ARTIFACTS PRESERVED
 ==================================================
@@ -214,8 +226,8 @@ No. | REQUIREMENT | IMPLEMENTATION | TEST / EVIDENCE | STATUS | LIMITATION
 28 | Normal/Deep | inherited policy, same runtime | mode + CP7 toggle tests | PASS | Deep adds no power
 29 | Mode truth parity | compareAskDwRuntimeModes | runtime + CP9 scoped parity | PASS | Same snapshot
 30 | Observable work/no raw CoT | structured trail | modes + adapter tests | PASS | Private reasoning hidden
-31 | Deterministic grounding | enforceAskDwGrounding | G7-G1-G11, CP9 + authority-audit suites | PASS | Conservative by design
-32 | Authority consistency | G5 projection + exact action/channel/time guard | real G5->G6->G7 fixture + hostile wording | PASS | Conditional prose refuses
+31 | Deterministic grounding | polarity-aware enforceAskDwGrounding | G7-G1-G11, CP9 + authority-audit suites | PASS | Conservative by design
+32 | Authority consistency | G5 projection + exact action/channel/time guard | real G5->G6->G7 fixture + positive/negative grammar attacks | PASS | Conditional prose refuses
 33 | No conversational authority | state/memory boundaries | O4, M2C, repeated approval/go-ahead tests | PASS | G5 grant path only
 34 | Prompt injection | quarantine + provider instructions | G7-G11, CP9 stage test | PASS | Retrieved text is data
 35 | Long-turn drift | benchmark + 30-turn memory | G7-B6-B10, CP6 30-turn | PASS | No live-model drift run
