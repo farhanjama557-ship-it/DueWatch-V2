@@ -167,19 +167,43 @@ function authorityClauses(text) {
     .filter(Boolean)
 }
 
+const NEGATED_AUTHORITY_PREDICATES = [
+  /\b(?:i|we|dw|duewatch)\s+(?:am|is|are|was|were)\s+(?:currently\s+)?(?:not|never)\s+(?:authori[sz]ed|allowed|permitted)\b/gi,
+  /\b(?:i|we|dw|duewatch)\s+(?:isn't|aren't|wasn't|weren't)\s+(?:currently\s+)?(?:authori[sz]ed|allowed|permitted)\b/gi,
+  /\b(?:i|we|dw|duewatch)\s+(?:cannot|can't)\s+(?:send|email|text|apply|waive|settle|write|issue|refund|charge|process|reconcile|handle|act|do)\b/gi,
+  /\bno\s+(?:(?:current|active|standing|explicit|authority)\s+)*(?:grant|permission|authority|authori[sz]ation)\s+(?:covers|allows|permits|authori[sz]es|includes|exists)\b/gi,
+  /\b(?:the|this|a)?\s*(?:(?:current|active|standing|explicit|authority)\s+)*(?:grant|permission|authority|authori[sz]ation)\s+(?:does|did|is|was|has)\s+not\s+(?:cover|allow|permit|authori[sz]e|include|exist|been\s+granted)\b/gi,
+  /\b(?:permission|authority|authori[sz]ation)\s+(?:was|is|has been)\s+not\s+granted\b/gi,
+]
+
+function withoutNegatedAuthorityPredicates(clause) {
+  return NEGATED_AUTHORITY_PREDICATES.reduce(
+    (remaining, pattern) => remaining.replace(pattern, ' '),
+    clause,
+  )
+}
+
 function clauseClaimsAuthority(clause) {
-  if (/\b(?:no|not|never|without|cannot|can't|isn't|aren't|doesn't|didn't|hasn't|haven't)\b/.test(clause)) {
-    return false
-  }
+  // Remove only negation that scopes over an authority predicate. Unrelated
+  // negatives ("without approval", "do not need approval") must not erase a
+  // positive assertion elsewhere in the same clause.
+  const asserted = withoutNegatedAuthorityPredicates(clause)
   return [
-    /\b(?:i(?:'m|\s+am)|we(?:'re|\s+are)|(?:dw|duewatch)\s+is)\s+(?:currently\s+)?(?:authori[sz]ed|allowed|permitted)\b/,
-    /\b(?:i|we|dw|duewatch)\s+(?:have|has)\s+(?:the\s+)?(?:permission|authority)\b/,
+    /\b(?:i(?:'m|\s+(?:am|was))|we(?:'re|\s+(?:are|were))|(?:dw|duewatch)\s+(?:is|was))\s+(?:currently\s+)?(?:authori[sz]ed|allowed|permitted)\b/,
+    /\b(?:i|we|dw|duewatch)\s+(?:have|has)\s+(?:the\s+)?(?:permission|authority|authori[sz]ation)\b/,
     /\b(?:i|we|dw|duewatch)\s+can\s+(?:go ahead(?:\s+and)?|send|email|text|apply|waive|settle|write|issue|refund|charge|process|reconcile|handle|act|do)\b/,
     /\b(?:(?:the|this|a)\s+)?(?:(?:current|active|standing|explicit)\s+)?(?:authority\s+)?grant\s+(?:currently\s+)?(?:covers|allows|permits|authori[sz]es|includes)\b/,
-    /\b(?:permission|authority)\s+(?:currently\s+)?(?:covers|allows|permits|authori[sz]es|includes|exists|(?:has been|was|is) granted)\b/,
+    /\b(?:permission|authority|authori[sz]ation)\s+(?:currently\s+)?(?:covers|allows|permits|authori[sz]es|includes|exists|is active|(?:has been|was|is) granted)\b/,
     /\byou\s+(?:(?:have|'ve)\s+)?(?:granted|given|gave)\s+(?:(?:me|us|dw|duewatch)\s+)?(?:permission|authority)\b/,
     /\byou(?:'ve|\s+have)?\s+authori[sz]ed\s+(?:me|us|dw|duewatch)\b/,
-  ].some((pattern) => pattern.test(clause))
+    /\b(?:i|we|dw|duewatch)\s+(?:was|were)\s+granted\s+(?:the\s+)?(?:permission|authority|authori[sz]ation)\b/,
+    /\b(?:i(?:'ve|\s+have)|we(?:'ve|\s+have)|(?:dw|duewatch)\s+has)\s+been\s+granted\s+(?:the\s+)?(?:permission|authority|authori[sz]ation)\b/,
+    /\b(?:sending|emailing|texting)\b[^.;]{0,48}\b(?:is|are|was|were|has been|have been)\s+(?:currently\s+)?(?:authori[sz]ed|allowed|permitted)\b/,
+    /\b(?:e-?mail|sms|text|collection)?\s*reminders?\s+(?:is|are|was|were|has been|have been)\s+(?:currently\s+)?(?:authori[sz]ed|allowed|permitted)\b/,
+    /\bthere\s+(?:is|are)\s+(?:an?\s+)?(?:(?:current|active|standing|explicit|authority)\s+)*grant\s+for\b/,
+    /\b(?:i|we|dw|duewatch)\s+(?:have|has)\s+(?:an?\s+)?(?:(?:current|active|standing|explicit|authority)\s+)*grant\s+for\b/,
+    /\b(?:(?:the|this|a)\s+)?(?:(?:current|active|standing|explicit|authority)\s+)*grant\s+gives\s+(?:me|us|dw|duewatch)\s+(?:the\s+)?(?:permission|authority|authori[sz]ation)\b/,
+  ].some((pattern) => pattern.test(asserted))
 }
 
 function claimsAuthority(text) {

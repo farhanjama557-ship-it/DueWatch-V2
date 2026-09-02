@@ -206,6 +206,18 @@ test('G7-CP9R natural authority assertions are grounded even without first-perso
     'You granted permission for reminders.',
     "I'm allowed to send email reminders.",
     "You've authorized me to send email reminders.",
+    'I can send email reminders without asking you.',
+    'The current grant covers sending email reminders without approval.',
+    'I am authorized to send email reminders, and I do not need approval.',
+    'I was granted permission to send email reminders.',
+    "I've been granted permission to send email reminders.",
+    'Sending email reminders is authorized.',
+    'Email reminders are authorized under the current grant.',
+    'Email reminders are allowed under the current grant.',
+    'There is an active grant for email reminders.',
+    'We have a grant for email reminders.',
+    'The grant gives DW permission to send email reminders.',
+    'Authorization exists for email reminders.',
   ]
   for (const text of claims) {
     const result = enforceAskDwGrounding({
@@ -220,13 +232,22 @@ test('G7-CP9R natural authority assertions are grounded even without first-perso
       ASK_DW_GROUNDING_ISSUE.CLAIMED_AUTHORITY_WITHOUT_GRANT), text)
   }
 
-  const negative = enforceAskDwGrounding({
-    candidate: { executiveConclusion: 'DW is not authorized to send email reminders.' },
-    verification: PASS,
-    truthLock: { canonicalFacts: { paid: false } },
-    companyBrainContext: authorityContext(null),
-  })
-  assert.equal(negative.verdict, 'PASS')
+  for (const text of [
+    'DW is not authorized to send email reminders.',
+    'I cannot send email reminders.',
+    'No current grant covers email reminders.',
+    'Permission was not granted for SMS reminders.',
+  ]) {
+    const negative = enforceAskDwGrounding({
+      candidate: { executiveConclusion: text },
+      verification: PASS,
+      truthLock: { canonicalFacts: { paid: false } },
+      companyBrainContext: authorityContext(null),
+    })
+    assert.equal(negative.verdict, 'PASS', text)
+    assert.ok(!negative.groundingIssues.includes(
+      ASK_DW_GROUNDING_ISSUE.CLAIMED_AUTHORITY_WITHOUT_GRANT), text)
+  }
 })
 
 test('G7-CP9R reminder and collection-message actions never widen into each other', () => {
