@@ -1583,11 +1583,15 @@ test('G7-SD4 verbal founder approval prerequisites preserve their relation and a
   }
 })
 
-async function importAuthorityBoundaryMutant(replacements, label) {
+async function importAuthorityBoundaryMutant(replacements, label, intentReplacements = []) {
   let source = readFileSync(
     new URL('../src/lib/dwIntelligence/askDwAuthorityProposition.js', import.meta.url), 'utf8')
-  const intentSource = readFileSync(
+  let intentSource = readFileSync(
     new URL('../src/lib/dwIntelligence/askDwIntent.js', import.meta.url), 'utf8')
+  for (const [from, to] of intentReplacements) {
+    assert.ok(intentSource.includes(from), `intent mutation anchor missing: ${label}`)
+    intentSource = intentSource.replace(from, to)
+  }
   const intentUrl = `data:text/javascript;base64,${Buffer.from(intentSource).toString('base64')}`
   source = source.replace("'./askDwIntent.js'", `'${intentUrl}'`)
   for (const [from, to] of replacements) {
@@ -1714,5 +1718,83 @@ test('G7-SD8 mutation proof: removing shared read-only recognition reopens routi
     'Can you recommend what to do next?',
   ]) {
     assert.equal(mutant.classifyAskDwAuthorityRequest(question).isAuthorityRequest, true, question)
+  }
+})
+
+const MIXED_READ_ONLY_AND_UNKNOWN_QUESTIONS = Object.freeze([
+  'Can you explain and reimburse Atlas?',
+  'Can you investigate and reimburse Atlas?',
+  'Can you forecast and reimburse Atlas?',
+  'Can you recommend and reimburse Atlas?',
+  'Can you explain then reimburse Atlas?',
+  'Can you investigate, then ping Atlas?',
+  'Can you show me the balance and then write it down?',
+  'Can you compare Atlas and Cedar and then forgive the late fee?',
+  'Can you explain the balance and then return the payment?',
+  'Can you investigate Atlas then pursue Atlas?',
+  'Can you show the evidence but also forgive the late fee?',
+  'Can you compare Atlas and Cedar and reimburse Atlas?',
+  'Can you recommend the next step then ping Atlas?',
+])
+
+test('G7-SD9 a safe prefix cannot sanitize a coordinated unknown founder operation', async () => {
+  for (const question of MIXED_READ_ONLY_AND_UNKNOWN_QUESTIONS) {
+    assert.equal(recognizeKnownReadOnlyAskDwJob({ text: question }), null, question)
+    const request = classifyAskDwAuthorityRequest(question)
+    assert.equal(request.isAuthorityRequest, true, question)
+    assert.equal(request.proposition.unknownOperationalCandidate, true, question)
+    assert.equal(G5_ACTIONS.includes(request.proposition.canonicalAction), false, question)
+    assert.equal(classifyAskDwConversationalTurn({ text: question }).turnType,
+      ASK_DW_TURN.AUTHORITY_QUESTION, question)
+
+    const result = await colludingOrchestrator('READ_ONLY MODEL ANSWER').run({
+      mode: 'normal', text: question,
+      context: { tenantId: 'tenant-a', companyBrainReadModel: brainReadModel([]) },
+    })
+    assert.ok(result.conversation.authorityAnswer, question)
+    assert.equal(result.answer.authoritySource, 'DETERMINISTIC_G5_PROJECTION', question)
+    assert.equal(result.answer.authorityStatus, 'CLARIFICATION_REQUIRED', question)
+    assert.notEqual(result.answer.executiveConclusion, 'READ_ONLY MODEL ANSWER', question)
+  }
+})
+
+test('G7-SD10 coordinated unknown model commitments survive segmentation and fail closed', () => {
+  for (const text of [
+    'I will explain and reimburse Atlas.',
+    'I can summarize the account and then reimburse Atlas.',
+    'I can show the evidence and forgive the late fee.',
+    'I will compare the accounts and then ping Atlas.',
+  ]) {
+    const direct = parseAuthorityProposition(
+      { text, field: 'f', quoted: false, attributedTo: null }, {})
+    assert.equal(direct.authorityBearing, true, text)
+    assert.equal(direct.unknownOperationalCandidate, true, text)
+    const segmented = parseCandidateAuthorityPropositions({ executiveConclusion: text })
+    assert.ok(segmented.some((item) => item.unknownOperationalCandidate), text)
+    assert.equal(check(text, []).verdict, 'BLOCK', text)
+  }
+
+  for (const text of [
+    'I will explain the evidence.',
+    'I can summarize the account history.',
+    'I will show the admitted facts.',
+    'I can keep watching the account.',
+  ]) {
+    const direct = parseAuthorityProposition(
+      { text, field: 'f', quoted: false, attributedTo: null }, {})
+    assert.equal(direct.authorityBearing, false, text)
+    assert.equal(check(text, []).verdict, 'PASS', text)
+  }
+})
+
+test('G7-SD11 mutation proof: a leading safe predicate cannot exempt the whole operation', async () => {
+  const mutant = await importAuthorityBoundaryMutant([], 'leading-safe-prefix-restored', [
+    [
+      ': completeReadOnlyJob(operationPhrase, leadingReadOnlyJob)',
+      ': leadingReadOnlyJob(normalizedText(operationPhrase))',
+    ],
+  ])
+  for (const question of MIXED_READ_ONLY_AND_UNKNOWN_QUESTIONS) {
+    assert.equal(mutant.classifyAskDwAuthorityRequest(question).isAuthorityRequest, false, question)
   }
 })

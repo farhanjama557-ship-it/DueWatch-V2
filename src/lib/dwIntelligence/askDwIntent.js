@@ -66,6 +66,57 @@ const LEADING_READ_ONLY_JOB = Object.freeze([
   [ASK_DW_JOB.EXPLAIN, /^(?:please\s+)?(?:explain|summari[sz]e|show|describe|list|compare|analy[sz]e|clarify|review|inspect|read|calculate|watch|monitor|look\s+up|check\s+(?:whether|if|the|this|that|what|which|when|where|why|how)|help\s+(?:me|us)\s+understand|tell\s+(?:me|us)\s+(?:about|why|how|what|which|when|where|who|whether))\b/i],
 ])
 
+// Model output keeps the pre-existing narrower promise vocabulary. It is
+// deliberately distinct from founder input: recognizing an analysis request
+// must not teach the model a new future/background commitment.
+const LEADING_SAFE_MODEL_OUTPUT = /^(?:please\s+)?(?:explain|summari[sz]e|show|describe|list|compare|analy[sz]e|clarify|review|inspect|read|find|look\s+up|check\s+(?:whether|if|the|this|that|what|which|when|where|why|how)|calculate|watch|monitor|keep\s+(?:watching|monitoring)|help\s+(?:me|us)\s+understand|tell\s+(?:me|us)\s+(?:about|why|how|what|which|when|where|who|whether))\b/i
+
+const SEQUENCED_OPERATION = /\s*(?:,\s*)?\b(?:and\s+then|then|but\s+also)\b\s*/i
+const COORDINATED_OPERATION = /\s+\b(?:and|but|or)\b\s+/i
+const NON_OPERATION_CONTINUATION = /^(?:why|how|what|which|when|where|who|whether)\b/i
+
+function closedCompareObject(value) {
+  const text = String(value || '').trim()
+  if (!text) return false
+  if (/^(?:the|this|that|these|those|my|our|their|its)\s+[\p{L}\p{N}'-]+(?:\s+[\p{L}\p{N}'-]+){0,4}$/iu.test(text)) return true
+  return /^[\p{Lu}][\p{L}\p{N}'-]*(?:\s+[\p{Lu}][\p{L}\p{N}'-]*){0,3}$/u.test(text)
+}
+
+function isClosedComparePair(value) {
+  const match = /^(?:please\s+)?compare\s+(.+?)\s+and\s+(.+)$/i.exec(value)
+  return Boolean(match && closedCompareObject(match[1]) && closedCompareObject(match[2]))
+}
+
+/**
+ * Proves the whole operation phrase, not merely its first verb. Sequenced or
+ * coordinated work is safe only when every operation component is positively
+ * known. The sole noun-coordinate exception is a closed two-object comparison.
+ */
+function completeReadOnlyJob(operationPhrase, recognizeLeading) {
+  const text = String(operationPhrase || '').trim().replace(/[.!?]+$/g, '').trim()
+  const leadingJob = recognizeLeading(text)
+  if (!leadingJob) return null
+
+  const sequenced = text.split(SEQUENCED_OPERATION).map((part) => part.trim())
+  if (sequenced.length > 1) {
+    const jobs = sequenced.map((part) => completeReadOnlyJob(part, recognizeLeading))
+    return jobs.every(Boolean) ? leadingJob : null
+  }
+
+  // An unparsed punctuation boundary cannot be proof of one bounded operation.
+  if (/[,;.!?]/.test(text)) return null
+  const coordinated = text.split(COORDINATED_OPERATION).map((part) => part.trim())
+  if (coordinated.length === 1) return leadingJob
+  if (coordinated.length === 2 && isClosedComparePair(text)) return leadingJob
+
+  for (let index = 1; index < coordinated.length; index += 1) {
+    const part = coordinated[index]
+    if (NON_OPERATION_CONTINUATION.test(part)) continue
+    if (!recognizeLeading(part)) return null
+  }
+  return leadingJob
+}
+
 /** The shared structural owner for a direct operation aimed at DW. */
 export function extractDirectAskDwOperationPhrase(text) {
   const value = String(text || '').trim()
@@ -82,6 +133,14 @@ function leadingReadOnlyJob(value) {
     if (predicate.test(value)) return job
   }
   return null
+}
+
+function leadingSafeModelOutput(value) {
+  return LEADING_SAFE_MODEL_OUTPUT.test(value) ? ASK_DW_JOB.EXPLAIN : null
+}
+
+export function isCompleteKnownReadOnlyModelOperation({ operationPhrase } = {}) {
+  return completeReadOnlyJob(operationPhrase, leadingSafeModelOutput) != null
 }
 
 function positivelyRecognizedJob(value) {
@@ -105,7 +164,7 @@ export function recognizeKnownReadOnlyAskDwJob({ text } = {}) {
   const operationPhrase = extractDirectAskDwOperationPhrase(text)
   const job = operationPhrase == null
     ? positivelyRecognizedJob(value)
-    : leadingReadOnlyJob(normalizedText(operationPhrase))
+    : completeReadOnlyJob(operationPhrase, leadingReadOnlyJob)
   if (!job || job === ASK_DW_JOB.ACT) return null
   return Object.freeze({
     job,

@@ -24,6 +24,7 @@
 
 import {
   extractDirectAskDwOperationPhrase,
+  isCompleteKnownReadOnlyModelOperation,
   recognizeKnownReadOnlyAskDwJob,
 } from './askDwIntent.js'
 
@@ -115,8 +116,21 @@ export function segmentPropositions(fieldText, { field = 'unknown' } = {}) {
   const pushPlain = (text, attribution) => {
     const cleaned = stripDiscourseCommas(text)
     for (const sentence of cleaned.split(TERMINATORS)) {
-      for (const clause of sentence.split(COORDINATORS)) {
-        const trimmed = clause.trim()
+      const clauses = sentence.split(COORDINATORS)
+      const fullSelfOperation = parseDwSelfOperation(sentence.trim())
+      const inheritSelfController = clauses.length > 1 && fullSelfOperation &&
+        !isCompleteKnownReadOnlyModelOperation({ operationPhrase: fullSelfOperation.phrase })
+      for (let index = 0; index < clauses.length; index += 1) {
+        let trimmed = clauses[index].trim()
+        // Coordinators elide the matrix subject/modal: in "I will explain and
+        // reimburse", the second operation is still "I will reimburse".
+        // Preserve that controller only when the complete phrase was not
+        // positively proved read-only. This adds a fail-closed proposition;
+        // it never joins evidence or authority dimensions across clauses.
+        if (index > 0 && inheritSelfController &&
+          !/^(?:i|we|you|dw|due\s?watch)\b/i.test(trimmed)) {
+          trimmed = `${fullSelfOperation.prefix}${trimmed}`
+        }
         if (trimmed) {
           propositions.push({ field, text: trimmed, quoted: false, attributedTo: attribution })
         }
@@ -257,20 +271,22 @@ const AR_ACT = /\b(?:send|sends|sending|sent|email|emails|emailing|text|texts|te
  * Only a small, closed family of clearly read-only predicates stays with the
  * model. Everything else must map exactly to G5 or fail closed.
  */
-const SAFE_READ_ONLY_MODEL_OUTPUT = /^(?:please\s+)?(?:explain|summari[sz]e|show|describe|list|compare|analy[sz]e|clarify|review|inspect|read|find|look\s+up|check\s+(?:whether|if|the|this|that|what|which|when|where|why|how)|calculate|watch|monitor|keep\s+(?:watching|monitoring)|help\s+(?:me|us)\s+understand|tell\s+(?:me|us)\s+(?:about|why|how|what|which|when|where|who|whether))\b/i
-
 function isSafeReadOnlyModelOutput(phrase) {
-  return SAFE_READ_ONLY_MODEL_OUTPUT.test(String(phrase || '').trim())
+  return isCompleteKnownReadOnlyModelOperation({ operationPhrase: phrase })
+}
+
+function parseDwSelfOperation(text) {
+  const value = String(text || '').trim()
+  const modal = /^((?:i|we|dw|due\s?watch)\s+(?:can|may|could|might|will|would|should|shall)\s+)(.+)$/i.exec(value)
+  if (modal) return { prefix: modal[1], phrase: modal[2] }
+  const contracted = /^((?:i|we)'(?:ll|d)\s+)(.+)$/i.exec(value)
+  if (contracted) return { prefix: contracted[1], phrase: contracted[2] }
+  const going = /^((?:i(?:'m|\s+am)|we(?:'re|\s+are)|dw\s+is|due\s?watch\s+is)\s+going\s+to\s+)(.+)$/i.exec(value)
+  return going ? { prefix: going[1], phrase: going[2] } : null
 }
 
 function dwSelfOperationPhrase(text) {
-  const value = String(text || '').trim()
-  const modal = /^(?:i|we|dw|due\s?watch)\s+(?:can|may|could|might|will|would|should|shall)\s+(.+)$/i.exec(value)
-  if (modal) return modal[1]
-  const contracted = /^(?:i|we)'(?:ll|d)\s+(.+)$/i.exec(value)
-  if (contracted) return contracted[1]
-  const going = /^(?:i(?:'m|\s+am)|we(?:'re|\s+are)|dw\s+is|due\s?watch\s+is)\s+going\s+to\s+(.+)$/i.exec(value)
-  return going ? going[1] : null
+  return parseDwSelfOperation(text)?.phrase ?? null
 }
 
 function ownsUnknownOperationalLanguage(text, mode) {
