@@ -410,7 +410,7 @@ naturalness evaluation. Those limitations from section 9 are unchanged.
 ==================================================
 
 Base:   84fb79fe94b70945a1a8ce50cd5db957f358f9fc
-Repair: <G7_REPAIR2_SHA>
+Repair: bc6447137362fa8271c1c567cdc331e7b4bc9cd6
 
 An independent audit reproduced Ask DW 316/316 and G7 137/137 and then found
 five structural failures. All five reproduced exactly before any edit.
