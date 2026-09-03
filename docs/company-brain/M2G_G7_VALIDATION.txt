@@ -1147,6 +1147,103 @@ standalone bundle and clean-room proof are produced after the doc-only
 validation commit and reported in the final handoff.
 
 ==================================================
+9j. IMPERATIVE FOUNDER ENTRY-SEAM FREEZE REPAIR
+==================================================
+
+Starting candidate: e24f209d28623ab9a9205d0be346c7c009e70ae0
+Implementation:     588088d085e6f1749abff5dd7cc2bfbce8a01241
+Branch:             g7-safe-by-default-action-boundary (isolated local repair)
+
+ROOT REPAIR. The closed-world operation structure now owns modal/direct,
+ordinary imperative and polite-imperative founder presentations. Ordinary
+imperatives carry no fabricated or zero-width wrapper component. A real
+"Please " span is a typed WRAPPER; every operation, argument, relation and
+remaining source span is otherwise validated by the same registry, extractor,
+UTF-16 offsets, exact-source checks, argument grammar and residue rule already
+used for modal requests. No audit verb was added to AR_ACT or AR_ACT_VERB.
+
+ENTRY OWNERSHIP. A wrapperless request beginning with a registered read-only
+operation can proceed only after complete structural proof. An unknown
+predicate directed at an admitted/candidate AR target enters the same
+structure but cannot become READ_ONLY; missing extraction, an unknown operation
+or a mixed safe/unknown clause produces FAIL_CLOSED_CLARIFY. The historical
+classifyAskDwIntent fallback EXPLAIN remains a usability label only and cannot
+return an unproved imperative to model ownership. Existing exact controlled
+ACT recognition remains on its pre-existing controlled activation path.
+
+PRESERVED ROUTES. Greetings, acknowledgements, corrections/new evidence,
+referent follow-ups, Company Brain, daily priority, portfolio, Needs You, What
+Changed, evidence and historical execution tests remain green. "show me" and
+"show me why" are explicitly valid bounded SHOW arguments. Short "and Atlas?"
+follow-ups and noun-led Company Brain/status prompts are not imperative
+presentations. Mark-paid and reminder commands remain existing ACT jobs. No
+model-output predicate was widened and the no-fake-work doctrine is unchanged.
+
+REGRESSION, PROPERTY AND MUTATION PROOF. G7-OS11 proves an ordinary imperative
+has zero WRAPPER components while a polite imperative accounts for its actual
+"Please " source. OS12 covers every requested safe EXPLAIN, INVESTIGATE,
+PREDICT and DECIDE imperative. OS13 crosses every supplied unknown and mixed
+imperative against structural fail-closed classification. OS14 applies modal,
+plain-imperative and polite-imperative presentations to the same safe and
+unsafe operation structures and proves presentation never increases
+capability. G7-SD12 checks safe job routing. SD13 runs every unknown/mixed case
+through structural classification, positive recognition, operational
+ownership, conversational classification and the real orchestrator with a
+colluding "Yes." model/verifier; deterministic G5-projection clarification
+always owns the answer. SD14 removes wrapperless presentation in a source
+mutant and proves the hostile imperatives regress to unsafe fallback routing.
+
+SELF-REVIEW GATE:
+
+  1. Missing modal wrapper bypasses structure?               NO
+  2. Polite wrapper is fabricated or zero width?             NO
+  3. Safe prefix sanitizes an imperative unknown tail?       NO
+  4. Raw fallback EXPLAIN proves imperative safety?          NO
+  5. Presentation form increases capability?                NO
+  6. Colluding model answer survives unknown imperative?     NO
+  7. Exact controlled ACT path was replaced?                 NO
+  8. Founder conversational routes were swallowed?          NO
+  9. Model future/background commitments were widened?       NO
+ 10. New authority, execution or network capability added?   NO
+ 11. G5 or historical M2D semantics changed?                 NO
+ 12. G8 implementation entered the tree?                    NO
+
+VALIDATION (actual committed implementation tree):
+
+  Structural + boundary    99 tests; 99 pass; 0 fail; 0 skip
+  G5 gate                 362 tests; 362 pass; 0 fail; 0 skip
+  G6 gate                 504 tests; 490 pass; 0 fail; 14 skip
+  Ask DW                  378 tests; 378 pass; 0 fail; 0 skip
+  G7 focused              199 tests; 199 pass; 0 fail; 0 skip
+  Full npm test          1697 tests; 1683 pass; 0 fail; 14 skip
+  Production build       PASS (existing externalized-node/chunk warnings only)
+  git diff --check       CLEAN
+  System Brain audit     PASS; 14 routes, 7 Ask DW read tools,
+                         tenant_row_data_read:false
+
+The fourteen G6 PostgreSQL runtime tests were honestly skipped because no
+PostgreSQL server/socket was available. Live provider and browser evaluation
+were not run; the deterministic real orchestrator and colluding-model harness
+were run for every supplied unknown/mixed imperative.
+
+SCANS AND LOCKS. Added production lines contain no credential/secret literal,
+canonical financial write, authority mutation/execution primitive, provider or
+network call, tenant query/loader or cross-tenant access path. The only tenant-
+scope input added to the seam is the existing read-only knownEntities value.
+No src/lib/companyBrain or migration file changed. No G8 path or file exists.
+Historical M2D Git blob locks remain exactly:
+
+  supabase/functions/_shared/askDwOpenAiContract.js
+    e3870f6ffc62fea71118a9202d79af00cdf70477
+  supabase/functions/ask-dw-model/index.ts
+    b687f54b07ac7f9f31596a7cdf42a472d4ab8855
+
+The canonical local m2g/company-brain-bootstrap-g7 branch remained unmoved at
+7136985beb7e9e664989d964e09a256fbf77ebce. Nothing was pushed. A complete-history
+standalone bundle and clean-room proof are produced after this doc-only commit
+and reported in the final handoff.
+
+==================================================
 10. EXIT DECISION
 ==================================================
 
@@ -1156,6 +1253,7 @@ input/output authority closure in section 9d, the question-semantics closure
 in section 9e, the safe-by-default action boundary in section 9f, and the
 shared read-only job repair in section 9g, and the mixed-operation composition
 repair in section 9h, and the closed-world operation-accounting replacement in
-section 9i, is a G7 FREEZE CANDIDATE. All material source-level
+section 9i, and the imperative founder entry-seam repair in section 9j, is a
+G7 FREEZE CANDIDATE. All material source-level
 requirements have implementation and executable evidence. External validation
 limitations are stated above rather than hidden. G8 was not started.
