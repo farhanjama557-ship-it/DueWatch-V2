@@ -32,7 +32,13 @@ import {
   DW_PROACTIVE_ISSUE, DW_PROVABLE_EXECUTION_ACTIONS, enforceDwProactiveGrounding,
   DW_PROSE_DETECTION_ROLE,
 } from '../src/lib/dwIntelligence/dwProactiveGrounding.js'
-import { DW_EXECUTION_COPY } from '../src/lib/dwIntelligence/dwExecutionPresentation.js'
+import {
+  DW_EXECUTION_COPY, buildDwExecutionStatement,
+} from '../src/lib/dwIntelligence/dwExecutionPresentation.js'
+import { realReceipt, REAL_CLAIM } from './dwG8Fixtures.mjs'
+
+const issuedStatement = () =>
+  buildDwExecutionStatement({ receipt: realReceipt(), claim: REAL_CLAIM }).statement
 import {
   DW_INVESTIGATION_BOUNDS, DW_INVESTIGATION_SOURCE,
 } from '../src/lib/dwIntelligence/dwInvestigationInput.js'
@@ -147,6 +153,39 @@ test('LOCK the execution statement builder takes no free-form text', () => {
     assert.equal(signature.includes(forbidden), false,
       `buildDwExecutionStatement must not accept ${forbidden}`)
   }
+})
+
+test('LOCK no statement authenticates itself', () => {
+  // A seal, signature or checksum carried ON a statement is provenance theatre:
+  // the algorithm is public, so a forger recomputes it. Provenance comes from
+  // the receipt, at the boundary, every time.
+  const owner = read('src/lib/dwIntelligence/dwExecutionPresentation.js')
+  for (const forbidden of ['sealOf', 'seal:', 'signature', 'hmac', 'Hmac', 'createHash']) {
+    assert.equal(owner.includes(forbidden), false,
+      `dwExecutionPresentation must not carry ${forbidden}: a statement cannot prove its own origin`)
+  }
+  assert.equal(JSON.stringify(issuedStatement()).includes('seal'), false)
+})
+
+test('LOCK the guard DERIVES execution and never accepts a caller statement', () => {
+  const guardSource = read('src/lib/dwIntelligence/dwProactiveGrounding.js')
+  assert.ok(guardSource.includes('buildDwExecutionStatement({'),
+    'the guard must build the statement from the canonical receipt and claim')
+  assert.equal(/presentableExecution\.push/.test(guardSource), false,
+    'nothing may be pushed into the execution surface: it is derived, not collected')
+  assert.equal(guardSource.includes('verifyDwExecutionStatement'), false,
+    'a self-verifying statement must not be a trusted path again')
+})
+
+test('LOCK proving execution requires the receipt, not just the statement', () => {
+  const owner = read('src/lib/dwIntelligence/dwExecutionPresentation.js')
+  const signature = owner.slice(owner.indexOf('export function proveDwExecutionStatement('))
+  assert.ok(signature.startsWith(
+    'export function proveDwExecutionStatement({ statement = null, claim = null, receipt = null } = {})'),
+    'the provenance check must demand statement, claim AND receipt')
+  // And the statement-only inspector must not be named or documented as proof.
+  assert.ok(owner.includes('export function inspectDwExecutionStatement('))
+  assert.equal(/inspectDwExecutionStatement[^\n]*proves/i.test(owner), false)
 })
 
 test('LOCK the prose detector is declared defense-in-depth, not the boundary', () => {

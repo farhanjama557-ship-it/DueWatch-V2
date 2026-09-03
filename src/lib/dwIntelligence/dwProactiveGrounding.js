@@ -26,8 +26,8 @@
 import { ASK_DW_GROUNDING_ISSUE, enforceAskDwGrounding } from './askDwGroundingGuard.js'
 import {
   DW_PROVABLE_EXECUTION_ACTIONS,
+  buildDwExecutionStatement,
   receiptProvesExecution,
-  verifyDwExecutionStatement,
 } from './dwExecutionPresentation.js'
 
 // Re-exported, not redefined: the closed set of provable actions is owned by
@@ -401,14 +401,27 @@ export function enforceDwProactiveGrounding({
   const issues = []
   const add = (code, detail) => issues.push({ code, detail, severity: 'BLOCK' })
 
-  // The ONLY execution surface. A statement is admitted because it verifies
-  // against the receipt contract that issued it, not because it arrived here
-  // looking plausible. Anything that fails is refused and named.
-  const presentableExecution = []
-  for (const statement of safeArray(executionStatements)) {
-    if (verifyDwExecutionStatement(statement)) presentableExecution.push(statement)
-    else add(DW_PROACTIVE_ISSUE.EXECUTION_STATEMENT_NOT_RECEIPT_BACKED,
-      'An execution statement was supplied that no exact receipt licenses.')
+  // The ONLY execution surface, DERIVED here from the canonical receipt and
+  // claim. It is not accepted from a caller.
+  //
+  // The previous version took executionStatements and let each one verify
+  // itself. A statement cannot prove its own provenance: its shape, its owned
+  // copy, its derived key and its checksum are all public, so a fabricated
+  // object could satisfy every internal check without any execution having
+  // happened — and it did. Deriving the statement here makes the load-bearing
+  // chain receipt -> receiptProvesExecution -> buildDwExecutionStatement ->
+  // presentableExecution, with no detached link in it.
+  const derived = buildDwExecutionStatement({
+    receipt: executionReceipts, claim: executionClaim,
+  })
+  const presentableExecution = derived.issued ? [derived.statement] : []
+
+  // A caller-supplied statement is an assertion, not evidence — including a
+  // genuine one, which is just a caller re-presenting execution it did not
+  // prove here. Receipts are the only currency at this boundary.
+  if (safeArray(executionStatements).length > 0) {
+    add(DW_PROACTIVE_ISSUE.EXECUTION_STATEMENT_NOT_RECEIPT_BACKED,
+      'An execution statement was supplied directly. Execution is derived from the canonical receipt and claim, never accepted from a caller.')
   }
 
   // The shared claim checks, reused rather than reimplemented. The narrative is
@@ -565,9 +578,10 @@ export function enforceDwProactiveGrounding({
     kind: 'DW_PROACTIVE_GROUNDING_V0',
     blocked: issues.length > 0,
     issues: issues.map((issue) => freeze(issue)),
-    // Receipt-backed statements, in this repository's own words. A consumer
-    // renders completed execution from HERE and from nowhere else; narrative
-    // prose is never promoted into this list, however confident it sounds.
+    // Receipt-backed statements, in this repository's own words, built here
+    // from the canonical receipt. A consumer renders completed execution from
+    // HERE and from nowhere else; neither narrative prose nor a caller's own
+    // statement object is ever promoted into this list.
     presentableExecution: presentableExecution.map((statement) => freeze(statement)),
     // Retrieved text was read as a claim to be checked, never as a request to
     // be carried out. There is no path from narrative text to an operation.
@@ -579,6 +593,8 @@ export function enforceDwProactiveGrounding({
       retrievedContentIsData: true,
       // The ownership contract, stated in the output a consumer already reads.
       executionStatementOwner: 'RECEIPT',
+      executionDerivedAtThisBoundary: true,
+      callerStatementsTrusted: false,
       narrativeMayStateExecution: false,
       proseDetectionRole: DW_PROSE_DETECTION_ROLE,
     }),

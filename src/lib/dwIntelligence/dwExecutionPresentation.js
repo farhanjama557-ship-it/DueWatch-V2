@@ -35,6 +35,21 @@
  * any other sentence true. Everything else a founder is shown remains
  * ungoverned narrative that the consumer must not render as DueWatch's work.
  *
+ * A STATEMENT CANNOT PROVE ITS OWN PROVENANCE
+ *
+ * An earlier version of this module sealed each statement with a deterministic
+ * checksum and let a detached statement verify itself. That was wrong, and the
+ * comment defending it ("a forged object has to be a genuine one to pass") was
+ * false: the algorithm is public, so anyone can compute a matching seal for
+ * any content they like. A checksum proves content consistency; a derived key
+ * proves identity consistency; NEITHER proves that an execution receipt ever
+ * existed.
+ *
+ * So the seal is gone, and no statement authenticates itself. Proving
+ * execution requires the receipt, every time — either by building the
+ * statement here from the receipt, or by handing proveDwExecutionStatement the
+ * statement, the claim AND the receipt so the canonical check runs again.
+ *
  * WHAT THIS MODULE IS NOT
  *
  *   - It is not a runtime. Nothing here sends, schedules or persists, and no
@@ -151,30 +166,6 @@ export const DW_EXECUTION_REFUSAL = Object.freeze({
 })
 
 /**
- * A seal over the statement's own content.
- *
- * It is not a secret and it is not a signature: it stops a statement from
- * being EDITED after it was issued — model text swapped into `text`, an
- * identity swapped underneath a valid-looking object — because verification
- * recomputes it from the content and, separately, re-derives the idempotency
- * key from the identity. A forged object has to be a genuine one to pass, at
- * which point it is a genuine one.
- */
-function sealOf({ identity, idempotencyKey, clientId, text }) {
-  const material = JSON.stringify([
-    DW_EXECUTION_STATEMENT_KIND,
-    identity.userId, identity.invoiceId, identity.ruleId, identity.actionType,
-    idempotencyKey, clientId ?? null, text,
-  ])
-  let hash = 2166136261
-  for (let index = 0; index < material.length; index += 1) {
-    hash ^= material.charCodeAt(index)
-    hash = Math.imul(hash, 16777619)
-  }
-  return (hash >>> 0).toString(16).padStart(8, '0')
-}
-
-/**
  * Builds the one statement an exact receipt licenses, or refuses and says why.
  *
  * Note what is NOT a parameter: narrative, headline, model output, confidence,
@@ -211,8 +202,6 @@ export function buildDwExecutionStatement({ receipt = null, claim = null } = {})
     ruleId: String(claim.ruleId),
     actionType: action,
   }
-  const idempotencyKey = buildIdempotencyKey(identity)
-  const clientId = claim.clientId ?? null
 
   return freeze({
     issued: true,
@@ -221,10 +210,9 @@ export function buildDwExecutionStatement({ receipt = null, claim = null } = {})
       kind: DW_EXECUTION_STATEMENT_KIND,
       actionType: action,
       identity,
-      idempotencyKey,
-      clientId,
+      idempotencyKey: buildIdempotencyKey(identity),
+      clientId: claim.clientId ?? null,
       text,
-      seal: sealOf({ identity, idempotencyKey, clientId, text }),
       // Stated on the statement itself, so a consumer cannot read more into it.
       grants: {
         thisIdentityOnly: true,
@@ -236,51 +224,45 @@ export function buildDwExecutionStatement({ receipt = null, claim = null } = {})
 }
 
 /**
- * Why a statement failed verification, or null when it did not.
+ * Why a statement is not WELL FORMED, or null when it is.
+ *
+ * Read the name literally. This inspects shape and internal consistency, and
+ * that is all it can do: it never sees a receipt, so it can never establish
+ * that one exists. A statement passing here has NOT been shown to describe a
+ * real execution — use proveDwExecutionStatement for that.
  *
  * Each reason names ONE mechanism, so each mechanism can be shown to be
- * load-bearing on its own. A boolean cannot do that: with several checks
- * guarding the same forgery, removing any one of them leaves the others to
- * catch it, and a mutation that deletes a real control looks harmless.
- *
- * The order matters for the same reason — the seal is checked LAST, so a
- * forgery the earlier checks are supposed to catch is attributed to them.
+ * load-bearing on its own; a single boolean would let a mutation that deletes
+ * a real control hide behind whichever neighbour also caught the case.
  */
-export const DW_EXECUTION_VERIFY_FAILURE = Object.freeze({
+export const DW_EXECUTION_MALFORMED = Object.freeze({
   NOT_A_STATEMENT: 'NOT_A_STATEMENT',
   ACTION_NOT_PROVABLE: 'ACTION_NOT_PROVABLE',
   IDENTITY_ACTION_MISMATCH: 'IDENTITY_ACTION_MISMATCH',
+  COPY_NOT_OWNED: 'COPY_NOT_OWNED',
   GRANTS_OVERREACH: 'GRANTS_OVERREACH',
   KEY_NOT_DERIVED: 'KEY_NOT_DERIVED',
-  SEAL_MISMATCH: 'SEAL_MISMATCH',
 })
 
-/**
- * Inspects a statement and says precisely what is wrong with it.
- *
- * Note what is NOT checked here: that `text` equals the owned copy. The seal
- * covers the text, so a substituted sentence already fails as SEAL_MISMATCH,
- * and a second comparison would be a control no test could distinguish from
- * the first — decorative rather than load-bearing. The copy table itself is
- * locked structurally instead, against the provable-action set.
- */
 export function inspectDwExecutionStatement(statement) {
-  const fail = (failure) => freeze({ valid: false, failure })
-  if (!statement || typeof statement !== 'object') return fail(DW_EXECUTION_VERIFY_FAILURE.NOT_A_STATEMENT)
-  if (statement.kind !== DW_EXECUTION_STATEMENT_KIND) return fail(DW_EXECUTION_VERIFY_FAILURE.NOT_A_STATEMENT)
+  const fail = (failure) => freeze({ wellFormed: false, failure })
+  if (!statement || typeof statement !== 'object') return fail(DW_EXECUTION_MALFORMED.NOT_A_STATEMENT)
+  if (statement.kind !== DW_EXECUTION_STATEMENT_KIND) return fail(DW_EXECUTION_MALFORMED.NOT_A_STATEMENT)
 
-  const { actionType, identity, idempotencyKey, clientId = null, text, seal, grants } = statement
-  if (!identity || typeof identity !== 'object') return fail(DW_EXECUTION_VERIFY_FAILURE.NOT_A_STATEMENT)
+  const { actionType, identity, idempotencyKey, text, grants } = statement
+  if (!identity || typeof identity !== 'object') return fail(DW_EXECUTION_MALFORMED.NOT_A_STATEMENT)
   if (!DW_PROVABLE_EXECUTION_ACTIONS.includes(actionType)) {
-    return fail(DW_EXECUTION_VERIFY_FAILURE.ACTION_NOT_PROVABLE)
+    return fail(DW_EXECUTION_MALFORMED.ACTION_NOT_PROVABLE)
   }
-  if (identity.actionType !== actionType) return fail(DW_EXECUTION_VERIFY_FAILURE.IDENTITY_ACTION_MISMATCH)
+  if (identity.actionType !== actionType) return fail(DW_EXECUTION_MALFORMED.IDENTITY_ACTION_MISMATCH)
 
-  // Deliberately outside the seal, so this stays a control in its own right:
-  // a receipt licenses one statement, never standing authority.
+  // The repository owns the words DIRECTLY. This is a structural comparison
+  // against the owned table, not a checksum a caller could recompute.
+  if (text !== DW_EXECUTION_COPY[actionType]) return fail(DW_EXECUTION_MALFORMED.COPY_NOT_OWNED)
+
   if (!grants || grants.thisIdentityOnly !== true ||
       grants.standingAuthority !== false || grants.otherActions !== false) {
-    return fail(DW_EXECUTION_VERIFY_FAILURE.GRANTS_OVERREACH)
+    return fail(DW_EXECUTION_MALFORMED.GRANTS_OVERREACH)
   }
 
   const derived = buildIdempotencyKey({
@@ -290,22 +272,27 @@ export function inspectDwExecutionStatement(statement) {
     actionType: identity.actionType,
   })
   if (derived == null || derived !== idempotencyKey) {
-    return fail(DW_EXECUTION_VERIFY_FAILURE.KEY_NOT_DERIVED)
+    return fail(DW_EXECUTION_MALFORMED.KEY_NOT_DERIVED)
   }
-
-  if (seal !== sealOf({ identity, idempotencyKey, clientId, text })) {
-    return fail(DW_EXECUTION_VERIFY_FAILURE.SEAL_MISMATCH)
-  }
-  return freeze({ valid: true, failure: null })
+  return freeze({ wellFormed: true, failure: null })
 }
 
 /**
- * Whether a statement is one this module issued and nothing has edited since.
+ * Whether a statement describes an execution that actually happened.
  *
- * Consumers verify rather than trust: a statement arriving from anywhere —
- * another module, a cached payload, a model asked to "format the output" —
- * must still recompute to the same seal and the same derived key.
+ * This is the only honest way to ask that question of a statement someone else
+ * is holding, and it is why it demands the claim and the receipt: it re-runs
+ * the canonical receipt check rather than trusting anything carried inside the
+ * statement. Well-formedness alone proves nothing.
+ *
+ * There is no runtime today and nothing caches statements, so nothing needs
+ * this yet. It exists so that a future consumer has a correct path to reach
+ * for instead of inventing a self-authenticating one.
  */
-export function verifyDwExecutionStatement(statement) {
-  return inspectDwExecutionStatement(statement).valid === true
+export function proveDwExecutionStatement({ statement = null, claim = null, receipt = null } = {}) {
+  if (inspectDwExecutionStatement(statement).wellFormed !== true) return false
+  const rebuilt = buildDwExecutionStatement({ receipt, claim })
+  if (!rebuilt.issued) return false
+  // The statement must be the one this receipt and claim actually license.
+  return JSON.stringify(rebuilt.statement) === JSON.stringify(statement)
 }
