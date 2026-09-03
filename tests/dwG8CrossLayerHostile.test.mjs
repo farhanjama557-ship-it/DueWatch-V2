@@ -599,6 +599,88 @@ test('P17 one valid receipt does not blanket a second, unproven action sentence'
   assert.equal(detail.includes('DW sent the reminder'), false, 'the proven sentence must not be flagged')
 })
 
+test('P17 an ordinary modifier before the verb is not an escape, at any length', () => {
+  // Independent review: the gap budget and the determiner list were themselves
+  // the escape. "the" inside an adjunct is not a competing subject, and a
+  // longer adjunct does not make the claim less of a claim.
+  for (const headline of [
+    'DW, after the review, sent the reminder.',
+    'DW, after carefully reviewing the account today, sent the reminder.',
+    'DW, having reviewed the latest account history, emailed Atlas.',
+    'We, after checking the ledger and recent correspondence, contacted Atlas.',
+    'DW after the review sent the reminder.',
+  ]) {
+    const result = enforceDwProactiveGrounding({
+      narrative: { headline },
+      truthLock: truthLock(),
+      governance: governanceOf(),
+      executionReceipts: [],
+    })
+    assert.ok(codes(result).includes(DW_PROACTIVE_ISSUE.EXECUTION_WITHOUT_RECEIPT), headline)
+  }
+})
+
+test('P17 another subject\'s action is never attributed to DW', () => {
+  // Reporting what a customer did is not DW claiming an execution. Demanding a
+  // DW receipt for it would turn an honest report into a blocked one, and — if
+  // a receipt happened to exist — would license the sentence as DW's work.
+  for (const headline of [
+    'We confirmed Atlas emailed us.',
+    'I heard Atlas called us.',
+    'DW noted Atlas emailed the billing address.',
+    'We saw Atlas contact support.',
+    'We know the client emailed the billing address.',
+    'DW investigated the account, and the client emailed us.',
+  ]) {
+    const result = enforceDwProactiveGrounding({
+      narrative: { headline },
+      truthLock: truthLock(),
+      governance: governanceOf(),
+      executionReceipts: [],
+    })
+    assert.equal(codes(result).includes(DW_PROACTIVE_ISSUE.EXECUTION_WITHOUT_RECEIPT), false, headline)
+  }
+})
+
+test('P17 a shared subject still carries across a coordinated verb phrase', () => {
+  // "DW investigated the account and waived the fee" has one subject, DW, for
+  // both verbs. The determiner in the first verb's object is not a new subject.
+  const result = enforceDwProactiveGrounding({
+    narrative: { headline: 'DW investigated the account and waived the fee.' },
+    truthLock: truthLock(),
+    governance: governanceOf(),
+    executionReceipts: [],
+  })
+  assert.ok(codes(result).includes(DW_PROACTIVE_ISSUE.EXECUTION_WITHOUT_RECEIPT))
+})
+
+test('P17 attribution table — subject position decides, not distance', () => {
+  // One table, both directions, so a future change to the walk cannot fix one
+  // direction by breaking the other.
+  const expectations = [
+    [true, 'DW sent the reminder.'],
+    [true, 'Yesterday DW sent the reminder.'],
+    [true, 'DW wrote off the invoice.'],
+    [true, 'DW quietly, and without fuss, emailed Atlas.'],
+    [true, 'DW, after carefully reviewing the account history in detail, sent the reminder.'],
+    [false, 'Atlas emailed us.'],
+    [false, 'We saw that they contacted support.'],
+    [false, "DW hasn't emailed anyone."],
+    [false, 'We confirmed payment was applied.'],
+  ]
+  for (const [expected, headline] of expectations) {
+    const result = enforceDwProactiveGrounding({
+      narrative: { headline },
+      truthLock: truthLock(),
+      governance: governanceOf(),
+      executionReceipts: [],
+    })
+    assert.equal(
+      codes(result).includes(DW_PROACTIVE_ISSUE.EXECUTION_WITHOUT_RECEIPT),
+      expected, headline)
+  }
+})
+
 test('P17 completed-action language is not escapable by adverbs, auxiliaries or asides', () => {
   // Each of these claims an execution. None of them may pass without a receipt
   // merely because of what sits between the actor and the verb.
@@ -628,6 +710,10 @@ test('P17 hypothetical, future and denied language is NOT read as a completed ac
     'DW has not sent anything yet.',
     'DW would have sent this if a grant existed.',
     'DW is waiting on your decision.',
+    'DW plans to send the reminder.',
+    'DW is going to send the reminder.',
+    'DW has never contacted this client.',
+    'DW was contacted by Atlas.',
   ]) {
     const result = enforceDwProactiveGrounding({
       narrative: { headline },

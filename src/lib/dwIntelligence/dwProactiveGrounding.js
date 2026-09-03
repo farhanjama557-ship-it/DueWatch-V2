@@ -67,49 +67,71 @@ function safeArray(value) {
 }
 
 /**
- * Completed-action language. Present tense intent ("DW will send") is not here:
- * this is about output that claims something ALREADY HAPPENED.
+ * Completed-action language — WHO the sentence says did it.
  *
- * The actor and the verb are matched as two anchors with a GAP between them
- * rather than as one fused phrase. The fused form required the verb to follow
- * the actor immediately, give or take one of four hard-coded fillers, so
- * ordinary English walked straight past it: "DW has already emailed Atlas",
- * "DW also waived the late fee", "DW went ahead and sent it". Every one of
- * those claims an execution, and every one of them was invisible.
+ * Present-tense intent ("DW will send") is not here: this is about output that
+ * claims something ALREADY HAPPENED, and that DW is the one it happened by.
  *
- * Widening the filler list would only move the boundary to the next adverb.
- * The gap is therefore judged by CLOSED grammatical classes instead:
+ * Two earlier shapes both failed, in opposite directions:
  *
- *   - it must stay inside one clause (no sentence or clause punctuation);
- *   - it must be short, because a real auxiliary/adverb run is short;
- *   - it must contain no modality, futurity, intent or negation, since those
- *     make the verb hypothetical or denied rather than done;
- *   - it must introduce no NEW subject, since "I know the client emailed us"
- *     is a claim about the client, not about DW.
+ *   1. One fused actor+verb phrase with a handful of hard-coded fillers. Any
+ *      ordinary modifier walked straight through it ("DW has already emailed
+ *      Atlas", "DW also waived the late fee").
+ *   2. Actor and verb as anchors with a word-budget gap and a determiner
+ *      blacklist. That moved the boundary rather than removing it: "DW, after
+ *      the review, sent the reminder" escaped because "the" was in the list,
+ *      a longer adjunct escaped because of the budget, and "We confirmed Atlas
+ *      emailed us" was ATTRIBUTED TO DW because Atlas was not in the list.
  *
- * Detection stays deliberately broad — a sentence that trips it merely has to
- * produce a receipt, and a genuine execution has one. Proof stays narrow.
+ * Both were the same mistake: measuring the DISTANCE between an actor and a
+ * verb, when the question is which noun phrase is that verb's SUBJECT.
+ *
+ * So attribution is now resolved by walking LEFT from the verb to the nearest
+ * subject position, exactly as English word order puts it, and reading who is
+ * standing there. Nothing is counted and no filler is enumerated; the walk
+ * classifies tokens by CLOSED grammatical classes only and skips everything
+ * else, however long. It stops at the first of:
+ *
+ *   - an actor (dw / duewatch / i / we)      → DW claimed the execution;
+ *   - another subject head                   → someone else's action;
+ *   - modality, futurity, intent or negation → it did not happen;
+ *   - a passive `be` auxiliary               → the subject is the patient, so
+ *                                              the sentence names no actor;
+ *   - a clause boundary or the sentence start → no actor at all.
+ *
+ * Three structural rules make the walk safe, and none of them is a word list:
+ *
+ *   - A comma-delimited aside cannot contain the subject of the verb that
+ *     follows it, so such a span is stepped over WHOLE. That is what makes an
+ *     adjunct's length and its internal determiners irrelevant.
+ *   - A noun phrase governed by a preposition is that preposition's object,
+ *     never the following verb's subject, so it is stepped over too.
+ *   - A subject head reached only AFTER crossing a coordinator belongs to the
+ *     coordinated verb phrase's own clause, not to this verb, whose subject is
+ *     shared from before it. Reaching a subject head BEFORE any coordinator
+ *     means it is this verb's subject.
+ *
+ * KNOWN LIMIT, stated rather than hidden: this is a token walk, not a parser.
+ * A comma-less participial adjunct whose object sits directly against the verb
+ * ("DW after reviewing the account sent the reminder") reads as a foreign
+ * subject, and a foreign subject that is neither capitalised nor
+ * determiner-headed ("we confirmed atlas emailed us") reads as DW. Detection
+ * stays deliberately broad and PROOF stays narrow and unchanged, so an
+ * over-reading costs a receipt the genuine case already has.
  */
-const COMPLETED_ACTION_VERB =
-  '(?:sent|emailed|texted|messaged|contacted|called|chased|nudged|reminded' +
-  '|escalated|scheduled|queued|dispatched|delivered|completed|finished' +
-  '|applied|charged|waived|settled|refunded|wrote\\s+off|written\\s+off)'
 
-const COMPLETED_ACTOR = '(?:dw|duewatch|i|we)'
+/** Verbs that assert a completed action. Past forms only. */
+const COMPLETED_ACTION_VERBS = new Set([
+  'sent', 'emailed', 'texted', 'messaged', 'contacted', 'called', 'chased',
+  'nudged', 'reminded', 'escalated', 'scheduled', 'queued', 'dispatched',
+  'delivered', 'completed', 'finished', 'applied', 'charged', 'waived',
+  'settled', 'refunded',
+])
 
-/**
- * Actor … verb within one clause. The gap is validated separately.
- *
- * A comma is NOT a boundary. Treating it as one made a parenthetical aside an
- * escape hatch — "DW, as agreed, sent the reminder" claims an execution just
- * as plainly as "DW sent the reminder" does. An aside stays inside the clause,
- * and its words are counted against the gap budget like any others.
- */
-const ACTOR_THEN_ACTION = new RegExp(
-  `\\b${COMPLETED_ACTOR}\\b([^.!?;:]*?)\\b${COMPLETED_ACTION_VERB}\\b`, 'gi')
+/** "wrote off" / "written off": completed only with the particle. */
+const COMPLETED_ACTION_PARTICLE_VERBS = new Set(['wrote', 'written'])
 
-/** The gap between actor and verb may be at most this many words. */
-const COMPLETED_ACTION_GAP_WORDS = 4
+const COMPLETED_ACTORS = new Set(['dw', 'duewatch', 'i', 'we'])
 
 /** Modality, futurity, intent and negation: the verb did not happen. */
 const NOT_YET_DONE = new Set([
@@ -122,31 +144,126 @@ const NOT_YET_DONE = new Set([
   'hope', 'hopes', 'expect', 'expects',
 ])
 
-/** Determiners and pronouns: whatever follows belongs to a different subject. */
-const NEW_SUBJECT = new Set([
-  'the', 'a', 'an', 'this', 'that', 'these', 'those',
-  'their', 'his', 'her', 'its', 'our', 'your', 'my',
-  'they', 'he', 'she', 'it', 'you', 'someone', 'somebody', 'everyone', 'nobody',
+/**
+ * A `be` auxiliary directly governing the participle makes the clause passive:
+ * its subject is what the action was done TO. "DW was contacted by Atlas" is
+ * not DW executing anything, and an agentless "the reminder was sent" names no
+ * actor to hold to a receipt. Perfect `have` is active and keeps the walk going.
+ */
+const PASSIVE_BE = new Set(['is', 'are', 'was', 'were', 'be', 'been', 'being'])
+const PERFECT_HAVE = new Set(['has', 'have', 'had'])
+
+const COORDINATORS = new Set(['and', 'or', 'nor', 'but', 'then', 'plus'])
+
+/** Prepositions: a closed class. Their objects are never the next verb's subject. */
+const PREPOSITIONS = new Set([
+  'after', 'before', 'during', 'since', 'until', 'till', 'on', 'in', 'at',
+  'to', 'from', 'with', 'without', 'by', 'for', 'of', 'about', 'under',
+  'over', 'per', 'via', 'through', 'throughout', 'regarding', 'upon',
+  'following', 'despite', 'including', 'among', 'between', 'across', 'into',
+  'onto', 'against', 'toward', 'towards', 'within', 'behind', 'beside', 'near',
 ])
 
-function gapAllows(gap) {
-  const words = String(gap || '').trim().split(/\s+/).filter(Boolean)
-  if (words.length > COMPLETED_ACTION_GAP_WORDS) return false
-  return words.every((raw) => {
-    const word = raw.toLowerCase().replace(/[^a-z']/g, '')
-    if (!word) return true
-    // Any contraction of a negated auxiliary ("hasn't", "didn't", "won't").
-    if (word.endsWith("n't")) return false
-    return !NOT_YET_DONE.has(word) && !NEW_SUBJECT.has(word)
-  })
+/** Determiners and possessives: a closed class that heads a noun phrase. */
+const DETERMINERS = new Set([
+  'the', 'a', 'an', 'this', 'that', 'these', 'those',
+  'my', 'your', 'his', 'her', 'its', 'our', 'their',
+  'each', 'every', 'any', 'some', 'another', 'both', 'either', 'neither',
+])
+
+/** Third-person pronouns: a closed class that can stand as a subject. */
+const THIRD_PERSON = new Set([
+  'he', 'she', 'it', 'they', 'him', 'them', 'someone', 'somebody',
+  'everyone', 'everybody', 'anyone', 'nobody', 'who', 'whoever',
+])
+
+/** Words and clause punctuation, in order, with their positions. */
+function tokenize(sentence) {
+  return [...String(sentence || '').matchAll(/[A-Za-z][A-Za-z'’]*|[,;:]/g)]
+    .map((match) => match[0])
 }
 
-/** Whether a sentence claims DW already performed an action. */
+/** Lowercased, apostrophes kept so a negated contraction stays visible. */
+function normalize(token) {
+  return token.toLowerCase().replace(/[’]/g, "'").replace(/[^a-z']/g, '')
+}
+
+/** "DW's" is still DW; "Atlas's" is still Atlas. */
+function possessiveStem(word) {
+  return word.endsWith("'s") ? word.slice(0, -2) : word
+}
+
+/** The comma that opens the aside closed by the comma at `index`, if any. */
+function openingComma(tokens, index) {
+  for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
+    if (tokens[cursor] === ';' || tokens[cursor] === ':') return null
+    if (tokens[cursor] === ',') return cursor
+  }
+  return null
+}
+
+const ATTRIBUTION = Object.freeze({
+  DW: 'DW', FOREIGN: 'FOREIGN', NOT_COMPLETED: 'NOT_COMPLETED', NONE: 'NONE',
+})
+
+/**
+ * Who the completed verb at `verbIndex` belongs to.
+ *
+ * This is the whole attribution rule. It reads left, token by token, and
+ * returns at the first token that answers the question.
+ */
+function attributionOf(tokens, verbIndex) {
+  let index = verbIndex - 1
+  let crossedCoordinator = false
+
+  while (index >= 0) {
+    const token = tokens[index]
+
+    if (token === ';' || token === ':') return ATTRIBUTION.NONE
+    if (token === ',') {
+      // Step over the whole aside: its contents cannot be this verb's subject.
+      const opening = openingComma(tokens, index)
+      index = opening == null ? index - 1 : opening - 1
+      continue
+    }
+
+    const word = normalize(token)
+    if (!word) { index -= 1; continue }
+
+    if (NOT_YET_DONE.has(word) || word.endsWith("n't")) return ATTRIBUTION.NOT_COMPLETED
+    if (PASSIVE_BE.has(word)) return ATTRIBUTION.NOT_COMPLETED
+    if (PERFECT_HAVE.has(word)) { index -= 1; continue }
+    if (COORDINATORS.has(word)) { crossedCoordinator = true; index -= 1; continue }
+
+    const stem = possessiveStem(word)
+    if (COMPLETED_ACTORS.has(stem)) return ATTRIBUTION.DW
+
+    const sentenceInitial = index === 0
+    const properNoun = !sentenceInitial && /^[A-Z]/.test(token)
+    if (DETERMINERS.has(stem) || THIRD_PERSON.has(stem) || properNoun) {
+      // Governed by a preposition: an object, not a subject.
+      const governor = index > 0 ? normalize(tokens[index - 1]) : ''
+      if (PREPOSITIONS.has(governor)) { index -= 1; continue }
+      // Reached only after a coordinator: it belongs to the coordinated verb
+      // phrase's clause, and this verb's subject is shared from before it.
+      if (crossedCoordinator) { index -= 1; continue }
+      return ATTRIBUTION.FOREIGN
+    }
+
+    index -= 1
+  }
+  return ATTRIBUTION.NONE
+}
+
+/** Whether a sentence claims DW itself already performed an action. */
 function claimsCompletedAction(sentence) {
-  const text = String(sentence || '')
-  ACTOR_THEN_ACTION.lastIndex = 0
-  for (const match of text.matchAll(ACTOR_THEN_ACTION)) {
-    if (gapAllows(match[1])) return true
+  const tokens = tokenize(sentence)
+  for (let index = 0; index < tokens.length; index += 1) {
+    const word = normalize(tokens[index])
+    const isVerb = COMPLETED_ACTION_VERBS.has(word) ||
+      (COMPLETED_ACTION_PARTICLE_VERBS.has(word) && normalize(tokens[index + 1] ?? '') === 'off')
+    if (!isVerb) continue
+    if (attributionOf(tokens, index) === ATTRIBUTION.DW) return true
   }
   return false
 }
