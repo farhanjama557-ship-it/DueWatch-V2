@@ -69,13 +69,87 @@ function safeArray(value) {
 /**
  * Completed-action language. Present tense intent ("DW will send") is not here:
  * this is about output that claims something ALREADY HAPPENED.
+ *
+ * The actor and the verb are matched as two anchors with a GAP between them
+ * rather than as one fused phrase. The fused form required the verb to follow
+ * the actor immediately, give or take one of four hard-coded fillers, so
+ * ordinary English walked straight past it: "DW has already emailed Atlas",
+ * "DW also waived the late fee", "DW went ahead and sent it". Every one of
+ * those claims an execution, and every one of them was invisible.
+ *
+ * Widening the filler list would only move the boundary to the next adverb.
+ * The gap is therefore judged by CLOSED grammatical classes instead:
+ *
+ *   - it must stay inside one clause (no sentence or clause punctuation);
+ *   - it must be short, because a real auxiliary/adverb run is short;
+ *   - it must contain no modality, futurity, intent or negation, since those
+ *     make the verb hypothetical or denied rather than done;
+ *   - it must introduce no NEW subject, since "I know the client emailed us"
+ *     is a claim about the client, not about DW.
+ *
+ * Detection stays deliberately broad — a sentence that trips it merely has to
+ * produce a receipt, and a genuine execution has one. Proof stays narrow.
  */
-const COMPLETED_ACTION = new RegExp([
-  '\\b(?:dw|duewatch|i|we)\\s+(?:just\\s+|already\\s+|has\\s+|have\\s+)?',
-  '(?:sent|emailed|texted|messaged|contacted|called|chased|nudged|reminded',
-  '|escalated|scheduled|queued|dispatched|delivered|completed|finished',
-  '|applied|charged|waived|settled|refunded|wrote\\s+off|written\\s+off)\\b',
-].join(''), 'i')
+const COMPLETED_ACTION_VERB =
+  '(?:sent|emailed|texted|messaged|contacted|called|chased|nudged|reminded' +
+  '|escalated|scheduled|queued|dispatched|delivered|completed|finished' +
+  '|applied|charged|waived|settled|refunded|wrote\\s+off|written\\s+off)'
+
+const COMPLETED_ACTOR = '(?:dw|duewatch|i|we)'
+
+/**
+ * Actor … verb within one clause. The gap is validated separately.
+ *
+ * A comma is NOT a boundary. Treating it as one made a parenthetical aside an
+ * escape hatch — "DW, as agreed, sent the reminder" claims an execution just
+ * as plainly as "DW sent the reminder" does. An aside stays inside the clause,
+ * and its words are counted against the gap budget like any others.
+ */
+const ACTOR_THEN_ACTION = new RegExp(
+  `\\b${COMPLETED_ACTOR}\\b([^.!?;:]*?)\\b${COMPLETED_ACTION_VERB}\\b`, 'gi')
+
+/** The gap between actor and verb may be at most this many words. */
+const COMPLETED_ACTION_GAP_WORDS = 4
+
+/** Modality, futurity, intent and negation: the verb did not happen. */
+const NOT_YET_DONE = new Set([
+  'will', 'would', 'shall', 'should', 'can', 'could', 'may', 'might', 'must',
+  'cannot', 'if', 'unless', 'whether', 'never', 'not', 'no', 'nor',
+  'plan', 'plans', 'planning', 'intend', 'intends', 'intending',
+  'going', 'about', 'want', 'wants', 'need', 'needs',
+  'try', 'tries', 'trying', 'attempt', 'attempts', 'attempting',
+  'propose', 'proposes', 'recommend', 'recommends', 'suggest', 'suggests',
+  'hope', 'hopes', 'expect', 'expects',
+])
+
+/** Determiners and pronouns: whatever follows belongs to a different subject. */
+const NEW_SUBJECT = new Set([
+  'the', 'a', 'an', 'this', 'that', 'these', 'those',
+  'their', 'his', 'her', 'its', 'our', 'your', 'my',
+  'they', 'he', 'she', 'it', 'you', 'someone', 'somebody', 'everyone', 'nobody',
+])
+
+function gapAllows(gap) {
+  const words = String(gap || '').trim().split(/\s+/).filter(Boolean)
+  if (words.length > COMPLETED_ACTION_GAP_WORDS) return false
+  return words.every((raw) => {
+    const word = raw.toLowerCase().replace(/[^a-z']/g, '')
+    if (!word) return true
+    // Any contraction of a negated auxiliary ("hasn't", "didn't", "won't").
+    if (word.endsWith("n't")) return false
+    return !NOT_YET_DONE.has(word) && !NEW_SUBJECT.has(word)
+  })
+}
+
+/** Whether a sentence claims DW already performed an action. */
+function claimsCompletedAction(sentence) {
+  const text = String(sentence || '')
+  ACTOR_THEN_ACTION.lastIndex = 0
+  for (const match of text.matchAll(ACTOR_THEN_ACTION)) {
+    if (gapAllows(match[1])) return true
+  }
+  return false
+}
 
 /**
  * A payment assertion in proactive prose. The shared guard covers the Ask DW
@@ -261,7 +335,7 @@ export function enforceDwProactiveGrounding({
   // Each completed-action sentence is judged on ITS OWN action against the
   // structured claim. One valid receipt never blankets the narrative.
   const proven = (sentence) => {
-    if (!COMPLETED_ACTION.test(sentence)) return false
+    if (!claimsCompletedAction(sentence)) return false
     const actions = assertedActions(sentence)
     if (actions.length === 0) return false
     return actions.every((action) => receiptProves({
@@ -271,7 +345,7 @@ export function enforceDwProactiveGrounding({
   const unprovenExecution = []
   for (const part of narrativeParts(narrative)) {
     for (const sentence of sentencesOf(part)) {
-      if (COMPLETED_ACTION.test(sentence) && !proven(sentence)) unprovenExecution.push(sentence)
+      if (claimsCompletedAction(sentence) && !proven(sentence)) unprovenExecution.push(sentence)
     }
   }
   // A sentence a receipt already proves is not re-judged as a permission claim;
