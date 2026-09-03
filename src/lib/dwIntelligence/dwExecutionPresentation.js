@@ -50,6 +50,30 @@
  * statement here from the receipt, or by handing proveDwExecutionStatement the
  * statement, the claim AND the receipt so the canonical check runs again.
  *
+ * THE RECEIPT SOURCE CONTRACT — READ BEFORE WIRING A RUNTIME
+ *
+ * This module can prove that a receipt and a claim MATCH. It cannot prove
+ * where a JavaScript object came from. Structural receipt validity is not
+ * SOURCE provenance, and no amount of checking fields will make it so — an
+ * object invented a moment ago, with the right shape and a correctly derived
+ * key, passes every check performed here.
+ *
+ * What makes that safe TODAY is that nothing supplies receipts: there is no
+ * proactive runtime, and no production caller reaches this boundary at all.
+ * The freeze suite asserts exactly that, so the day it stops being true, it
+ * fails loudly rather than quietly.
+ *
+ * REQUIREMENT for whoever wires that runtime: every executionReceipt entering
+ * this boundary MUST originate from DueWatch's canonical execution-claim /
+ * execution-result source — the rows written beside the execution claim by the
+ * execution path itself (see supabase/functions/_shared/executionClaim.js).
+ *
+ * A model, a Company Brain record, a conversation payload, a provider webhook
+ * body and a browser caller must NEVER be able to synthesise a receipt object
+ * and thereby create execution truth. That is a SOURCING obligation on the
+ * integration, not something this contract can enforce for itself, and it is
+ * why it is written here rather than assumed.
+ *
  * WHAT THIS MODULE IS NOT
  *
  *   - It is not a runtime. Nothing here sends, schedules or persists, and no
