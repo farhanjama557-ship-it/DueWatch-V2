@@ -245,10 +245,9 @@ test('G8-P2c malformed execution-history shapes fail closed in BOTH lanes', asyn
 // ── governance envelope ──────────────────────────────────────────────────────
 
 import { buildAskDwCompanyBrainContext } from '../src/lib/dwIntelligence/askDwCompanyBrainContext.js'
-import {
-  buildDwGovernanceContext,
-  resolveCurrentGovernedGrantIds,
-} from '../src/lib/dwIntelligence/dwGovernanceContext.js'
+import { buildDwGovernanceContext } from '../src/lib/dwIntelligence/dwGovernanceContext.js'
+import * as governanceModule from '../src/lib/dwIntelligence/dwGovernanceContext.js'
+import { resolveAskDwAuthority } from '../src/lib/dwIntelligence/askDwAuthorityRenderer.js'
 
 const AS_OF = '2026-08-24T12:00:00Z'
 
@@ -296,7 +295,7 @@ test('G8-P3 both lanes see the same governance envelope for one tenant', () => {
   // No Brain supplied is a STATED absence, never an empty-but-fine envelope.
   const proactive = proactiveLane([evidenceRow(1)])
   assert.equal(proactive.governance.companyBrain.available, false)
-  assert.equal(proactive.governance.freshness.complete, false)
+  assert.equal(proactive.governance.sourceState.companyBrainAvailable, false)
   assert.deepEqual(proactive.governance.authority.currentGrantIds, [],
     'an unreadable Brain must never yield invented grant references')
 
@@ -315,53 +314,118 @@ test('G8-P3 both lanes see the same governance envelope for one tenant', () => {
 test('G8-P4 the governance envelope is reference-only', () => {
   const governance = governanceFor(readModel())
   const serialized = JSON.stringify(governance)
-  // Review keys, not reviewed values.
-  assert.ok(serialized.includes('u-1'))
-  assert.ok(!serialized.includes('graceDays'), 'no reviewed policy value may be copied')
-  // Grant identity, not grant terms.
-  assert.ok(serialized.includes('g-1'))
-  for (const leaked of ['SEND_REMINDER', 'approvalRequirement', 'effectiveWindow', 'EMAIL']) {
-    assert.ok(!serialized.includes(leaked), `grant term ${leaked} must not be copied`)
+
+  // Present: identities and observed timestamps.
+  assert.ok(serialized.includes('u-1'), 'review keys are referenced')
+  assert.ok(serialized.includes('g-1'), 'grant ids are referenced')
+  assert.ok(serialized.includes(AS_OF), 'observed timestamps are carried')
+  assert.match(governance.authority.fingerprint, /^[0-9a-f]{8}$/)
+
+  // Absent: every reviewed value, every grant term, every derived summary.
+  for (const leaked of [
+    'graceDays',                                    // reviewed policy value
+    'SEND_REMINDER', 'EMAIL',                       // grant action and channel
+    'approvalRequirement', 'effectiveWindow',       // grant terms
+    'limits', 'conditions',
+    'noStandingAuthorityConfigured',                // derived conclusion
+    'revokedCount', 'staleCount',                   // snapshot summaries
+    'complete',                                     // invented completeness
+  ]) {
+    assert.ok(!serialized.includes(leaked), `${leaked} must not appear in a governance envelope`)
   }
   assert.ok(Object.isFrozen(governance))
 })
 
-test('G8-P5 the envelope owns no authority and exposes no execution field', () => {
+test('G8-P5 the envelope owns no authority verdict and no derived conclusion', () => {
   const governance = governanceFor(readModel())
   const serialized = JSON.stringify(governance)
   for (const forbidden of [
     'canExecute', 'canActAutomatically', 'authorityGranted', 'executeNow',
     'governing', 'authorized', 'permitted',
+    // A negative conclusion is still a conclusion, and goes stale the same way.
+    'noStandingAuthorityConfigured',
   ]) {
     assert.ok(!serialized.includes(forbidden), `${forbidden} must not appear in a governance envelope`)
   }
   assert.equal(governance.governs, false)
   assert.equal(governance.authorityMustBeReEvaluatedAtUse, true)
+
+  // The authority band is identity only: exactly three keys, no more.
+  assert.deepEqual(
+    Object.keys(governance.authority).sort(),
+    ['currentGrantIds', 'evaluatedAt', 'fingerprint'],
+  )
+
+  // And the module exposes no helper that could interpret a grant.
+  assert.deepEqual(Object.keys(governanceModule).sort(), ['buildDwGovernanceContext'],
+    'the governance module must not offer an authority evaluator')
 })
 
-test('G8-P6 revocation and staleness invalidate governance references', () => {
-  const governance = governanceFor(readModel())
-  assert.deepEqual(governance.authority.currentGrantIds, ['g-1'])
+test('G8-P6 a stale governance reference cannot govern after revocation', () => {
+  // T1 — the envelope references the grant that existed when it was built.
+  const atT1 = governanceFor(readModel())
+  assert.deepEqual(atT1.authority.currentGrantIds, ['g-1'])
+  const fingerprintT1 = atT1.authority.fingerprint
 
-  // The same envelope, re-resolved against a projection where the grant is gone.
-  assert.deepEqual(
-    resolveCurrentGovernedGrantIds({ governance, authorityProjection: { currentGrants: [] } }),
-    [], 'a grant absent from the current projection must stop resolving')
+  // T2 — G5/G6 revoke it. A NEW governance read no longer references it, and
+  // the fingerprint changes, so the two envelopes are visibly not the same
+  // state. Nothing in this module decided that; it simply read what is there.
+  const atT2 = governanceFor(readModel({
+    grants: [],
+    revoked: [{ id: 'g-1', revokedAt: '2026-08-25T00:00:00Z' }],
+  }))
+  assert.deepEqual(atT2.authority.currentGrantIds, [],
+    'a revoked grant is absent from a fresh governance read')
+  assert.notEqual(atT2.authority.fingerprint, fingerprintT1)
 
-  // Present but revoked resolves to nothing too: status is read now, not cached.
-  assert.deepEqual(
-    resolveCurrentGovernedGrantIds({
-      governance,
-      authorityProjection: { currentGrants: [{ grantId: 'g-1', status: 'REVOKED' }] },
-    }),
-    [], 'a revoked grant must stop resolving')
+  // The T1 envelope still holds the id — and that is all it holds. It carries
+  // no status, no window, no conditions and no verdict, so nothing in it can
+  // authorize anything on its own.
+  assert.deepEqual(atT1.authority.currentGrantIds, ['g-1'])
+  assert.deepEqual(Object.keys(atT1.authority).sort(),
+    ['currentGrantIds', 'evaluatedAt', 'fingerprint'])
+  assert.equal(atT1.governs, false)
+  assert.equal(atT1.authorityMustBeReEvaluatedAtUse, true)
 
-  assert.deepEqual(
-    resolveCurrentGovernedGrantIds({
-      governance,
-      authorityProjection: { currentGrants: [{ grantId: 'g-1', status: 'GRANTED' }] },
-    }),
-    ['g-1'], 'a still-granted reference resolves')
+  // Real authority use still runs the existing fresh G5 path, which reads the
+  // CURRENT projection and refuses — the envelope is not consulted for it.
+  const afterRevocation = resolveAskDwAuthority({
+    authorityProjection: { evaluatedAt: '2026-08-25T00:00:00Z', currentGrants: [] },
+    request: { canonicalAction: 'SEND_REMINDER', scopeType: 'CLIENT', clientId: CLIENT.id, channel: 'EMAIL' },
+    evaluatedAt: '2026-08-25T00:00:00Z',
+  })
+  assert.equal(afterRevocation.governing, false,
+    'authority after revocation is decided by G5 on the current projection')
+})
+
+test('G8-P6b an available Company Brain never implies completeness or freshness', () => {
+  // A readable Brain with old timestamps and revoked support must not present
+  // itself as complete or fresh. The envelope states what it observed and
+  // stops there.
+  const stale = governanceFor({
+    ...readModel(),
+    generatedAt: '2020-01-01T00:00:00Z',
+    items: [{
+      reviewKey: 'u-1', category: 'POLICY', itemType: 'UNDERSTANDING', subject: 'late fees',
+      scope: { level: 'COMPANY' }, clientId: null, reviewStatus: 'APPROVED',
+      conflictStatus: 'NONE', changedSinceReview: true, supportingSourceRevoked: true,
+      why: 'founder stated', evidence: [], proposedValue: { graceDays: 5 },
+    }],
+  })
+  assert.equal(stale.companyBrain.available, true)
+  assert.equal(stale.sourceState.companyBrainAvailable, true)
+  assert.equal(stale.sourceState.companyBrainGeneratedAt, '2020-01-01T00:00:00Z')
+
+  // No completeness or freshness conclusion exists to be wrong.
+  assert.equal(stale.complete, undefined)
+  assert.equal(stale.fresh, undefined)
+  assert.equal(stale.sourceState.complete, undefined)
+  assert.equal(stale.sourceState.fresh, undefined)
+  assert.ok(!JSON.stringify(stale).includes('complete'))
+
+  // The revoked and changed support is surfaced as references, not resolved.
+  assert.deepEqual(stale.companyBrain.supportingSourceRevokedRefs, ['u-1'])
+  assert.deepEqual(stale.companyBrain.changedSinceReviewRefs, ['u-1'])
 })
 
 test('G8-P8 tenant isolation holds identically in both lanes', async () => {
@@ -473,4 +537,32 @@ test('G8-P8b admission never converts a governed BLOCKED outcome into a throw', 
   })
   assert.equal(mismatched.state, 'BLOCKED')
   assert.equal(mismatched.execution.outcome, 'BLOCKED_TENANT_SCOPE')
+})
+
+test('G8-P2d malformed input is refused before any engine output exists', () => {
+  // evaluateNextActionAuthority runs BEFORE shared admission validates the
+  // execution-history shape. That ordering is acceptable only because the
+  // authority evaluation is pure and non-executing, and because admission
+  // still refuses before runPhase2BWorkflow produces anything. Both halves of
+  // that assumption are asserted here rather than assumed.
+  let workflowOutput = null
+  assert.throws(
+    () => {
+      workflowOutput = evaluatePhase2BInvoice({
+        userId: TENANT, invoice: { ...INVOICE }, client: { ...CLIENT }, rules: [],
+        autopilotSettings: { id: 's-1', user_id: TENANT, enabled: false, approval_required: true },
+        handledKeys: ['not-a-set'], pendingInvoiceIds: new Set(),
+        events: [], evidence: [], now: NOW,
+      })
+    },
+    /execution history/i,
+  )
+  assert.equal(workflowOutput, null, 'no engine result may be produced from malformed input')
+
+  // The pre-admission authority evaluation is pure: nothing is executed and no
+  // canonical state is touched by the refused call.
+  const invoiceAfter = { ...INVOICE }
+  assert.equal(invoiceAfter.paid, false)
+  assert.equal(invoiceAfter.amount_paid, 0)
+  assert.equal(invoiceAfter.last_reminder, null)
 })

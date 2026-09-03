@@ -16,14 +16,21 @@
  *     not inherit them.
  *   - It is not a truth owner. The Phase 2B engine still owns the financial
  *     and intelligence proof; G5 still owns authority; G6 still owns review.
- *   - It is not an authority. The envelope carries REFERENCES and freshness
- *     metadata only — grant ids, review keys, conflict ids, timestamps. There
- *     is no canExecute field, no standing-authority verdict, no copied policy
- *     value and no cached governing decision, so a stale envelope has nothing
- *     with which to govern a later execution.
+ *   - It is not an authority, and it holds no CONCLUSIONS. The envelope
+ *     carries identity references and observed timestamps only — grant ids,
+ *     review keys, conflict ids, generatedAt/evaluatedAt. There is no
+ *     canExecute field, no standing-authority verdict, no "no authority is
+ *     configured" summary, no completeness claim, no copied policy value and
+ *     no cached governing decision. A derived conclusion goes stale exactly
+ *     like a verdict does: a cached "no authority exists" misleads after a
+ *     grant is created just as a cached "authority exists" misleads after one
+ *     is revoked. So a stale envelope has nothing with which to govern, and
+ *     nothing with which to deny.
  *
  * Authority must still be re-evaluated by G5 at the real use seam. The
  * envelope exists to make both lanes ask the same question, not to answer it.
+ * This module therefore offers no helper that interprets a grant's status,
+ * window or conditions: deciding that a grant governs is G5's alone.
  */
 
 /** Stable, dependency-free digest, matching the repository's FNV-1a convention. */
@@ -95,12 +102,14 @@ export function buildDwGovernanceContext({
       .filter(Boolean),
   }
 
+  // IDENTITY ONLY. noStandingAuthorityConfigured was a derived authority
+  // CONCLUSION, not a reference: cached in an envelope it goes stale, and a
+  // stale "no authority exists" is just as wrong as a stale "authority
+  // exists". revokedCount and staleCount were snapshot summaries of the same
+  // kind. None of them is needed to name a grant, so none of them is here.
   const authorityRefs = {
     evaluatedAt: authority?.evaluatedAt ?? null,
     currentGrantIds,
-    revokedCount: authority?.revokedCount ?? 0,
-    staleCount: authority?.staleCount ?? 0,
-    noStandingAuthorityConfigured: authority?.noStandingAuthorityConfigured === true,
     fingerprint: stableFingerprint({
       evaluatedAt: authority?.evaluatedAt ?? null,
       currentGrantIds,
@@ -119,37 +128,20 @@ export function buildDwGovernanceContext({
         .filter(Boolean)
         .sort(),
     },
-    freshness: {
+    // WHAT IS KNOWN, and nothing more. A readable Company Brain proves only
+    // that it was readable: not that its sources are complete, not that its
+    // review is current, not that authority is fresh, and not that no support
+    // was revoked. Equating available with complete asserted all four. There
+    // is no deterministic completeness proof at this seam, so none is claimed
+    // — a later G8 seam may evaluate freshness under source-specific policy.
+    sourceState: {
+      companyBrainAvailable: available,
       companyBrainGeneratedAt: companyBrain.generatedAt,
       authorityEvaluatedAt: authorityRefs.evaluatedAt,
-      // Complete only when the Brain was actually readable. An unavailable
-      // Brain is a stated absence, never an empty-but-fine envelope.
-      complete: available,
     },
     // Structural, not advisory. There is no field from which a caller could
     // read permission, and re-evaluation is not optional.
     governs: false,
     authorityMustBeReEvaluatedAtUse: true,
   })
-}
-
-/**
- * Re-resolves the envelope's grant references against a CURRENT authority
- * projection, and returns only the ids that are still current.
- *
- * This is why the envelope holds ids rather than verdicts: a grant revoked,
- * superseded or expired after the envelope was built simply stops resolving,
- * so a stale envelope cannot carry a permission forward.
- */
-export function resolveCurrentGovernedGrantIds({
-  governance = null, authorityProjection = null,
-} = {}) {
-  const referenced = new Set(safeArray(governance?.authority?.currentGrantIds))
-  if (referenced.size === 0) return Object.freeze([])
-  const current = safeArray(authorityProjection?.currentGrants)
-    .filter((grant) => grant?.status === 'GRANTED')
-    .map((grant) => grant?.grantId ?? grant?.id)
-    .filter((id) => id && referenced.has(id))
-    .sort()
-  return Object.freeze(current)
 }
