@@ -15,6 +15,7 @@
 
 import { ASK_DW_JOB, ASK_DW_SCOPE, classifyAskDwIntent } from './askDwIntent.js'
 import { classifyAskDwAuthorityRequest } from './askDwAuthorityProposition.js'
+import { hasAskDwVerifiedActiveSubject } from './askDwReferenceGrammar.js'
 
 export const ASK_DW_TURN = Object.freeze({
   GREETING: 'GREETING',
@@ -48,7 +49,7 @@ const GREETINGS = new Set([
 const ACKNOWLEDGEMENTS = new Set([
   'thanks', 'thank you', 'thx', 'ty', 'got it', 'gotcha', 'ok', 'okay', 'k',
   'cool', 'nice', 'perfect', 'great', 'sounds good', 'understood', 'right',
-  'makes sense', 'fair enough', 'alright',
+  'makes sense', 'fair enough', 'alright', 'interesting',
 ])
 
 const DAILY_PRIORITY_PHRASES = [
@@ -177,10 +178,7 @@ export function classifyAskDwConversationalTurn({
   const value = normalize(text)
   if (!value) throw new Error('Ask DW turn text required')
 
-  const hasActiveSubject = Boolean(
-    caseContext?.focus?.clientRef || caseContext?.focus?.invoiceRef ||
-    context.clientId || context.invoiceId,
-  )
+  const hasActiveSubject = hasAskDwVerifiedActiveSubject(caseContext)
 
   const result = (turnType, extra = {}) => Object.freeze({
     turnType,
@@ -223,7 +221,17 @@ export function classifyAskDwConversationalTurn({
     })
   }
 
-  if (classifyAskDwAuthorityRequest(text, { knownEntities }).isAuthorityRequest) {
+  // Exact established evidence turns keep precedence over contextual command
+  // extraction: "prove it" is a request for support, not an unknown operation
+  // whose object happens to be the pronoun "it". Mixed/extended turns still
+  // pass through structural ownership below.
+  if (EVIDENCE_PHRASES.includes(value)) {
+    return result(ASK_DW_TURN.EVIDENCE_REQUEST, { requiresActiveSubject: true })
+  }
+
+  if (classifyAskDwAuthorityRequest(text, {
+    knownEntities, caseContext, allowContextualEllipsis: false,
+  }).isAuthorityRequest) {
     // The question itself never creates authority; it only routes to the
     // deterministic authority renderer.
     return result(ASK_DW_TURN.AUTHORITY_QUESTION, { requiresDeterministicAuthority: true })
@@ -241,6 +249,16 @@ export function classifyAskDwConversationalTurn({
   // starting a new one, but only when a subject is actually active.
   if (/^(what about|how about|and)\b/.test(value) || FOLLOW_UP_PHRASES.has(value)) {
     return result(ASK_DW_TURN.FOLLOW_UP, { requiresActiveSubject: !FOLLOW_UP_PHRASES.has(value) ? false : true })
+  }
+
+  // Only after every positive conversational category has had precedence may
+  // an otherwise-unresolved short turn borrow its omitted TARGET from verified
+  // focus. Focus never makes the operation safe; it merely enters the same
+  // closed structural boundary, where an unknown verb must clarify.
+  if (hasActiveSubject && classifyAskDwAuthorityRequest(text, {
+    knownEntities, caseContext, allowContextualEllipsis: true,
+  }).isAuthorityRequest) {
+    return result(ASK_DW_TURN.AUTHORITY_QUESTION, { requiresDeterministicAuthority: true })
   }
 
   const arIntent = classifyAskDwIntent({ text, context })

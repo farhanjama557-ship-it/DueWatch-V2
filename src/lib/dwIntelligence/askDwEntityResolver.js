@@ -4,6 +4,7 @@ import {
   findAskDwConversationNickname,
   isAskDwConversationNicknameDeclaration,
 } from './askDwConversationMemory.js'
+import { ASK_DW_CONTEXTUAL_REFERENCE_TOKENS } from './askDwReferenceGrammar.js'
 
 const MAX_CLIENT_TERM_QUERIES = 4
 const MAX_CLIENT_MATCHES_PER_TERM = 20
@@ -16,12 +17,13 @@ const CLIENT_TERM_STOPWORDS = new Set([
   'did', 'different', 'dispute', 'do', 'does',
   'doing', 'done', 'due', 'follow', 'followed', 'following', 'for', 'from', 'going',
   'first', 'has', 'hasnt', 'have', 'her', 'him', 'history', 'invoice', 'invoices',
-  'it', 'late', 'make', 'money', 'one',
+  'late', 'make', 'money',
   'other', 'outstanding', 'overdue', 'paid', 'pay', 'paying', 'payment', 'payments',
   'policy', 'please', 'remind', 'reminder', 'reminders', 'second', 'short', 'shorter',
-  'should', 'status', 'that', 'the', 'their', 'them', 'they', 'this', 'to', 'today',
+  'should', 'status', 'their', 'they', 'to', 'today',
   'what', 'whats', 'when', 'where',
   'which', 'why', 'with', 'yesterday', 'you', 'your',
+  ...ASK_DW_CONTEXTUAL_REFERENCE_TOKENS,
 ])
 
 const CLIENT_REFERENCE_CUES = new Set(['about', 'with', 'for', 'client', 'customer'])

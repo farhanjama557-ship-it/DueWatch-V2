@@ -6,6 +6,7 @@ import {
   ASK_DW_OPERATION_MODE,
   ASK_DW_OPERATION_PRESENTATION,
   ASK_DW_OPERATION_SAFETY,
+  ASK_DW_OPERATION_TARGET_PRESENTATION,
   ASK_DW_READ_ONLY_OPERATION_REGISTRY,
   classifyAskDwReadOnlyOperation,
   extractAskDwOperationStructure,
@@ -17,6 +18,13 @@ const ENTITIES = Object.freeze([
   { id: 'atlas', name: 'Atlas', aliases: ['Atlas'] },
   { id: 'cedar', name: 'Cedar', aliases: ['Cedar'] },
 ])
+
+const ACTIVE_CASE_CONTEXT = Object.freeze({
+  focus: Object.freeze({
+    clientRef: Object.freeze({ kind: 'client', id: 'atlas' }),
+    invoiceRef: Object.freeze({ kind: 'invoice', id: 'inv-atlas-1' }),
+  }),
+})
 
 const readOnly = (text, options = {}) => classifyAskDwReadOnlyOperation({
   text,
@@ -274,5 +282,58 @@ test('G7-OS14 presentation form cannot increase operation capability', () => {
       `Please ${operation}.`]) {
       assert.equal(readOnly(text).readOnly, expected, text)
     }
+  }
+})
+
+test('G7-OS15 contextual references enter the same closed structure without proving operation safety', () => {
+  for (const text of [
+    'Reimburse them.', 'Reimburse it.', 'Refund them.', 'Forgive it.',
+    'Ping them.', 'Pursue them.', 'Escalate it.', 'Reach out to them.',
+    'Waive it.', 'Reimburse this.', 'Reimburse that.',
+    'Reimburse this one.', 'Reimburse that one.',
+  ]) {
+    const presentation = inspectAskDwFounderOperationPresentation({
+      text, knownEntities: ENTITIES, caseContext: ACTIVE_CASE_CONTEXT,
+    })
+    assert.equal(presentation?.presentation, ASK_DW_OPERATION_PRESENTATION.IMPERATIVE, text)
+    assert.equal(presentation?.targetPresentation,
+      ASK_DW_OPERATION_TARGET_PRESENTATION.CONTEXTUAL_REFERENCE, text)
+    const result = readOnly(text, { caseContext: ACTIVE_CASE_CONTEXT })
+    assert.equal(result.status, ASK_DW_OPERATION_SAFETY.FAIL_CLOSED_CLARIFY, text)
+    assert.equal(result.readOnly, false, text)
+  }
+})
+
+test('G7-OS16 active focus supplies only an omitted target, never a safe operation', () => {
+  for (const text of ['Escalate.', 'Pursue.', 'Reach out.']) {
+    assert.equal(inspectAskDwFounderOperationPresentation({ text, knownEntities: ENTITIES }), null, text)
+    const presentation = inspectAskDwFounderOperationPresentation({
+      text, knownEntities: ENTITIES, caseContext: ACTIVE_CASE_CONTEXT,
+      allowContextualEllipsis: true,
+    })
+    assert.equal(presentation?.targetPresentation,
+      ASK_DW_OPERATION_TARGET_PRESENTATION.ACTIVE_FOCUS_ELLIPSIS, text)
+    const result = readOnly(text, {
+      caseContext: ACTIVE_CASE_CONTEXT, allowContextualEllipsis: true,
+    })
+    assert.equal(result.status, ASK_DW_OPERATION_SAFETY.FAIL_CLOSED_CLARIFY, text)
+  }
+
+  assert.equal(readOnly('Explain it.', { caseContext: ACTIVE_CASE_CONTEXT }).readOnly, true)
+  assert.equal(readOnly('Explain it.').readOnly, false,
+    'an unresolved contextual reference is not a closed read-only argument')
+})
+
+test('G7-OS17 reference presentation cannot increase an unknown operation capability', () => {
+  const variants = [
+    ['Reimburse Atlas.', {}],
+    ['Reimburse them.', { caseContext: ACTIVE_CASE_CONTEXT }],
+    ['Reimburse the client.', { caseContext: ACTIVE_CASE_CONTEXT }],
+    ['Reimburse.', { caseContext: ACTIVE_CASE_CONTEXT, allowContextualEllipsis: true }],
+  ]
+  for (const [text, options] of variants) {
+    const result = readOnly(text, options)
+    assert.equal(result.status, ASK_DW_OPERATION_SAFETY.FAIL_CLOSED_CLARIFY, text)
+    assert.equal(result.readOnly, false, text)
   }
 })

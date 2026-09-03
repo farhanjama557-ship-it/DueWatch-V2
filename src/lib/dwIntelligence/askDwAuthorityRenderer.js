@@ -605,10 +605,15 @@ export function parseAuthorityQuestion(text, {
   // The SAME shared typed boundary the orchestrator routes with. Reading the
   // question twice, with two recognisers, is how routing and answering drifted
   // apart in the first place.
-  const request = classifyAskDwAuthorityRequest(text, { knownEntities: entities })
+  const request = classifyAskDwAuthorityRequest(text, {
+    knownEntities: entities, caseContext, allowContextualEllipsis: true,
+  })
   const proposition = parseAuthorityProposition({
     text: normalizeAuthorityText(text), field: 'question', quoted: false, attributedTo: null,
-  }, { knownEntities: entities, mode: ASK_DW_PARSE_MODE.QUESTION })
+  }, {
+    knownEntities: entities, mode: ASK_DW_PARSE_MODE.QUESTION, caseContext,
+    allowContextualEllipsis: true,
+  })
   const semantic = request.semantic ?? ASK_DW_AUTHORITY_QUESTION_SEMANTIC_DEFAULT
 
   // ACTOR FIRST, before any G5 resolution. A G5 grant is held by DW. If the

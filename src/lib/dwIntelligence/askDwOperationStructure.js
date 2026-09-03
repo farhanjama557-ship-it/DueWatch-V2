@@ -10,6 +10,12 @@
  * rechecks source offsets, surfaces, arguments, ordering and total coverage.
  */
 
+import {
+  findAskDwContextualReferenceSuffix,
+  hasAskDwVerifiedActiveSubject,
+  isAskDwContextualReference,
+} from './askDwReferenceGrammar.js'
+
 export const ASK_DW_OPERATION_MODE = Object.freeze({
   FOUNDER_REQUEST: 'FOUNDER_REQUEST',
   MODEL_COMMITMENT: 'MODEL_COMMITMENT',
@@ -19,6 +25,12 @@ export const ASK_DW_OPERATION_PRESENTATION = Object.freeze({
   MODAL_DIRECT: 'MODAL_DIRECT',
   IMPERATIVE: 'IMPERATIVE',
   MODEL_COMMITMENT: 'MODEL_COMMITMENT',
+})
+
+export const ASK_DW_OPERATION_TARGET_PRESENTATION = Object.freeze({
+  EXPLICIT: 'EXPLICIT',
+  CONTEXTUAL_REFERENCE: 'CONTEXTUAL_REFERENCE',
+  ACTIVE_FOCUS_ELLIPSIS: 'ACTIVE_FOCUS_ELLIPSIS',
 })
 
 export const ASK_DW_OPERATION_SAFETY = Object.freeze({
@@ -129,10 +141,17 @@ function entityPattern(knownEntities) {
   return forms.length ? `(?:${forms.map(escapeRegex).join('|')})` : '(?!)'
 }
 
-function isClosedArgument(operationId, value, knownEntities) {
+function isClosedArgument(operationId, value, knownEntities, caseContext, mode) {
   const argument = String(value || '').trim()
   if (!argument) return operationId !== 'COMPARE' && operationId !== 'CALCULATE'
-  if (!['COMPARE', 'CALCULATE'].includes(operationId) && /^(?:it|this|that|them)$/i.test(argument)) return true
+  if (!['COMPARE', 'CALCULATE'].includes(operationId) && isAskDwContextualReference(argument)) {
+    // Founder input may use a contextual argument only when CP5 supplied a
+    // verified active subject. Model-output checking preserves the narrower
+    // pre-existing read-only doctrine (for example, "I will review it") and
+    // does not use a missing input focus to manufacture an operational claim.
+    return mode === ASK_DW_OPERATION_MODE.MODEL_COMMITMENT ||
+      hasAskDwVerifiedActiveSubject(caseContext)
+  }
   const entity = entityPattern(knownEntities)
   const domain = new RegExp(`^(?:the\\s+)?(?:${entity}\\s+)?${CLOSED_DOMAIN_NOUN}$`, 'iu')
   const entityOnly = exactEntityReference(argument, knownEntities)
@@ -219,7 +238,22 @@ function wrapperFor(source, mode) {
 const NON_IMPERATIVE_OPENING = /^(?:what|which|when|where|who|whom|whose|why|how|may|might|can|could|should|would|will|shall|must|do|does|did|are|is|am|was|were|have|has|had|i|we|you|he|she|they|it|this|that|these|those|there|and|or|but|company|our|policy|portfolio|status|daily|top|anything)\b/i
 const OPERATIONAL_DOMAIN_TARGET = /\b(?:late\s+fees?|payments?|balances?|invoices?|accounts?|clients?|customers?|reminders?)\b/i
 
-function wrapperlessImperativeStart(source, knownEntities = []) {
+function targetPresentationFor(operationPhrase, { caseContext = null, allowContextualEllipsis = false } = {}) {
+  const referenceForm = findAskDwContextualReferenceSuffix(operationPhrase)
+  if (referenceForm) {
+    return { targetPresentation: ASK_DW_OPERATION_TARGET_PRESENTATION.CONTEXTUAL_REFERENCE, referenceForm }
+  }
+  const normalized = String(operationPhrase || '').trim().replace(/[.!?]+$/u, '').trim()
+  if (allowContextualEllipsis && hasAskDwVerifiedActiveSubject(caseContext) &&
+      /^(?:[\p{L}][\p{L}\p{M}'-]*)(?:\s+[\p{L}][\p{L}\p{M}'-]*){0,2}$/u.test(normalized)) {
+    return { targetPresentation: ASK_DW_OPERATION_TARGET_PRESENTATION.ACTIVE_FOCUS_ELLIPSIS, referenceForm: null }
+  }
+  return { targetPresentation: ASK_DW_OPERATION_TARGET_PRESENTATION.EXPLICIT, referenceForm: null }
+}
+
+function wrapperlessImperativeStart(source, knownEntities = [], {
+  caseContext = null, allowContextualEllipsis = false,
+} = {}) {
   const leading = /^\s*/u.exec(source)[0].length
   const tail = source.slice(leading)
   if (!tail || NON_IMPERATIVE_OPENING.test(tail)) return null
@@ -227,26 +261,38 @@ function wrapperlessImperativeStart(source, knownEntities = []) {
   const polite = /^please\s+/i.exec(tail)
   if (polite) {
     const wrapper = { start: leading, end: leading + polite[0].length, text: polite[0] }
-    return { operationStart: wrapper.end, wrappers: [wrapper] }
+    return {
+      operationStart: wrapper.end,
+      wrappers: [wrapper],
+      ...targetPresentationFor(source.slice(wrapper.end), { caseContext, allowContextualEllipsis }),
+    }
   }
 
   // A registered predicate is positive proof of an imperative presentation.
   // Unknown predicates are claimed only when their complement is visibly in
-  // the AR domain (or names an admitted tenant entity). This is deliberately a
-  // target grammar, not an unsafe-verb list: the verb remains unknown and can
-  // therefore only fail closed.
-  if (surfaceAt(source, leading)) return { operationStart: leading, wrappers: [] }
+  // the AR domain, names an admitted tenant entity, or uses the shared CP5
+  // contextual-reference grammar. A single residual predicate may also borrow
+  // an omitted target from verified active focus after conversational forms
+  // have had precedence. This is a target grammar, not an unsafe-verb list:
+  // the operation remains unknown and can therefore only fail closed.
+  const target = targetPresentationFor(tail, { caseContext, allowContextualEllipsis })
+  if (surfaceAt(source, leading)) return { operationStart: leading, wrappers: [], ...target }
   const firstWord = /^[\p{L}][\p{L}\p{M}'-]*/u.exec(tail)
   if (!firstWord) return null
   const complement = tail.slice(firstWord[0].length)
   const namesKnownEntity = entityForms(knownEntities).some((form) =>
     new RegExp(`(?:^|[^\\p{L}\\p{N}_])${escapeRegex(form)}(?=$|[^\\p{L}\\p{N}_])`, 'iu').test(complement))
   const namesUnresolvedProperTarget = /(?:^|\s)[A-Z][\p{L}\p{M}\p{N}&.'-]*(?=\s|[.!?]|$)/u.test(complement)
-  if (!namesKnownEntity && !namesUnresolvedProperTarget && !OPERATIONAL_DOMAIN_TARGET.test(complement)) return null
-  return { operationStart: leading, wrappers: [] }
+  const contextual = target.targetPresentation === ASK_DW_OPERATION_TARGET_PRESENTATION.CONTEXTUAL_REFERENCE
+  const elliptical = target.targetPresentation === ASK_DW_OPERATION_TARGET_PRESENTATION.ACTIVE_FOCUS_ELLIPSIS
+  if (!namesKnownEntity && !namesUnresolvedProperTarget && !OPERATIONAL_DOMAIN_TARGET.test(complement) &&
+      !contextual && !elliptical) return null
+  return { operationStart: leading, wrappers: [], ...target }
 }
 
-function operationPresentationFor(source, mode, knownEntities = []) {
+function operationPresentationFor(source, mode, knownEntities = [], {
+  caseContext = null, allowContextualEllipsis = false,
+} = {}) {
   const modalWrapper = wrapperFor(source, mode)
   if (modalWrapper) {
     const wrappers = [modalWrapper]
@@ -265,25 +311,36 @@ function operationPresentationFor(source, mode, knownEntities = []) {
         : ASK_DW_OPERATION_PRESENTATION.MODEL_COMMITMENT,
       operationStart,
       wrappers,
+      ...targetPresentationFor(source.slice(operationStart), { caseContext, allowContextualEllipsis }),
     }
   }
   if (mode !== ASK_DW_OPERATION_MODE.FOUNDER_REQUEST) return null
-  const imperative = wrapperlessImperativeStart(source, knownEntities)
+  const imperative = wrapperlessImperativeStart(source, knownEntities, { caseContext, allowContextualEllipsis })
   return imperative ? { presentation: ASK_DW_OPERATION_PRESENTATION.IMPERATIVE, ...imperative } : null
 }
 
-export function inspectAskDwFounderOperationPresentation({ text, knownEntities = [] } = {}) {
+export function inspectAskDwFounderOperationPresentation({
+  text, knownEntities = [], caseContext = null, allowContextualEllipsis = false,
+} = {}) {
   const source = String(text || '')
-  const presentation = operationPresentationFor(source, ASK_DW_OPERATION_MODE.FOUNDER_REQUEST, knownEntities)
+  const presentation = operationPresentationFor(source, ASK_DW_OPERATION_MODE.FOUNDER_REQUEST, knownEntities, {
+    caseContext, allowContextualEllipsis,
+  })
   if (!presentation) return null
   return Object.freeze({
     presentation: presentation.presentation,
     operationPhrase: source.slice(presentation.operationStart).trim(),
+    targetPresentation: presentation.targetPresentation,
+    referenceForm: presentation.referenceForm,
   })
 }
 
-export function extractDirectAskDwOperationPhrase(text, { knownEntities = [] } = {}) {
-  return inspectAskDwFounderOperationPresentation({ text, knownEntities })?.operationPhrase ?? null
+export function extractDirectAskDwOperationPhrase(text, {
+  knownEntities = [], caseContext = null, allowContextualEllipsis = false,
+} = {}) {
+  return inspectAskDwFounderOperationPresentation({
+    text, knownEntities, caseContext, allowContextualEllipsis,
+  })?.operationPhrase ?? null
 }
 
 function component(kind, start, end, source, extra = {}) {
@@ -296,9 +353,12 @@ function component(kind, start, end, source, extra = {}) {
  */
 export function extractAskDwOperationStructure({
   text, mode = ASK_DW_OPERATION_MODE.FOUNDER_REQUEST, knownEntities = [],
+  caseContext = null, allowContextualEllipsis = false,
 } = {}) {
   const source = String(text || '')
-  const presentation = operationPresentationFor(source, mode, knownEntities)
+  const presentation = operationPresentationFor(source, mode, knownEntities, {
+    caseContext, allowContextualEllipsis,
+  })
   if (!presentation) return null
   let phraseEnd = source.length
   while (phraseEnd > presentation.operationStart && /[\s.!?]/u.test(source[phraseEnd - 1])) phraseEnd -= 1
@@ -388,6 +448,7 @@ function failed(issues, proposal = null) {
 /** Revalidates an untrusted structure against the exact original source. */
 export function validateAskDwOperationStructure({
   text, proposal, mode = ASK_DW_OPERATION_MODE.FOUNDER_REQUEST, knownEntities = [],
+  caseContext = null, allowContextualEllipsis = false,
 } = {}) {
   const source = String(text || '')
   const issues = []
@@ -440,7 +501,9 @@ export function validateAskDwOperationStructure({
   }
   if (coveredUntil < source.length && !IGNORABLE_GAP.test(source.slice(coveredUntil))) issues.push('UNCOVERED_SOURCE')
 
-  const expectedPresentation = operationPresentationFor(source, mode, knownEntities)
+  const expectedPresentation = operationPresentationFor(source, mode, knownEntities, {
+    caseContext, allowContextualEllipsis,
+  })
   const expectedWrappers = expectedPresentation?.wrappers ?? []
   const wrapperItems = proposal.components.filter((item) => item.kind === ASK_DW_OPERATION_COMPONENT.WRAPPER)
   if (!expectedPresentation || wrapperItems.length !== expectedWrappers.length ||
@@ -461,7 +524,9 @@ export function validateAskDwOperationStructure({
     }
     const argument = argumentsByOperation.get(index)
     const argumentText = argument?.sourceText ?? ''
-    if (!isClosedArgument(operation.operationId, argumentText, knownEntities)) issues.push('ARGUMENT_INVALID')
+    if (!isClosedArgument(operation.operationId, argumentText, knownEntities, caseContext, mode)) {
+      issues.push('ARGUMENT_INVALID')
+    }
     const relation = relations.find((item) => item.leftOperationIndex === index)
     const nextOperation = operations[index + 1]
     const ownedEnd = relation?.sourceStart ?? (nextOperation?.sourceStart ?? source.length)
@@ -503,13 +568,16 @@ export function validateAskDwOperationStructure({
 }
 
 export function classifyAskDwReadOnlyOperation({
-  text, mode = ASK_DW_OPERATION_MODE.FOUNDER_REQUEST, knownEntities = [], extractor = extractAskDwOperationStructure,
+  text, mode = ASK_DW_OPERATION_MODE.FOUNDER_REQUEST, knownEntities = [], caseContext = null,
+  allowContextualEllipsis = false, extractor = extractAskDwOperationStructure,
 } = {}) {
   let proposal = null
   try {
-    proposal = extractor({ text, mode, knownEntities })
+    proposal = extractor({ text, mode, knownEntities, caseContext, allowContextualEllipsis })
   } catch {
     return failed(['EXTRACTION_FAILED'])
   }
-  return validateAskDwOperationStructure({ text, proposal, mode, knownEntities })
+  return validateAskDwOperationStructure({
+    text, proposal, mode, knownEntities, caseContext, allowContextualEllipsis,
+  })
 }

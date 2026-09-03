@@ -49,7 +49,9 @@ import {
 } from '../src/lib/dwIntelligence/askDwIntent.js'
 import {
   ASK_DW_OPERATION_SAFETY,
+  ASK_DW_OPERATION_TARGET_PRESENTATION,
   classifyAskDwReadOnlyOperation,
+  inspectAskDwFounderOperationPresentation,
 } from '../src/lib/dwIntelligence/askDwOperationStructure.js'
 import { createAskDwOrchestrator } from '../src/lib/dwIntelligence/askDwOrchestrator.js'
 
@@ -59,6 +61,12 @@ const KNOWN_ENTITIES = Object.freeze([
   { id: 'atlas', name: 'Atlas', aliases: ['Atlas'] },
   { id: 'cedar', name: 'Cedar', aliases: ['Cedar'] },
 ])
+const ACTIVE_CASE_CONTEXT = Object.freeze({
+  focus: Object.freeze({
+    clientRef: Object.freeze({ kind: 'client', id: 'atlas' }),
+    invoiceRef: Object.freeze({ kind: 'invoice', id: 'inv-atlas-1' }),
+  }),
+})
 
 function grant(overrides = {}) {
   return {
@@ -1599,10 +1607,14 @@ async function importAuthorityBoundaryMutant(replacements, label, intentReplacem
     new URL('../src/lib/dwIntelligence/askDwIntent.js', import.meta.url), 'utf8')
   let structureSource = readFileSync(
     new URL('../src/lib/dwIntelligence/askDwOperationStructure.js', import.meta.url), 'utf8')
+  const referenceSource = readFileSync(
+    new URL('../src/lib/dwIntelligence/askDwReferenceGrammar.js', import.meta.url), 'utf8')
+  const referenceUrl = `data:text/javascript;base64,${Buffer.from(referenceSource).toString('base64')}`
   for (const [from, to] of structureReplacements) {
     assert.ok(structureSource.includes(from), `structure mutation anchor missing: ${label}`)
     structureSource = structureSource.replace(from, to)
   }
+  structureSource = structureSource.replaceAll("'./askDwReferenceGrammar.js'", `'${referenceUrl}'`)
   const structureUrl = `data:text/javascript;base64,${Buffer.from(structureSource).toString('base64')}`
   for (const [from, to] of intentReplacements) {
     assert.ok(intentSource.includes(from), `intent mutation anchor missing: ${label}`)
@@ -1611,6 +1623,7 @@ async function importAuthorityBoundaryMutant(replacements, label, intentReplacem
   intentSource = intentSource.replaceAll("'./askDwOperationStructure.js'", `'${structureUrl}'`)
   const intentUrl = `data:text/javascript;base64,${Buffer.from(intentSource).toString('base64')}`
   source = source.replace("'./askDwIntent.js'", `'${intentUrl}'`)
+  source = source.replaceAll("'./askDwReferenceGrammar.js'", `'${referenceUrl}'`)
   for (const [from, to] of replacements) {
     assert.ok(source.includes(from), `mutation anchor missing: ${label}`)
     source = source.replace(from, to)
@@ -1621,7 +1634,10 @@ async function importAuthorityBoundaryMutant(replacements, label, intentReplacem
 test('G7-SD5 mutation proof: every structural ownership repair is load-bearing', async () => {
   const oldQuestionOwnership = await importAuthorityBoundaryMutant([
     ['(unknownOperationalCandidate && !exempted) ||', 'false ||'],
-    ['ownsUnknownOperationalLanguage(stripped, ASK_DW_PARSE_MODE.QUESTION, knownEntities)', 'false'],
+    [
+      'ownsUnknownOperationalLanguage(stripped, ASK_DW_PARSE_MODE.QUESTION, {\n      knownEntities, caseContext, allowContextualEllipsis: elliptical,\n    })',
+      'false',
+    ],
   ], 'unknown-question-model-owned')
   assert.equal(oldQuestionOwnership.classifyAskDwAuthorityRequest(
     'Will you reach out to Atlas tomorrow?').isAuthorityRequest, false,
@@ -1733,7 +1749,7 @@ test('G7-SD7 intent fallback EXPLAIN is not proof that unknown operations are sa
 test('G7-SD8 mutation proof: removing shared read-only recognition reopens routing drift', async () => {
   const mutant = await importAuthorityBoundaryMutant([
     [
-      'const knownReadOnlyQuestion = mode === ASK_DW_PARSE_MODE.QUESTION &&\n    recognizeKnownReadOnlyAskDwJob({ text, knownEntities }) != null',
+      'const knownReadOnlyQuestion = mode === ASK_DW_PARSE_MODE.QUESTION &&\n    recognizeKnownReadOnlyAskDwJob({\n      text, knownEntities, caseContext, allowContextualEllipsis,\n    }) != null',
       'const knownReadOnlyQuestion = false',
     ],
   ], 'known-read-only-owner-removed')
@@ -1824,7 +1840,7 @@ test('G7-SD10 coordinated unknown model commitments survive segmentation and fai
 test('G7-SD11 mutation proof: argument validation prevents a safe operation span swallowing an unsafe tail', async () => {
   const mutant = await importAuthorityBoundaryMutant([], 'unvalidated-operation-tail', [], [
     [
-      "if (!isClosedArgument(operation.operationId, argumentText, knownEntities)) issues.push('ARGUMENT_INVALID')",
+      "if (!isClosedArgument(operation.operationId, argumentText, knownEntities, caseContext, mode)) {\n      issues.push('ARGUMENT_INVALID')\n    }",
       '// mutation: trust the proposed argument without validating it',
     ],
   ])
@@ -1909,12 +1925,169 @@ test('G7-SD13 every unknown or mixed imperative is deterministically owned end t
 test('G7-SD14 mutation proof: missing imperative presentation restores unsafe fallback routing', async () => {
   const mutant = await importAuthorityBoundaryMutant([], 'wrapperless-fallback-restored', [], [
     [
-      'const imperative = wrapperlessImperativeStart(source, knownEntities)',
+      'const imperative = wrapperlessImperativeStart(source, knownEntities, { caseContext, allowContextualEllipsis })',
       'const imperative = null // mutation: wrapper missing falls back to lexical/default intent',
     ],
   ])
   for (const text of UNKNOWN_OR_MIXED_IMPERATIVES) {
     assert.equal(mutant.classifyAskDwAuthorityRequest(text, { knownEntities: KNOWN_ENTITIES }).isAuthorityRequest,
       false, text)
+  }
+})
+
+const CONTEXTUAL_UNKNOWN_IMPERATIVES = Object.freeze([
+  'Reimburse them.',
+  'Reimburse it.',
+  'Refund them.',
+  'Forgive it.',
+  'Ping them.',
+  'Pursue them.',
+  'Escalate it.',
+  'Reach out to them.',
+  'Waive it.',
+  'Reimburse this.',
+  'Reimburse that.',
+  'Reimburse this one.',
+  'Reimburse that one.',
+])
+
+test('G7-SD15 contextual imperatives enter deterministic ownership and cannot expose a colluding model', async () => {
+  for (const text of CONTEXTUAL_UNKNOWN_IMPERATIVES) {
+    const presentation = inspectAskDwFounderOperationPresentation({
+      text, knownEntities: KNOWN_ENTITIES, caseContext: ACTIVE_CASE_CONTEXT,
+    })
+    assert.equal(presentation?.targetPresentation,
+      ASK_DW_OPERATION_TARGET_PRESENTATION.CONTEXTUAL_REFERENCE, text)
+    assert.equal(classifyAskDwReadOnlyOperation({
+      text, knownEntities: KNOWN_ENTITIES, caseContext: ACTIVE_CASE_CONTEXT,
+    }).status, ASK_DW_OPERATION_SAFETY.FAIL_CLOSED_CLARIFY, text)
+    assert.equal(recognizeKnownReadOnlyAskDwJob({
+      text, knownEntities: KNOWN_ENTITIES, caseContext: ACTIVE_CASE_CONTEXT,
+    }), null, text)
+
+    const request = classifyAskDwAuthorityRequest(text, {
+      knownEntities: KNOWN_ENTITIES, caseContext: ACTIVE_CASE_CONTEXT,
+      allowContextualEllipsis: true,
+    })
+    assert.equal(request.isAuthorityRequest, true, text)
+    assert.equal(request.proposition.unknownOperationalCandidate, true, text)
+    const turn = classifyAskDwConversationalTurn({
+      text, knownEntities: KNOWN_ENTITIES, caseContext: ACTIVE_CASE_CONTEXT,
+    })
+    assert.equal(turn.turnType, ASK_DW_TURN.AUTHORITY_QUESTION, text)
+
+    const result = await colludingOrchestrator('Yes.').run({
+      mode: 'normal', text,
+      context: {
+        tenantId: 'tenant-a', caseContext: ACTIVE_CASE_CONTEXT,
+        companyBrainReadModel: brainReadModel([]),
+      },
+    })
+    assert.ok(result.conversation.authorityAnswer, text)
+    assert.equal(result.answer.authoritySource, 'DETERMINISTIC_G5_PROJECTION', text)
+    assert.equal(result.answer.authorityStatus, 'CLARIFICATION_REQUIRED', text)
+    assert.notEqual(result.answer.executiveConclusion, 'Yes.', text)
+    assert.equal(result.answer.modelOwnsAuthorityProposition, false, text)
+  }
+})
+
+test('G7-SD16 active-focus ellipsis is owned only after positive conversational turns', async () => {
+  for (const text of ['Escalate.', 'Pursue.', 'Reach out.']) {
+    assert.equal(inspectAskDwFounderOperationPresentation({
+      text, knownEntities: KNOWN_ENTITIES,
+    }), null, text)
+    const presentation = inspectAskDwFounderOperationPresentation({
+      text, knownEntities: KNOWN_ENTITIES, caseContext: ACTIVE_CASE_CONTEXT,
+      allowContextualEllipsis: true,
+    })
+    assert.equal(presentation?.targetPresentation,
+      ASK_DW_OPERATION_TARGET_PRESENTATION.ACTIVE_FOCUS_ELLIPSIS, text)
+    assert.equal(recognizeKnownReadOnlyAskDwJob({
+      text, knownEntities: KNOWN_ENTITIES, caseContext: ACTIVE_CASE_CONTEXT,
+      allowContextualEllipsis: true,
+    }), null, text)
+    assert.equal(classifyAskDwAuthorityRequest(text, {
+      knownEntities: KNOWN_ENTITIES, caseContext: ACTIVE_CASE_CONTEXT,
+      allowContextualEllipsis: true,
+    }).isAuthorityRequest, true, text)
+    assert.equal(classifyAskDwConversationalTurn({
+      text, knownEntities: KNOWN_ENTITIES, caseContext: ACTIVE_CASE_CONTEXT,
+    }).turnType, ASK_DW_TURN.AUTHORITY_QUESTION, text)
+
+    const result = await colludingOrchestrator('Yes.').run({
+      mode: 'normal', text,
+      context: {
+        tenantId: 'tenant-a', caseContext: ACTIVE_CASE_CONTEXT,
+        companyBrainReadModel: brainReadModel([]),
+      },
+    })
+    assert.equal(result.answer.authoritySource, 'DETERMINISTIC_G5_PROJECTION', text)
+    assert.equal(result.answer.authorityStatus, 'CLARIFICATION_REQUIRED', text)
+    assert.notEqual(result.answer.executiveConclusion, 'Yes.', text)
+  }
+
+  for (const [text, expectedTurn] of [
+    ['hi', ASK_DW_TURN.GREETING],
+    ['thanks', ASK_DW_TURN.ACKNOWLEDGEMENT],
+    ['interesting', ASK_DW_TURN.ACKNOWLEDGEMENT],
+    ['why?', ASK_DW_TURN.FOLLOW_UP],
+    ['anything else?', ASK_DW_TURN.FOLLOW_UP],
+    ['what about them?', ASK_DW_TURN.FOLLOW_UP],
+    ['that one', ASK_DW_TURN.FOLLOW_UP],
+    ['back to Atlas', ASK_DW_TURN.CORRECTION],
+  ]) {
+    assert.equal(classifyAskDwConversationalTurn({
+      text, knownEntities: KNOWN_ENTITIES, caseContext: ACTIVE_CASE_CONTEXT,
+    }).turnType, expectedTurn, text)
+  }
+})
+
+test('G7-SD17 unresolved contextual references clarify instead of reaching fallback EXPLAIN', async () => {
+  const text = 'Reimburse it.'
+  const request = classifyAskDwAuthorityRequest(text, { knownEntities: KNOWN_ENTITIES })
+  assert.equal(request.isAuthorityRequest, true)
+  assert.equal(request.proposition.scopeType, ASK_DW_SCOPE_ASSERTION.UNKNOWN)
+  assert.equal(classifyAskDwConversationalTurn({ text, knownEntities: KNOWN_ENTITIES }).turnType,
+    ASK_DW_TURN.AUTHORITY_QUESTION)
+
+  const result = await colludingOrchestrator('Yes.').run({
+    mode: 'normal', text,
+    context: { tenantId: 'tenant-a', companyBrainReadModel: brainReadModel([]) },
+  })
+  assert.equal(result.answer.authorityStatus, 'CLARIFICATION_REQUIRED')
+  assert.notEqual(result.answer.executiveConclusion, 'Yes.')
+})
+
+test('G7-SD18 reference form never increases an unknown operation capability', () => {
+  const variants = [
+    ['Reimburse Atlas.', {}],
+    ['Reimburse them.', { caseContext: ACTIVE_CASE_CONTEXT }],
+    ['Reimburse the client.', { caseContext: ACTIVE_CASE_CONTEXT }],
+    ['Reimburse.', { caseContext: ACTIVE_CASE_CONTEXT }],
+  ]
+  for (const [text, state] of variants) {
+    assert.equal(recognizeKnownReadOnlyAskDwJob({
+      text, knownEntities: KNOWN_ENTITIES, ...state,
+      allowContextualEllipsis: Boolean(state.caseContext),
+    }), null, text)
+    assert.equal(classifyAskDwAuthorityRequest(text, {
+      knownEntities: KNOWN_ENTITIES, ...state,
+      allowContextualEllipsis: Boolean(state.caseContext),
+    }).isAuthorityRequest, true, text)
+  }
+})
+
+test('G7-SD19 mutation proof: missing contextual imperative entry restores fallback EXPLAIN', async () => {
+  const mutant = await importAuthorityBoundaryMutant([], 'contextual-entry-missing', [], [
+    [
+      'const contextual = target.targetPresentation === ASK_DW_OPERATION_TARGET_PRESENTATION.CONTEXTUAL_REFERENCE\n  const elliptical = target.targetPresentation === ASK_DW_OPERATION_TARGET_PRESENTATION.ACTIVE_FOCUS_ELLIPSIS',
+      'const contextual = false // mutation: contextual target misses structural entry\n  const elliptical = false // mutation: active-focus ellipsis misses structural entry',
+    ],
+  ])
+  for (const text of [...CONTEXTUAL_UNKNOWN_IMPERATIVES, 'Escalate.', 'Pursue.', 'Reach out.']) {
+    assert.equal(mutant.classifyAskDwAuthorityRequest(text, {
+      knownEntities: KNOWN_ENTITIES, caseContext: ACTIVE_CASE_CONTEXT,
+      allowContextualEllipsis: true,
+    }).isAuthorityRequest, false, text)
   }
 })

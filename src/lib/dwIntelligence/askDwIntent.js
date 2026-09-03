@@ -7,6 +7,7 @@ import {
 
 export {
   ASK_DW_OPERATION_PRESENTATION,
+  ASK_DW_OPERATION_TARGET_PRESENTATION,
   extractDirectAskDwOperationPhrase,
   inspectAskDwFounderOperationPresentation,
 } from './askDwOperationStructure.js'
@@ -90,14 +91,20 @@ export function recognizeAskDwControlledActionJob({ text } = {}) {
  * EXPLAIN. Authority routing consumes this helper so its safety decision can
  * never rely on classifyAskDwIntent's usability fallback.
  */
-export function recognizeKnownReadOnlyAskDwJob({ text, knownEntities = [] } = {}) {
+export function recognizeKnownReadOnlyAskDwJob({
+  text, knownEntities = [], caseContext = null, allowContextualEllipsis = false,
+} = {}) {
   const value = normalizedText(text)
   if (!value) return null
-  const operationPhrase = extractDirectAskDwOperationPhrase(text, { knownEntities })
+  const operationPhrase = extractDirectAskDwOperationPhrase(text, {
+    knownEntities, caseContext, allowContextualEllipsis,
+  })
   const structural = operationPhrase == null ? null : classifyAskDwReadOnlyOperation({
     text,
     mode: ASK_DW_OPERATION_MODE.FOUNDER_REQUEST,
     knownEntities,
+    caseContext,
+    allowContextualEllipsis,
   })
   const job = operationPhrase == null ? positivelyRecognizedJob(value) : structural.job
   if (!job || job === ASK_DW_JOB.ACT) return null

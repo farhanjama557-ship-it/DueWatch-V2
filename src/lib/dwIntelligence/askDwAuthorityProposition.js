@@ -24,11 +24,13 @@
 
 import {
   ASK_DW_OPERATION_PRESENTATION,
+  ASK_DW_OPERATION_TARGET_PRESENTATION,
   inspectAskDwFounderOperationPresentation,
   isCompleteKnownReadOnlyModelOperation,
   recognizeAskDwControlledActionJob,
   recognizeKnownReadOnlyAskDwJob,
 } from './askDwIntent.js'
+import { hasAskDwVerifiedActiveSubject } from './askDwReferenceGrammar.js'
 
 /** Exactly the seven G5 actions. Never widened, never collapsed. */
 export const G5_ACTIONS = Object.freeze([
@@ -291,21 +293,27 @@ function dwSelfOperationPhrase(text) {
   return parseDwSelfOperation(text)?.phrase ?? null
 }
 
-function ownsUnknownOperationalLanguage(text, mode, knownEntities = []) {
+function ownsUnknownOperationalLanguage(text, mode, {
+  knownEntities = [], caseContext = null, allowContextualEllipsis = false,
+} = {}) {
   const founderPresentation = mode === ASK_DW_PARSE_MODE.QUESTION
-    ? inspectAskDwFounderOperationPresentation({ text, knownEntities })
+    ? inspectAskDwFounderOperationPresentation({
+      text, knownEntities, caseContext, allowContextualEllipsis,
+    })
     : null
   const phrase = founderPresentation?.operationPhrase ??
     (mode === ASK_DW_PARSE_MODE.QUESTION ? null : dwSelfOperationPhrase(text))
   if (phrase == null) return false
   const knownReadOnlyQuestion = mode === ASK_DW_PARSE_MODE.QUESTION &&
-    recognizeKnownReadOnlyAskDwJob({ text, knownEntities }) != null
+    recognizeKnownReadOnlyAskDwJob({
+      text, knownEntities, caseContext, allowContextualEllipsis,
+    }) != null
   if (knownReadOnlyQuestion) return false
-  // Existing exact controlled imperatives already enter the G5-controlled ACT
-  // path. Structural ownership closes only the unknown/mixed fallback seam; it
-  // must not replace that established activation path with an authority query.
+  // Existing explicitly recognized controlled imperatives already enter the
+  // controlled ACT path. Contextual/elliptical verbs outside that existing
+  // recognizer remain owned here even if later G5 parsing can map one exactly.
   if (founderPresentation?.presentation === ASK_DW_OPERATION_PRESENTATION.IMPERATIVE &&
-      (G5_ACTIONS.includes(parseAction(text)) || recognizeAskDwControlledActionJob({ text }))) return false
+      recognizeAskDwControlledActionJob({ text })) return false
   // Output is deliberately stricter than input. Recognising a founder's
   // request for analysis does not permit the model to promise future or
   // background work; only the already-established output predicates survive.
@@ -779,11 +787,21 @@ const VAGUE_CAPABILITY = /\bgreen\s?light\b|\bcleared\s+to\b|\bfree\s+to\b|\bgoo
  * Parses ONE proposition. Every dimension comes from this proposition's own
  * text; nothing is inherited from a sibling clause, sentence or field.
  */
-export function parseAuthorityProposition(proposition, { knownEntities = [], mode = ASK_DW_PARSE_MODE.ASSERTION } = {}) {
+export function parseAuthorityProposition(proposition, {
+  knownEntities = [], mode = ASK_DW_PARSE_MODE.ASSERTION, caseContext = null,
+  allowContextualEllipsis = false,
+} = {}) {
   const text = proposition.text
   const dwActor = parseActor(text, mode)
   const controlledAct = AR_ACT.test(text)
-  const unknownOperationalCandidate = ownsUnknownOperationalLanguage(text, mode, knownEntities)
+  const operationPresentation = mode === ASK_DW_PARSE_MODE.QUESTION
+    ? inspectAskDwFounderOperationPresentation({
+      text, knownEntities, caseContext, allowContextualEllipsis,
+    })
+    : null
+  const unknownOperationalCandidate = ownsUnknownOperationalLanguage(text, mode, {
+    knownEntities, caseContext, allowContextualEllipsis,
+  })
   const explicitDeontic = EXPLICIT_DEONTIC.test(text) || AUTHORITY_TRIGGER.test(text)
   const modalDeontic = MODAL_DEONTIC.test(text)
   // In a question, a leading wh-word is an interrogative, not the conditional
@@ -812,12 +830,20 @@ export function parseAuthorityProposition(proposition, { knownEntities = [], mod
     clientName: null, entityId: null, channel: null, approvalState: null,
     vagueCapability: false, grantIdentity: null,
     unknownOperationalCandidate,
+    operationTargetPresentation: operationPresentation?.targetPresentation ?? null,
+    contextualReference: operationPresentation?.referenceForm ?? null,
     frames: Object.freeze([...frames]),
     conditional: frames.has(ASK_DW_FRAME.CONDITION),
   }
   if (!authorityBearing) return Object.freeze(base)
 
-  const scope = parseScope(text, knownEntities)
+  const parsedScope = parseScope(text, knownEntities)
+  const unresolvedContextualScope =
+    operationPresentation?.targetPresentation === ASK_DW_OPERATION_TARGET_PRESENTATION.CONTEXTUAL_REFERENCE &&
+    !hasAskDwVerifiedActiveSubject(caseContext)
+  const scope = unresolvedContextualScope
+    ? { scopeType: ASK_DW_SCOPE_ASSERTION.UNKNOWN, clientName: null, entityId: null }
+    : parsedScope
   const approvalState = parseApproval(text)
   return Object.freeze({
     ...base,
@@ -981,16 +1007,22 @@ function refersToPastExecution(text) {
   return PERFECT_AUXILIARY.test(text) && PAST_PARTICIPLE_ACT.test(text)
 }
 
-export function classifyAskDwAuthorityRequest(text, { knownEntities = [] } = {}) {
+export function classifyAskDwAuthorityRequest(text, {
+  knownEntities = [], caseContext = null, allowContextualEllipsis = false,
+} = {}) {
   const raw = String(text || '')
   const normalized = normalizeAuthorityText(raw)
   if (!normalized) {
     return Object.freeze({ isAuthorityRequest: false, interrogative: false, proposition: null })
   }
   const stripped = normalized.replace(/[?!.,]+$/g, '')
+  const elliptical = allowContextualEllipsis === true
   const proposition = parseAuthorityProposition(
     { field: 'question', text: stripped, quoted: false, attributedTo: null },
-    { knownEntities, mode: ASK_DW_PARSE_MODE.QUESTION },
+    {
+      knownEntities, mode: ASK_DW_PARSE_MODE.QUESTION, caseContext,
+      allowContextualEllipsis: elliptical,
+    },
   )
   const interrogative = /\?/.test(raw) || INTERROGATIVE_OPENER.test(stripped)
   const historical = refersToPastExecution(stripped)
@@ -1001,7 +1033,7 @@ export function classifyAskDwAuthorityRequest(text, { knownEntities = [] } = {})
   // "restricted", or nothing of the kind.
   const approvalPrerequisite = asksAboutApprovalPrerequisite(stripped)
   const operationalPresentation = inspectAskDwFounderOperationPresentation({
-    text: stripped, knownEntities,
+    text: stripped, knownEntities, caseContext, allowContextualEllipsis: elliptical,
   })
   // In a prerequisite question the controlled operation's actor is established
   // by the relation itself. A noun such as "email" before the embedded `send`
@@ -1013,7 +1045,9 @@ export function classifyAskDwAuthorityRequest(text, { knownEntities = [] } = {})
   const asksAboutDwControlledAction =
     interrogative && AR_ACT.test(stripped) && questionActor === ASK_DW_ACTOR.DW
   const unknownOperationalQuestion =
-    ownsUnknownOperationalLanguage(stripped, ASK_DW_PARSE_MODE.QUESTION, knownEntities)
+    ownsUnknownOperationalLanguage(stripped, ASK_DW_PARSE_MODE.QUESTION, {
+      knownEntities, caseContext, allowContextualEllipsis: elliptical,
+    })
   const overview = CAPABILITY_OVERVIEW.test(stripped) || AUTHORITY_ENQUIRY.test(stripped)
   const isAuthorityRequest = Boolean(
     !historical && (
