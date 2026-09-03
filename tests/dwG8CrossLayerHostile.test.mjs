@@ -582,6 +582,22 @@ test('P16 an action with no canonical execution contract can never be proved', (
   assert.ok(codes(result).includes(DW_PROACTIVE_ISSUE.EXECUTION_WITHOUT_RECEIPT))
 })
 
+test('P17 one receipt does not license a second action inside the SAME sentence', () => {
+  // Two sentences would not prove this: a per-sentence check that accepted ANY
+  // proven action would still pass them one at a time. One sentence asserting
+  // two actions is what distinguishes "every action proven" from "some action
+  // proven", and only the former is honest.
+  const result = enforceDwProactiveGrounding({
+    narrative: { headline: 'DW sent the reminder and refunded Atlas.' },
+    truthLock: truthLock(),
+    governance: governanceOf(),
+    executionClaim: REAL_CLAIM,
+    executionReceipts: [realReceipt()],
+  })
+  assert.equal(result.blocked, true)
+  assert.ok(codes(result).includes(DW_PROACTIVE_ISSUE.EXECUTION_WITHOUT_RECEIPT))
+})
+
 test('P17 one valid receipt does not blanket a second, unproven action sentence', () => {
   const result = enforceDwProactiveGrounding({
     narrative: {

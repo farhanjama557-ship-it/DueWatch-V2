@@ -25,21 +25,29 @@
 
 import { ASK_DW_GROUNDING_ISSUE, enforceAskDwGrounding } from './askDwGroundingGuard.js'
 import {
-  ACTION_TYPE_SEND_REMINDER,
-  buildIdempotencyKey,
-} from '../../../supabase/functions/_shared/executionClaim.js'
+  DW_PROVABLE_EXECUTION_ACTIONS,
+  receiptProvesExecution,
+  verifyDwExecutionStatement,
+} from './dwExecutionPresentation.js'
+
+// Re-exported, not redefined: the closed set of provable actions is owned by
+// the execution-presentation contract, and existing importers keep working.
+export { DW_PROVABLE_EXECUTION_ACTIONS }
 
 /**
- * The CLOSED set of actions an execution receipt can prove.
+ * The role of the prose detector below, declared rather than assumed.
  *
- * Detection stays broad — the prose recognizer knows about refunds, waivers and
- * write-offs so it can REFUSE completed language about them. Proof stays closed:
- * only send_reminder has a canonical execution-claim contract in this
- * repository, so a fabricated { actionType: 'issue_refund', status: 'sent' }
- * must never license a sentence. An action with no execution contract fails
- * closed, which is the honest answer rather than a capability DW does not have.
+ * It is DEFENSE IN DEPTH: a best-effort reader that refuses suspicious-looking
+ * completed-action prose. It is NOT an English parser and it is NOT what makes
+ * the execution invariant true — dwExecutionPresentation is, by being the only
+ * producer of a statement DueWatch will present as its own completed work.
+ *
+ * Its blind spots are real and are recorded in the suite ("DW did send the
+ * reminder", "we confirmed accounting emailed us"). They cost a missed warning
+ * or an unnecessary one; they cannot produce a trusted execution claim,
+ * because prose is not a path to one.
  */
-export const DW_PROVABLE_EXECUTION_ACTIONS = Object.freeze([ACTION_TYPE_SEND_REMINDER])
+export const DW_PROSE_DETECTION_ROLE = 'DEFENSE_IN_DEPTH'
 
 export const DW_PROACTIVE_ISSUE = Object.freeze({
   UNGROUNDED_AMOUNT: 'UNGROUNDED_AMOUNT',
@@ -49,6 +57,7 @@ export const DW_PROACTIVE_ISSUE = Object.freeze({
   UNSUPPORTED_PROMISE_CLAIM: 'UNSUPPORTED_PROMISE_CLAIM',
   CLAIMED_AUTHORITY_WITHOUT_GRANT: 'CLAIMED_AUTHORITY_WITHOUT_GRANT',
   EXECUTION_WITHOUT_RECEIPT: 'EXECUTION_WITHOUT_RECEIPT',
+  EXECUTION_STATEMENT_NOT_RECEIPT_BACKED: 'EXECUTION_STATEMENT_NOT_RECEIPT_BACKED',
   ALL_CLEAR_WHILE_DEGRADED: 'ALL_CLEAR_WHILE_DEGRADED',
   INJECTED_INSTRUCTION_IN_NARRATIVE: 'INJECTED_INSTRUCTION_IN_NARRATIVE',
   UNSUPPORTED_URGENCY: 'UNSUPPORTED_URGENCY',
@@ -368,61 +377,6 @@ function assertedActions(sentence) {
 }
 
 /**
- * A receipt proves ONE action, for ONE tenant, invoice and client.
- *
- * The previous check accepted any object carrying status 'succeeded' — a value
- * the real execution-claim vocabulary (in_flight | sent | send_failed |
- * uncertain) never produces — and then treated every completed-action sentence
- * in the narrative as covered by it. A receipt for another invoice, another
- * tenant or another action proved nothing about the sentence in front of it.
- *
- * The real receipt shape is { userId, invoiceId, ruleId, actionType,
- * idempotencyKey }, written beside the execution claim; a claim reaches a
- * terminal successful state as status 'sent'.
- */
-const TERMINAL_SUCCESS = new Set(['sent'])
-
-/**
- * A receipt proves execution only when the FULL canonical identity matches.
- *
- * The execution-claim contract's identity is (userId, invoiceId, ruleId,
- * actionType), and the idempotency key is deterministically derived from
- * exactly that tuple. Comparing user, invoice and action while ignoring the
- * rule — and accepting any non-empty key — let a receipt for a different rule
- * stand in for this one. The key is now recomputed and compared, so a receipt
- * must carry the key its own identity produces.
- *
- * Nothing here reads a name out of prose: tenant, invoice, rule and action all
- * come from the structured claim.
- */
-function receiptProves({ receipts, claim, action }) {
-  if (!claim) return false
-  // An action with no canonical execution contract can never be proved.
-  if (!DW_PROVABLE_EXECUTION_ACTIONS.includes(action)) return false
-  // The claim itself must cover the action the sentence asserts.
-  if (claim.action !== action) return false
-
-  return safeArray(receipts).some((receipt) => {
-    if (!receipt || typeof receipt !== 'object') return false
-    if (!TERMINAL_SUCCESS.has(receipt.status)) return false
-    if (receipt.actionType !== action) return false
-    if (String(receipt.userId ?? '') !== String(claim.tenantId ?? '')) return false
-    if (String(receipt.invoiceId ?? '') !== String(claim.invoiceId ?? '')) return false
-    if (String(receipt.ruleId ?? '') !== String(claim.ruleId ?? '')) return false
-    if (claim.clientId != null && receipt.clientId != null &&
-        String(receipt.clientId) !== String(claim.clientId)) return false
-    // The key must be the one this exact identity derives, not merely present.
-    const expected = buildIdempotencyKey({
-      userId: receipt.userId,
-      invoiceId: receipt.invoiceId,
-      ruleId: receipt.ruleId,
-      actionType: receipt.actionType,
-    })
-    return expected != null && receipt.idempotencyKey === expected
-  })
-}
-
-/**
  * Checks one proactive narrative against the deterministic state it claims to
  * describe.
  *
@@ -441,10 +395,21 @@ export function enforceDwProactiveGrounding({
   attention = null,
   companyBrainContext = null,
   toolRuns = [],
+  executionStatements = [],
 } = {}) {
   const text = narrativeText(narrative)
   const issues = []
   const add = (code, detail) => issues.push({ code, detail, severity: 'BLOCK' })
+
+  // The ONLY execution surface. A statement is admitted because it verifies
+  // against the receipt contract that issued it, not because it arrived here
+  // looking plausible. Anything that fails is refused and named.
+  const presentableExecution = []
+  for (const statement of safeArray(executionStatements)) {
+    if (verifyDwExecutionStatement(statement)) presentableExecution.push(statement)
+    else add(DW_PROACTIVE_ISSUE.EXECUTION_STATEMENT_NOT_RECEIPT_BACKED,
+      'An execution statement was supplied that no exact receipt licenses.')
+  }
 
   // The shared claim checks, reused rather than reimplemented. The narrative is
   // adapted into the candidate shape the guard already understands; nothing
@@ -455,7 +420,7 @@ export function enforceDwProactiveGrounding({
     if (!claimsCompletedAction(sentence)) return false
     const actions = assertedActions(sentence)
     if (actions.length === 0) return false
-    return actions.every((action) => receiptProves({
+    return actions.every((action) => receiptProvesExecution({
       receipts: executionReceipts, claim: executionClaim, action,
     }))
   }
@@ -600,6 +565,10 @@ export function enforceDwProactiveGrounding({
     kind: 'DW_PROACTIVE_GROUNDING_V0',
     blocked: issues.length > 0,
     issues: issues.map((issue) => freeze(issue)),
+    // Receipt-backed statements, in this repository's own words. A consumer
+    // renders completed execution from HERE and from nowhere else; narrative
+    // prose is never promoted into this list, however confident it sounds.
+    presentableExecution: presentableExecution.map((statement) => freeze(statement)),
     // Retrieved text was read as a claim to be checked, never as a request to
     // be carried out. There is no path from narrative text to an operation.
     instructionsObeyed: false,
@@ -608,6 +577,10 @@ export function enforceDwProactiveGrounding({
       canExecute: false,
       canonicalMoneyWritable: false,
       retrievedContentIsData: true,
+      // The ownership contract, stated in the output a consumer already reads.
+      executionStatementOwner: 'RECEIPT',
+      narrativeMayStateExecution: false,
+      proseDetectionRole: DW_PROSE_DETECTION_ROLE,
     }),
   })
 }

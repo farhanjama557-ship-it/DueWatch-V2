@@ -30,7 +30,9 @@ import {
 } from '../src/lib/dwIntelligence/dwAttentionPriority.js'
 import {
   DW_PROACTIVE_ISSUE, DW_PROVABLE_EXECUTION_ACTIONS, enforceDwProactiveGrounding,
+  DW_PROSE_DETECTION_ROLE,
 } from '../src/lib/dwIntelligence/dwProactiveGrounding.js'
+import { DW_EXECUTION_COPY } from '../src/lib/dwIntelligence/dwExecutionPresentation.js'
 import {
   DW_INVESTIGATION_BOUNDS, DW_INVESTIGATION_SOURCE,
 } from '../src/lib/dwIntelligence/dwInvestigationInput.js'
@@ -46,6 +48,7 @@ const read = (relative) => readFileSync(path.join(root, relative), 'utf8')
 
 const G8_MODULES = [
   'src/lib/dwIntelligence/dwInvestigationInput.js',
+  'src/lib/dwIntelligence/dwExecutionPresentation.js',
   'src/lib/dwIntelligence/dwGovernanceContext.js',
   'src/lib/dwIntelligence/dwAttentionPriority.js',
   'src/lib/dwIntelligence/dwProactiveGrounding.js',
@@ -99,6 +102,7 @@ test('LOCK the proactive issue vocabulary is closed', () => {
   assert.deepEqual(Object.keys(DW_PROACTIVE_ISSUE).sort(), [
     'ALL_CLEAR_WHILE_DEGRADED',
     'CLAIMED_AUTHORITY_WITHOUT_GRANT',
+    'EXECUTION_STATEMENT_NOT_RECEIPT_BACKED',
     'EXECUTION_WITHOUT_RECEIPT',
     'INJECTED_INSTRUCTION_IN_NARRATIVE',
     'RESOLVED_AN_UNRESOLVED_CONFLICT',
@@ -109,6 +113,49 @@ test('LOCK the proactive issue vocabulary is closed', () => {
     'UNSUPPORTED_PROMISE_CLAIM',
     'UNSUPPORTED_URGENCY',
   ])
+})
+
+test('LOCK there is exactly ONE receipt verifier in the repository', () => {
+  // Two verifiers is two answers to "did this happen". The guard imports the
+  // presentation module's verifier; it must not keep a private copy.
+  const owner = read('src/lib/dwIntelligence/dwExecutionPresentation.js')
+  assert.ok(owner.includes('export function receiptProvesExecution('))
+  const others = sourceFiles().filter((relative) =>
+    relative !== 'src/lib/dwIntelligence/dwExecutionPresentation.js' &&
+    /function\s+receiptProves/.test(read(relative)))
+  assert.deepEqual(others, [], `a second receipt verifier exists in ${others.join(', ')}`)
+  const guard = read('src/lib/dwIntelligence/dwProactiveGrounding.js')
+  assert.ok(guard.includes("from './dwExecutionPresentation.js'"),
+    'the guard must delegate to the one verifier, not reimplement it')
+})
+
+test('LOCK execution copy is repository-owned and closed to provable actions', () => {
+  // A key here without a canonical execution contract would be a claim
+  // DueWatch cannot prove; model text must never reach this table.
+  assert.deepEqual(Object.keys(DW_EXECUTION_COPY), [...DW_PROVABLE_EXECUTION_ACTIONS])
+})
+
+test('LOCK the execution statement builder takes no free-form text', () => {
+  // The structural reason prose cannot create execution: it is not a parameter.
+  const owner = read('src/lib/dwIntelligence/dwExecutionPresentation.js')
+  const signature = owner.slice(
+    owner.indexOf('export function buildDwExecutionStatement('),
+    owner.indexOf('{ receipt = null, claim = null } = {}) {') + 40)
+  assert.ok(signature.includes('{ receipt = null, claim = null } = {}'),
+    'the builder must accept only a receipt and a typed claim')
+  for (const forbidden of ['narrative', 'headline', 'summary', 'prose', 'modelOutput', 'confidence']) {
+    assert.equal(signature.includes(forbidden), false,
+      `buildDwExecutionStatement must not accept ${forbidden}`)
+  }
+})
+
+test('LOCK the prose detector is declared defense-in-depth, not the boundary', () => {
+  assert.equal(DW_PROSE_DETECTION_ROLE, 'DEFENSE_IN_DEPTH')
+  const guard = read('src/lib/dwIntelligence/dwProactiveGrounding.js')
+  assert.ok(guard.includes('DEFENSE IN DEPTH'),
+    'the module must say plainly what the detector is for')
+  assert.equal(/complete English (parser|grammar)/i.test(guard), false,
+    'the detector must never be documented as a parser')
 })
 
 test('LOCK only send_reminder has a canonical execution contract to prove', () => {
