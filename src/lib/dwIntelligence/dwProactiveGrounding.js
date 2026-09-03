@@ -24,6 +24,22 @@
  */
 
 import { ASK_DW_GROUNDING_ISSUE, enforceAskDwGrounding } from './askDwGroundingGuard.js'
+import {
+  ACTION_TYPE_SEND_REMINDER,
+  buildIdempotencyKey,
+} from '../../../supabase/functions/_shared/executionClaim.js'
+
+/**
+ * The CLOSED set of actions an execution receipt can prove.
+ *
+ * Detection stays broad — the prose recognizer knows about refunds, waivers and
+ * write-offs so it can REFUSE completed language about them. Proof stays closed:
+ * only send_reminder has a canonical execution-claim contract in this
+ * repository, so a fabricated { actionType: 'issue_refund', status: 'sent' }
+ * must never license a sentence. An action with no execution contract fails
+ * closed, which is the honest answer rather than a capability DW does not have.
+ */
+export const DW_PROVABLE_EXECUTION_ACTIONS = Object.freeze([ACTION_TYPE_SEND_REMINDER])
 
 export const DW_PROACTIVE_ISSUE = Object.freeze({
   UNGROUNDED_AMOUNT: 'UNGROUNDED_AMOUNT',
@@ -175,20 +191,43 @@ function assertedActions(sentence) {
  */
 const TERMINAL_SUCCESS = new Set(['sent'])
 
+/**
+ * A receipt proves execution only when the FULL canonical identity matches.
+ *
+ * The execution-claim contract's identity is (userId, invoiceId, ruleId,
+ * actionType), and the idempotency key is deterministically derived from
+ * exactly that tuple. Comparing user, invoice and action while ignoring the
+ * rule — and accepting any non-empty key — let a receipt for a different rule
+ * stand in for this one. The key is now recomputed and compared, so a receipt
+ * must carry the key its own identity produces.
+ *
+ * Nothing here reads a name out of prose: tenant, invoice, rule and action all
+ * come from the structured claim.
+ */
 function receiptProves({ receipts, claim, action }) {
   if (!claim) return false
+  // An action with no canonical execution contract can never be proved.
+  if (!DW_PROVABLE_EXECUTION_ACTIONS.includes(action)) return false
+  // The claim itself must cover the action the sentence asserts.
+  if (claim.action !== action) return false
+
   return safeArray(receipts).some((receipt) => {
     if (!receipt || typeof receipt !== 'object') return false
     if (!TERMINAL_SUCCESS.has(receipt.status)) return false
-    if (typeof receipt.actionType !== 'string' || receipt.actionType.trim() === '') return false
-    if (typeof receipt.idempotencyKey !== 'string' || receipt.idempotencyKey.trim() === '') return false
-    // Identity must match the structured claim in every dimension it carries.
+    if (receipt.actionType !== action) return false
     if (String(receipt.userId ?? '') !== String(claim.tenantId ?? '')) return false
     if (String(receipt.invoiceId ?? '') !== String(claim.invoiceId ?? '')) return false
+    if (String(receipt.ruleId ?? '') !== String(claim.ruleId ?? '')) return false
     if (claim.clientId != null && receipt.clientId != null &&
         String(receipt.clientId) !== String(claim.clientId)) return false
-    // And it must be a receipt for THIS action, not merely for some action.
-    return receipt.actionType === action
+    // The key must be the one this exact identity derives, not merely present.
+    const expected = buildIdempotencyKey({
+      userId: receipt.userId,
+      invoiceId: receipt.invoiceId,
+      ruleId: receipt.ruleId,
+      actionType: receipt.actionType,
+    })
+    return expected != null && receipt.idempotencyKey === expected
   })
 }
 

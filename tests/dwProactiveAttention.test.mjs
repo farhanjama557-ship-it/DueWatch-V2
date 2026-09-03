@@ -40,6 +40,7 @@ import {
   DW_PROACTIVE_ISSUE,
   enforceDwProactiveGrounding,
 } from '../src/lib/dwIntelligence/dwProactiveGrounding.js'
+import { buildIdempotencyKey } from '../supabase/functions/_shared/executionClaim.js'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const TENANT = 'tenant-a'
@@ -203,12 +204,25 @@ test('G8-CP2-D2 a proactive narrative cannot claim an execution without a receip
   }
   // With a matching receipt, in the REAL claim vocabulary, the same sentence is
   // allowed. 'sent' is the terminal success status; 'succeeded' does not exist.
-  const withReceipt = ground({ headline: 'DW sent the reminder to Atlas.' }, {
-    executionClaim: { tenantId: TENANT, invoiceId: 'inv-a', clientId: 'client-a', action: 'send_reminder' },
-    executionReceipts: [{
-      userId: TENANT, invoiceId: 'inv-a', ruleId: 'rule-1',
-      actionType: 'send_reminder', idempotencyKey: 'key-1', status: 'sent',
-    }],
+  // SUPERSEDED by the final repair: the identity is (userId, invoiceId,
+  // ruleId, actionType) and the idempotency key must be the one that identity
+  // derives, so the ids have to be real and the key computed rather than typed.
+  const identity = {
+    userId: '11111111-1111-4111-8111-111111111111',
+    invoiceId: '22222222-2222-4222-8222-222222222222',
+    ruleId: '33333333-3333-4333-8333-333333333333',
+    actionType: 'send_reminder',
+  }
+  const withReceipt = enforceDwProactiveGrounding({
+    narrative: { headline: 'DW sent the reminder to Atlas.' },
+    truthLock: GROUNDED,
+    governance: buildDwGovernanceContext({ tenantId: TENANT, companyBrainContext: brainContext(brainReadModel()) }),
+    attention: attention({ items: [needsYouItem()] }),
+    executionClaim: {
+      tenantId: identity.userId, invoiceId: identity.invoiceId,
+      ruleId: identity.ruleId, action: 'send_reminder',
+    },
+    executionReceipts: [{ ...identity, idempotencyKey: buildIdempotencyKey(identity), status: 'sent' }],
   })
   assert.equal(withReceipt.blocked, false)
 })

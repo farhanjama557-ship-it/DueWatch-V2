@@ -30,6 +30,7 @@ import {
   enforceDwProactiveGrounding,
 } from '../src/lib/dwIntelligence/dwProactiveGrounding.js'
 import { projectNeedsYouCommandReadModel } from '../src/lib/dwIntelligence/phase2bCommandModels.js'
+import { buildIdempotencyKey } from '../supabase/functions/_shared/executionClaim.js'
 
 const A = 'tenant-a'
 const B = 'tenant-b'
@@ -127,11 +128,20 @@ test('CP2R-1b same client and invoice ids in two tenants never merge', () => {
 
 const TRUTH = { canonicalFacts: { balance: 10000, daysOverdue: 60, paid: false } }
 
-/** The real receipt shape: userId, invoiceId, ruleId, actionType, idempotencyKey. */
-const receipt = (o = {}) => ({
-  userId: A, invoiceId: 'inv-a', ruleId: 'rule-1',
-  actionType: 'send_reminder', idempotencyKey: 'key-1', status: 'sent', ...o,
-})
+/**
+ * The real receipt shape: userId, invoiceId, ruleId, actionType, and the
+ * idempotency key that exact identity derives. Ids must be uuid-shaped because
+ * buildIdempotencyKey refuses anything else.
+ */
+const IDS = {
+  userId: '11111111-1111-4111-8111-111111111111',
+  invoiceId: '22222222-2222-4222-8222-222222222222',
+  ruleId: '33333333-3333-4333-8333-333333333333',
+}
+const receipt = (o = {}) => {
+  const identity = { ...IDS, actionType: 'send_reminder', ...o }
+  return { ...identity, idempotencyKey: buildIdempotencyKey(identity), status: 'sent', ...o }
+}
 
 function ground(narrative, extra = {}) {
   return enforceDwProactiveGrounding({
@@ -147,10 +157,11 @@ function ground(narrative, extra = {}) {
 }
 
 test('CP2R-2 a receipt only proves its own tenant, invoice, client and action', () => {
-  const claim = { tenantId: A, invoiceId: 'inv-a', clientId: 'client-a', action: 'send_reminder' }
+  const claim = { tenantId: IDS.userId, invoiceId: IDS.invoiceId, ruleId: IDS.ruleId, action: 'send_reminder' }
   const mismatches = [
-    ['another invoice', receipt({ invoiceId: 'inv-b' })],
-    ['another tenant', receipt({ userId: B })],
+    ['another invoice', receipt({ invoiceId: '55555555-5555-4555-8555-555555555555' })],
+    ['another tenant', receipt({ userId: '66666666-6666-4666-8666-666666666666' })],
+    ['another rule', receipt({ ruleId: '77777777-7777-4777-8777-777777777777' })],
     ['another action', receipt({ actionType: 'issue_refund' })],
     ['an in-flight claim', receipt({ status: 'in_flight' })],
     ['a failed send', receipt({ status: 'send_failed' })],
@@ -169,7 +180,7 @@ test('CP2R-2 a receipt only proves its own tenant, invoice, client and action', 
 })
 
 test('CP2R-2b one receipt never covers a second, different execution claim', () => {
-  const claim = { tenantId: A, invoiceId: 'inv-a', clientId: 'client-a', action: 'send_reminder' }
+  const claim = { tenantId: IDS.userId, invoiceId: IDS.invoiceId, ruleId: IDS.ruleId, action: 'send_reminder' }
   const result = ground(
     { headline: 'DW sent the reminder to Atlas.', summary: 'DW refunded the balance.' },
     { executionReceipts: [receipt()], executionClaim: claim },
@@ -189,7 +200,7 @@ test('CP2R-2b one receipt never covers a second, different execution claim', () 
 })
 
 test('CP2R-2c impostors are still refused, and succeeded is not a real status', () => {
-  const claim = { tenantId: A, invoiceId: 'inv-a', clientId: 'client-a', action: 'send_reminder' }
+  const claim = { tenantId: IDS.userId, invoiceId: IDS.invoiceId, ruleId: IDS.ruleId, action: 'send_reminder' }
   const impostors = [
     ['a recommendation', { action: 'send_reminder', ruleId: 'rule-1' }],
     ['a staged action', { action: 'send_reminder', status: 'STAGED' }],

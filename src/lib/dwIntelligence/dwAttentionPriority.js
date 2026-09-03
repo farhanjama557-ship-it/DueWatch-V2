@@ -113,10 +113,12 @@ function blockedOnOperationalPolicy(item) {
   const authority = item?.authority
   if (!authority) return false
   if (authority.canActAutomatically === true) return false
-  return authority.policyAuthorized === false ||
-    authority.actual === 'NOT_GRANTED' ||
-    authority.actual === 'REVOKED' ||
-    authority.actual === 'EXPIRED'
+  // Only an explicit policy DENIAL counts. `actual` cannot carry this weight:
+  // phase2bReadModel's authoritySummary collapses it to GRANTED/NOT_GRANTED,
+  // so an ordinary case merely awaiting approval also reads NOT_GRANTED there.
+  // Treating that as an operational block masked FOUNDER_DECISION_REQUIRED on
+  // every approval case — the highest-ranked reason there is.
+  return authority.policyAuthorized === false
 }
 
 /**
@@ -148,6 +150,10 @@ function entry({
     invoiceId,
     detail,
     supportingRefs: [...refs].filter(Boolean),
+    // The observation THIS entry was built from, set before any merge. After
+    // dedupe it names which event is current, so a consumer never has to guess
+    // that from a merged ref list.
+    currentRef: [...refs].filter(Boolean)[0] ?? null,
     observedAt,
     needsFounder,
     blockedBy: REASON_BLOCKER[reason] ?? null,
@@ -331,7 +337,8 @@ export function buildDwAttention({
     // Every observed event stays inspectable; only the interruption collapses.
     const refs = [...existing.supportingRefs]
     for (const ref of item.supportingRefs) if (!refs.includes(ref)) refs.push(ref)
-    byIdentity.set(identity, { ...current, supportingRefs: refs })
+    // currentRef comes from the winning observation, not from the merged list.
+    byIdentity.set(identity, { ...current, supportingRefs: refs, currentRef: current.currentRef })
   }
   if (currentnessAmbiguous) degraded.push('CASE_CURRENTNESS_AMBIGUOUS')
   const deduped = [...byIdentity.values()]

@@ -162,9 +162,15 @@ export function projectNeedsYouCommandReadModel({
 
   // G8-CP2: the governed attention ordering, from the primitive Ask DW reads.
   // This is where the proactive lane stops being Company Brain blind — an
-  // unresolved conflict, revoked support or a case DW cannot act on now ranks
-  // here for the same reason and in the same order as it does for the founder
+  // unresolved conflict, revoked support or a case DW cannot clear ranks here
+  // for the same reason and in the same order as it does for the founder
   // asking directly. The queue is a reading of state; it authorises nothing.
+  //
+  // No g5Request is constructed. The case carries no typed action, scope or
+  // channel that could build one without inventing it, so this composition
+  // never resolves G5 authority and never claims a grant is absent; an
+  // operational block is reported as operational. See g5AuthorityResolved.
+  const byRunId = new Map(items.map((item) => [item.runId, item]))
   const attention = buildDwAttention({
     tenantId: userId,
     needsYouReadModel: {
@@ -187,11 +193,39 @@ export function projectNeedsYouCommandReadModel({
     limit: Math.max(items.length, 5),
   })
 
+  // The founder queue IS the shared answer, projected back into the existing
+  // item contract. Computing the attention result and then returning the old
+  // recency-ordered array left the primitive running but not load-bearing:
+  // the queue a founder actually saw was still ungoverned and still
+  // duplicated. Ordering and current-case selection now both come from
+  // attention, and each row carries the typed reason it ranked by.
+  //
+  // Company-Brain-only entries have no invoice to render in today's queue, so
+  // they stay in model.attention rather than forcing UI work into CP2.
+  const governedItems = []
+  for (const entry of attention.items) {
+    if (entry.source !== 'DW_INTELLIGENCE') continue
+    const current = byRunId.get(entry.currentRef)
+    if (!current) continue
+    governedItems.push({
+      ...current,
+      attentionReason: entry.reason,
+      attentionRank: entry.reasonRank,
+      attentionWhy: entry.why,
+      blockedBy: entry.blockedBy,
+      observedRefs: [...entry.supportingRefs],
+    })
+  }
+
   return freezeDeep({
     userId: userId ?? null,
-    count: items.length,
-    items,
+    count: governedItems.length,
+    items: governedItems,
     attention,
+    // Stated plainly: this composition resolved no G5 authority, because the
+    // case carries no typed request to resolve. A missing-grant reason is
+    // therefore unreachable here, and that is a fact rather than a silence.
+    g5AuthorityResolved: false,
     executionAvailable: false,
     authorityCanBeGrantedHere: false,
     boundary: FOUNDER_ACTION_BOUNDARY,
