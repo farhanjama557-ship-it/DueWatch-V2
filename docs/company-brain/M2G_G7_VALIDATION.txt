@@ -1037,6 +1037,116 @@ started. The standalone bundle is created and clean-room proved after this
 validation commit; its head and SHA-256 are reported in the final handoff.
 
 ==================================================
+9i. CLOSED-WORLD OPERATION ACCOUNTING FREEZE REPAIR
+==================================================
+
+Rejected starting candidate: eded3f34d047e504967219b5ebb115083d67d43d
+Repair base:                0aa199e53548872c8121b774dd6a70d2b6ab31ea
+Implementation:             8c63f849008d24c0de1f67209854d126f6da32f8
+Branch:                     g7-safe-by-default-action-boundary (isolated local repair)
+
+ROOT REPAIR. The coordinator/prefix proof introduced in 9h was replaced, not
+extended. askDwOperationStructure.js is now the single positive read-only
+operation registry and the untrusted typed extraction/validation seam. A
+READ_ONLY result requires complete source accounting by finite WRAPPER,
+OPERATION, ARGUMENT and RELATION components. Every component carries exact
+UTF-16 source offsets and source text. The validator independently rejects
+unknown schema keys, zero-width/out-of-range/surrogate-splitting offsets,
+source mismatches, overlaps, duplicate coverage, invalid order/ownership,
+unregistered or mismatched operation surfaces, invalid exact arguments,
+untyped relations and any non-ignorable residue. Extraction failure, missing
+or partial structure and disagreement all produce FAIL_CLOSED_CLARIFY.
+
+SHARED OWNERSHIP. The registered read-only surfaces now feed the ordinary
+askDwIntent positive classifier as well as the direct-request structural proof;
+the prior duplicate explanation/decision/prediction/investigation verb copies
+were removed. classifyAskDwIntent's fallback EXPLAIN remains usability-only and
+is never evidence of read-only safety. Exact G5 actions remain owned solely by
+the unchanged G5 authority path. Unknown operations are not added to AR_ACT or
+AR_ACT_VERB and remain deterministic clarification. The implementation adds no
+provider call, execution path, persistence, migration, Company Brain mutation,
+financial mutation or G8 behavior.
+
+ARGUMENT EXACTNESS. Compare operands must resolve exactly against tenant-known
+entities. "Reimburse Cedar" is never trimmed to "Cedar" or accepted because of
+capitalization; it is valid only if that exact entity exists in admitted tenant
+state. Other operation arguments use finite typed domain, metric, period,
+reference and question-complement grammars. Relations are typed only between
+two independently validated operations and are never globally ignored.
+
+INPUT/OUTPUT PATHS. Founder requests use the structural result before authority
+routing, so a safe prefix cannot return ownership to a colluding model. Model
+commitments use the same complete accounting through proposition extraction,
+candidate aggregation and enforceAskDwGrounding, while retaining the narrower
+no-fake-work output doctrine. Supported read-only multi-operation requests pass
+only when each operation and its arguments validate independently. Mixed or
+unknown composition clarifies/blocks regardless of whether the join is written
+as and, &, +, plus, as well as, while, before, / or another uncovered form.
+
+HOSTILE AND GENERATED PROOF. G7-OS1..OS10 inject extractors that lie about
+operation labels, omit unsafe tails, swallow whole clauses, hide operations in
+arguments, trim entity operands, overlap/duplicate spans, mismatch/out-range
+offsets, split Unicode surrogate pairs, return malformed/empty structures or
+throw. Generated prefix/suffix compositions cross five unknown operations with
+ten distinct join forms. The properties prove closed registry reachability,
+total accounting, span-swallowing immunity, label hostility, exact entities and
+failure monotonicity. G7-SD6/SD9/SD10 run representative safe, unknown and mixed
+requests through conversational classification, the real orchestrator with a
+colluding model/verifier, proposition aggregation and the real grounding guard.
+G7-SD11 removes argument validation in a source mutant and demonstrates the
+unsafe safe-prefix behavior returning.
+
+SELF-REVIEW GATE:
+
+  1. Safe prefix sanitizes unknown tail?                    NO
+  2. Hostile extractor can omit unsafe text and pass?       NO
+  3. Giant safe clause can swallow unsafe text?             NO
+  4. Unsafe text can hide inside an entity/argument?        NO
+  5. Extractor can lie about operation IDs?                 NO
+  6. Overlapping/duplicate spans can fabricate coverage?    NO
+  7. Invalid Unicode/string offsets can pass?               NO
+  8. Extraction failure can default to EXPLAIN?             NO
+  9. Capitalization determines safety?                      NO
+ 10. G5 ownership duplicated or weakened?                   NO
+ 11. Future/background commitments widened?                 NO
+ 12. G8 implementation entered the tree?                    NO
+
+VALIDATION (actual implementation tree):
+
+  Structural + boundary    92 tests; 92 pass; 0 fail; 0 skip
+  G5 gate                 362 tests; 362 pass; 0 fail; 0 skip
+  G6 gate                 504 tests; 490 pass; 0 fail; 14 skip
+  Ask DW                  371 tests; 371 pass; 0 fail; 0 skip
+  G7 focused              192 tests; 192 pass; 0 fail; 0 skip
+  Full npm test          1690 tests; 1676 pass; 0 fail; 14 skip
+  Production build       PASS (existing externalized-node/chunk warnings only)
+  git diff --check       CLEAN
+  System Brain audit     PASS; 14 routes, 7 Ask DW read tools,
+                         tenant_row_data_read:false
+
+The fourteen G6 PostgreSQL runtime tests were honestly skipped because no
+PostgreSQL server/socket was available. Live Groq/Supabase evaluation and
+browser automation were not run because their credentials/runtime were not
+available; the deterministic real orchestrator and colluding-model harnesses
+were run.
+
+SCANS AND LOCKS. Added production lines contain no credential/secret literal,
+canonical financial write, authority mutation/execution primitive, provider or
+network call, or new tenant data path. No src/lib/companyBrain or migration file
+changed, so G5 and persistence semantics are untouched. No G8 path or file was
+created. Historical M2D Git blob locks remain exactly:
+
+  supabase/functions/_shared/askDwOpenAiContract.js
+    e3870f6ffc62fea71118a9202d79af00cdf70477
+  supabase/functions/ask-dw-model/index.ts
+    b687f54b07ac7f9f31596a7cdf42a472d4ab8855
+
+The canonical local m2g/company-brain-bootstrap-g7 branch remained unmoved at
+7136985beb7e9e664989d964e09a256fbf77ebce. Nothing was pushed. A complete-history
+standalone bundle and clean-room proof are produced after the doc-only
+validation commit and reported in the final handoff.
+
+==================================================
 10. EXIT DECISION
 ==================================================
 
@@ -1045,6 +1155,7 @@ section 9b, the independent-audit targeted repair in section 9c, and the
 input/output authority closure in section 9d, the question-semantics closure
 in section 9e, the safe-by-default action boundary in section 9f, and the
 shared read-only job repair in section 9g, and the mixed-operation composition
-repair in section 9h, is a G7 FREEZE CANDIDATE. All material source-level
+repair in section 9h, and the closed-world operation-accounting replacement in
+section 9i, is a G7 FREEZE CANDIDATE. All material source-level
 requirements have implementation and executable evidence. External validation
 limitations are stated above rather than hidden. G8 was not started.
