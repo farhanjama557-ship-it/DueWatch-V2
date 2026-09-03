@@ -289,13 +289,13 @@ function dwSelfOperationPhrase(text) {
   return parseDwSelfOperation(text)?.phrase ?? null
 }
 
-function ownsUnknownOperationalLanguage(text, mode) {
+function ownsUnknownOperationalLanguage(text, mode, knownEntities = []) {
   const phrase = mode === ASK_DW_PARSE_MODE.QUESTION
     ? extractDirectAskDwOperationPhrase(text)
     : dwSelfOperationPhrase(text)
   if (phrase == null) return false
   const knownReadOnlyQuestion = mode === ASK_DW_PARSE_MODE.QUESTION &&
-    recognizeKnownReadOnlyAskDwJob({ text }) != null
+    recognizeKnownReadOnlyAskDwJob({ text, knownEntities }) != null
   if (knownReadOnlyQuestion) return false
   // Output is deliberately stricter than input. Recognising a founder's
   // request for analysis does not permit the model to promise future or
@@ -774,7 +774,7 @@ export function parseAuthorityProposition(proposition, { knownEntities = [], mod
   const text = proposition.text
   const dwActor = parseActor(text, mode)
   const controlledAct = AR_ACT.test(text)
-  const unknownOperationalCandidate = ownsUnknownOperationalLanguage(text, mode)
+  const unknownOperationalCandidate = ownsUnknownOperationalLanguage(text, mode, knownEntities)
   const explicitDeontic = EXPLICIT_DEONTIC.test(text) || AUTHORITY_TRIGGER.test(text)
   const modalDeontic = MODAL_DEONTIC.test(text)
   // In a question, a leading wh-word is an interrogative, not the conditional
@@ -1000,7 +1000,7 @@ export function classifyAskDwAuthorityRequest(text, { knownEntities = [] } = {})
   const asksAboutDwControlledAction =
     interrogative && AR_ACT.test(stripped) && questionActor === ASK_DW_ACTOR.DW
   const unknownOperationalQuestion =
-    interrogative && ownsUnknownOperationalLanguage(stripped, ASK_DW_PARSE_MODE.QUESTION)
+    interrogative && ownsUnknownOperationalLanguage(stripped, ASK_DW_PARSE_MODE.QUESTION, knownEntities)
   const overview = CAPABILITY_OVERVIEW.test(stripped) || AUTHORITY_ENQUIRY.test(stripped)
   const isAuthorityRequest = Boolean(
     !historical && (

@@ -50,6 +50,10 @@ import { createAskDwOrchestrator } from '../src/lib/dwIntelligence/askDwOrchestr
 
 const AS_OF = '2026-09-02T09:00:00.000Z'
 const PASS = Object.freeze({ verdict: 'PASS', issues: [], checkedClaims: [] })
+const KNOWN_ENTITIES = Object.freeze([
+  { id: 'atlas', name: 'Atlas', aliases: ['Atlas'] },
+  { id: 'cedar', name: 'Cedar', aliases: ['Cedar'] },
+])
 
 function grant(overrides = {}) {
   return {
@@ -1482,8 +1486,8 @@ test('G7-SD2 unknown first-person DW operations fail closed; closed read-only wo
     'Will you summarize the evidence?',
     'Could you show me what changed?',
   ]) {
-    assert.equal(classifyAskDwAuthorityRequest(question).isAuthorityRequest, false, question)
-    assert.notEqual(classifyAskDwConversationalTurn({ text: question }).turnType,
+    assert.equal(classifyAskDwAuthorityRequest(question, { knownEntities: KNOWN_ENTITIES }).isAuthorityRequest, false, question)
+    assert.notEqual(classifyAskDwConversationalTurn({ text: question, knownEntities: KNOWN_ENTITIES }).turnType,
       ASK_DW_TURN.AUTHORITY_QUESTION, question)
   }
   for (const question of [
@@ -1583,15 +1587,23 @@ test('G7-SD4 verbal founder approval prerequisites preserve their relation and a
   }
 })
 
-async function importAuthorityBoundaryMutant(replacements, label, intentReplacements = []) {
+async function importAuthorityBoundaryMutant(replacements, label, intentReplacements = [], structureReplacements = []) {
   let source = readFileSync(
     new URL('../src/lib/dwIntelligence/askDwAuthorityProposition.js', import.meta.url), 'utf8')
   let intentSource = readFileSync(
     new URL('../src/lib/dwIntelligence/askDwIntent.js', import.meta.url), 'utf8')
+  let structureSource = readFileSync(
+    new URL('../src/lib/dwIntelligence/askDwOperationStructure.js', import.meta.url), 'utf8')
+  for (const [from, to] of structureReplacements) {
+    assert.ok(structureSource.includes(from), `structure mutation anchor missing: ${label}`)
+    structureSource = structureSource.replace(from, to)
+  }
+  const structureUrl = `data:text/javascript;base64,${Buffer.from(structureSource).toString('base64')}`
   for (const [from, to] of intentReplacements) {
     assert.ok(intentSource.includes(from), `intent mutation anchor missing: ${label}`)
     intentSource = intentSource.replace(from, to)
   }
+  intentSource = intentSource.replaceAll("'./askDwOperationStructure.js'", `'${structureUrl}'`)
   const intentUrl = `data:text/javascript;base64,${Buffer.from(intentSource).toString('base64')}`
   source = source.replace("'./askDwIntent.js'", `'${intentUrl}'`)
   for (const [from, to] of replacements) {
@@ -1604,7 +1616,7 @@ async function importAuthorityBoundaryMutant(replacements, label, intentReplacem
 test('G7-SD5 mutation proof: every structural ownership repair is load-bearing', async () => {
   const oldQuestionOwnership = await importAuthorityBoundaryMutant([
     ['(unknownOperationalCandidate && !exempted) ||', 'false ||'],
-    ['interrogative && ownsUnknownOperationalLanguage(stripped, ASK_DW_PARSE_MODE.QUESTION)', 'interrogative && false'],
+    ['interrogative && ownsUnknownOperationalLanguage(stripped, ASK_DW_PARSE_MODE.QUESTION, knownEntities)', 'interrogative && false'],
   ], 'unknown-question-model-owned')
   assert.equal(oldQuestionOwnership.classifyAskDwAuthorityRequest(
     'Will you reach out to Atlas tomorrow?').isAuthorityRequest, false,
@@ -1650,16 +1662,19 @@ const KNOWN_READ_ONLY_QUESTIONS = Object.freeze([
   ['Could you show me what changed?', 'EXPLAIN', ASK_DW_TURN.WHAT_CHANGED],
   ['Can you compare Atlas and Cedar?', 'EXPLAIN', ASK_DW_TURN.AR_JOB],
   ['Can you calculate DSO?', 'EXPLAIN', ASK_DW_TURN.AR_JOB],
+  ['Can you explain and summarize the Atlas history?', 'EXPLAIN', ASK_DW_TURN.AR_JOB],
+  ['Can you investigate and recommend the next step?', 'DECIDE', ASK_DW_TURN.AR_JOB],
+  ['Can you compare Atlas and Cedar and explain the difference?', 'EXPLAIN', ASK_DW_TURN.AR_JOB],
 ])
 
 test('G7-SD6 one positive read-only recognizer preserves known Ask DW jobs end to end', async () => {
   for (const [question, expectedJob, expectedTurn] of KNOWN_READ_ONLY_QUESTIONS) {
-    const recognized = recognizeKnownReadOnlyAskDwJob({ text: question })
+    const recognized = recognizeKnownReadOnlyAskDwJob({ text: question, knownEntities: KNOWN_ENTITIES })
     assert.ok(recognized, question)
     assert.equal(recognized.job, expectedJob, question)
-    assert.equal(classifyAskDwAuthorityRequest(question).isAuthorityRequest, false, question)
+    assert.equal(classifyAskDwAuthorityRequest(question, { knownEntities: KNOWN_ENTITIES }).isAuthorityRequest, false, question)
 
-    const turn = classifyAskDwConversationalTurn({ text: question })
+    const turn = classifyAskDwConversationalTurn({ text: question, knownEntities: KNOWN_ENTITIES })
     assert.notEqual(turn.turnType, ASK_DW_TURN.AUTHORITY_QUESTION, question)
     assert.equal(turn.turnType, expectedTurn, question)
     if (expectedTurn === ASK_DW_TURN.AR_JOB) {
@@ -1668,7 +1683,12 @@ test('G7-SD6 one positive read-only recognizer preserves known Ask DW jobs end t
 
     const result = await colludingOrchestrator('READ_ONLY MODEL ANSWER').run({
       mode: 'normal', text: question,
-      context: { tenantId: 'tenant-a', companyBrainReadModel: brainReadModel([]) },
+      context: {
+        tenantId: 'tenant-a',
+        companyBrainReadModel: brainReadModel([
+          grant(), grant({ grantId: 'g2', scope: { level: 'CLIENT', clientId: 'cedar' } }),
+        ]),
+      },
     })
     assert.equal(result.conversation.authorityAnswer, null, question)
     assert.equal(result.safeguards.authorityAnswerOwnedByDeterministicCode, false, question)
@@ -1708,7 +1728,7 @@ test('G7-SD7 intent fallback EXPLAIN is not proof that unknown operations are sa
 test('G7-SD8 mutation proof: removing shared read-only recognition reopens routing drift', async () => {
   const mutant = await importAuthorityBoundaryMutant([
     [
-      'const knownReadOnlyQuestion = mode === ASK_DW_PARSE_MODE.QUESTION &&\n    recognizeKnownReadOnlyAskDwJob({ text }) != null',
+      'const knownReadOnlyQuestion = mode === ASK_DW_PARSE_MODE.QUESTION &&\n    recognizeKnownReadOnlyAskDwJob({ text, knownEntities }) != null',
       'const knownReadOnlyQuestion = false',
     ],
   ], 'known-read-only-owner-removed')
@@ -1723,6 +1743,13 @@ test('G7-SD8 mutation proof: removing shared read-only recognition reopens routi
 
 const MIXED_READ_ONLY_AND_UNKNOWN_QUESTIONS = Object.freeze([
   'Can you explain and reimburse Atlas?',
+  'Can you explain & reimburse Atlas?',
+  'Can you explain + reimburse Atlas?',
+  'Can you explain plus reimburse Atlas?',
+  'Can you explain as well as reimburse Atlas?',
+  'Can you explain while reimbursing Atlas?',
+  'Can you explain before reimbursing Atlas?',
+  'Can you explain / reimburse Atlas?',
   'Can you investigate and reimburse Atlas?',
   'Can you forecast and reimburse Atlas?',
   'Can you recommend and reimburse Atlas?',
@@ -1761,9 +1788,11 @@ test('G7-SD9 a safe prefix cannot sanitize a coordinated unknown founder operati
 test('G7-SD10 coordinated unknown model commitments survive segmentation and fail closed', () => {
   for (const text of [
     'I will explain and reimburse Atlas.',
+    'I will explain & reimburse Atlas.',
     'I can summarize the account and then reimburse Atlas.',
     'I can show the evidence and forgive the late fee.',
     'I will compare the accounts and then ping Atlas.',
+    'I will compare Atlas and Reimburse Cedar.',
   ]) {
     const direct = parseAuthorityProposition(
       { text, field: 'f', quoted: false, attributedTo: null }, {})
@@ -1787,11 +1816,11 @@ test('G7-SD10 coordinated unknown model commitments survive segmentation and fai
   }
 })
 
-test('G7-SD11 mutation proof: a leading safe predicate cannot exempt the whole operation', async () => {
-  const mutant = await importAuthorityBoundaryMutant([], 'leading-safe-prefix-restored', [
+test('G7-SD11 mutation proof: argument validation prevents a safe operation span swallowing an unsafe tail', async () => {
+  const mutant = await importAuthorityBoundaryMutant([], 'unvalidated-operation-tail', [], [
     [
-      ': completeReadOnlyJob(operationPhrase, leadingReadOnlyJob)',
-      ': leadingReadOnlyJob(normalizedText(operationPhrase))',
+      "if (!isClosedArgument(operation.operationId, argumentText, knownEntities)) issues.push('ARGUMENT_INVALID')",
+      '// mutation: trust the proposed argument without validating it',
     ],
   ])
   for (const question of MIXED_READ_ONLY_AND_UNKNOWN_QUESTIONS) {
