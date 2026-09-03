@@ -15,6 +15,12 @@ export const ASK_DW_OPERATION_MODE = Object.freeze({
   MODEL_COMMITMENT: 'MODEL_COMMITMENT',
 })
 
+export const ASK_DW_OPERATION_PRESENTATION = Object.freeze({
+  MODAL_DIRECT: 'MODAL_DIRECT',
+  IMPERATIVE: 'IMPERATIVE',
+  MODEL_COMMITMENT: 'MODEL_COMMITMENT',
+})
+
 export const ASK_DW_OPERATION_SAFETY = Object.freeze({
   READ_ONLY: 'READ_ONLY',
   FAIL_CLOSED_CLARIFY: 'FAIL_CLOSED_CLARIFY',
@@ -154,6 +160,7 @@ function isClosedArgument(operationId, value, knownEntities) {
     case 'DECIDE':
       return /^(?:what\s+i\s+should\s+focus\s+on|what\s+(?:to\s+do|comes)\s+next|(?:the\s+)?best\s+next\s+step)$/i.test(argument)
     case 'SHOW':
+      if (/^me(?:\s+why)?$/i.test(argument)) return true
       return /^(?:me\s+)?(?:what\s+changed|the\s+(?:evidence|balance|history|admitted\s+facts)|(?:the\s+)?facts|(?:the\s+)?difference)$/i.test(argument) || domain.test(argument) || entityOnly
     case 'SUMMARIZE':
       return /^(?:the\s+)?(?:evidence|account\s+history|history|facts)$/i.test(argument) || domain.test(argument) ||
@@ -209,10 +216,74 @@ function wrapperFor(source, mode) {
   return { start: leading, end: leading + match[0].length, text: match[0] }
 }
 
-export function extractDirectAskDwOperationPhrase(text) {
+const NON_IMPERATIVE_OPENING = /^(?:what|which|when|where|who|whom|whose|why|how|may|might|can|could|should|would|will|shall|must|do|does|did|are|is|am|was|were|have|has|had|i|we|you|he|she|they|it|this|that|these|those|there|and|or|but|company|our|policy|portfolio|status|daily|top|anything)\b/i
+const OPERATIONAL_DOMAIN_TARGET = /\b(?:late\s+fees?|payments?|balances?|invoices?|accounts?|clients?|customers?|reminders?)\b/i
+
+function wrapperlessImperativeStart(source, knownEntities = []) {
+  const leading = /^\s*/u.exec(source)[0].length
+  const tail = source.slice(leading)
+  if (!tail || NON_IMPERATIVE_OPENING.test(tail)) return null
+
+  const polite = /^please\s+/i.exec(tail)
+  if (polite) {
+    const wrapper = { start: leading, end: leading + polite[0].length, text: polite[0] }
+    return { operationStart: wrapper.end, wrappers: [wrapper] }
+  }
+
+  // A registered predicate is positive proof of an imperative presentation.
+  // Unknown predicates are claimed only when their complement is visibly in
+  // the AR domain (or names an admitted tenant entity). This is deliberately a
+  // target grammar, not an unsafe-verb list: the verb remains unknown and can
+  // therefore only fail closed.
+  if (surfaceAt(source, leading)) return { operationStart: leading, wrappers: [] }
+  const firstWord = /^[\p{L}][\p{L}\p{M}'-]*/u.exec(tail)
+  if (!firstWord) return null
+  const complement = tail.slice(firstWord[0].length)
+  const namesKnownEntity = entityForms(knownEntities).some((form) =>
+    new RegExp(`(?:^|[^\\p{L}\\p{N}_])${escapeRegex(form)}(?=$|[^\\p{L}\\p{N}_])`, 'iu').test(complement))
+  const namesUnresolvedProperTarget = /(?:^|\s)[A-Z][\p{L}\p{M}\p{N}&.'-]*(?=\s|[.!?]|$)/u.test(complement)
+  if (!namesKnownEntity && !namesUnresolvedProperTarget && !OPERATIONAL_DOMAIN_TARGET.test(complement)) return null
+  return { operationStart: leading, wrappers: [] }
+}
+
+function operationPresentationFor(source, mode, knownEntities = []) {
+  const modalWrapper = wrapperFor(source, mode)
+  if (modalWrapper) {
+    const wrappers = [modalWrapper]
+    let operationStart = modalWrapper.end
+    if (mode === ASK_DW_OPERATION_MODE.FOUNDER_REQUEST) {
+      const polite = /^please\s+/i.exec(source.slice(operationStart))
+      if (polite) {
+        const wrapper = { start: operationStart, end: operationStart + polite[0].length, text: polite[0] }
+        wrappers.push(wrapper)
+        operationStart = wrapper.end
+      }
+    }
+    return {
+      presentation: mode === ASK_DW_OPERATION_MODE.FOUNDER_REQUEST
+        ? ASK_DW_OPERATION_PRESENTATION.MODAL_DIRECT
+        : ASK_DW_OPERATION_PRESENTATION.MODEL_COMMITMENT,
+      operationStart,
+      wrappers,
+    }
+  }
+  if (mode !== ASK_DW_OPERATION_MODE.FOUNDER_REQUEST) return null
+  const imperative = wrapperlessImperativeStart(source, knownEntities)
+  return imperative ? { presentation: ASK_DW_OPERATION_PRESENTATION.IMPERATIVE, ...imperative } : null
+}
+
+export function inspectAskDwFounderOperationPresentation({ text, knownEntities = [] } = {}) {
   const source = String(text || '')
-  const wrapper = wrapperFor(source, ASK_DW_OPERATION_MODE.FOUNDER_REQUEST)
-  return wrapper ? source.slice(wrapper.end).trim() : null
+  const presentation = operationPresentationFor(source, ASK_DW_OPERATION_MODE.FOUNDER_REQUEST, knownEntities)
+  if (!presentation) return null
+  return Object.freeze({
+    presentation: presentation.presentation,
+    operationPhrase: source.slice(presentation.operationStart).trim(),
+  })
+}
+
+export function extractDirectAskDwOperationPhrase(text, { knownEntities = [] } = {}) {
+  return inspectAskDwFounderOperationPresentation({ text, knownEntities })?.operationPhrase ?? null
 }
 
 function component(kind, start, end, source, extra = {}) {
@@ -223,20 +294,18 @@ function component(kind, start, end, source, extra = {}) {
  * Deterministic extractor. Its output has no authority by itself and is fed
  * through the same validator as an injected/model-proposed structure.
  */
-export function extractAskDwOperationStructure({ text, mode = ASK_DW_OPERATION_MODE.FOUNDER_REQUEST } = {}) {
+export function extractAskDwOperationStructure({
+  text, mode = ASK_DW_OPERATION_MODE.FOUNDER_REQUEST, knownEntities = [],
+} = {}) {
   const source = String(text || '')
-  const wrapper = wrapperFor(source, mode)
-  if (!wrapper) return null
+  const presentation = operationPresentationFor(source, mode, knownEntities)
+  if (!presentation) return null
   let phraseEnd = source.length
-  while (phraseEnd > wrapper.end && /[\s.!?]/u.test(source[phraseEnd - 1])) phraseEnd -= 1
-  let cursor = wrapper.end
+  while (phraseEnd > presentation.operationStart && /[\s.!?]/u.test(source[phraseEnd - 1])) phraseEnd -= 1
+  let cursor = presentation.operationStart
   while (cursor < phraseEnd && /\s/u.test(source[cursor])) cursor += 1
-  const polite = /^please\s+/i.exec(source.slice(cursor, phraseEnd))
-  const components = [component(ASK_DW_OPERATION_COMPONENT.WRAPPER, wrapper.start, wrapper.end, source)]
-  if (polite) {
-    components.push(component(ASK_DW_OPERATION_COMPONENT.WRAPPER, cursor, cursor + polite[0].length, source))
-    cursor += polite[0].length
-  }
+  const components = presentation.wrappers.map((wrapper) =>
+    component(ASK_DW_OPERATION_COMPONENT.WRAPPER, wrapper.start, wrapper.end, source))
 
   let operation = surfaceAt(source, cursor)
   if (!operation) {
@@ -371,16 +440,14 @@ export function validateAskDwOperationStructure({
   }
   if (coveredUntil < source.length && !IGNORABLE_GAP.test(source.slice(coveredUntil))) issues.push('UNCOVERED_SOURCE')
 
-  const expectedWrapper = wrapperFor(source, mode)
+  const expectedPresentation = operationPresentationFor(source, mode, knownEntities)
+  const expectedWrappers = expectedPresentation?.wrappers ?? []
   const wrapperItems = proposal.components.filter((item) => item.kind === ASK_DW_OPERATION_COMPONENT.WRAPPER)
-  if (!expectedWrapper || wrapperItems.length < 1 || wrapperItems[0].sourceStart !== expectedWrapper.start ||
-      wrapperItems[0].sourceEnd !== expectedWrapper.end || wrapperItems[0].sourceText !== expectedWrapper.text) {
+  if (!expectedPresentation || wrapperItems.length !== expectedWrappers.length ||
+      wrapperItems.some((item, index) => item.sourceStart !== expectedWrappers[index]?.start ||
+        item.sourceEnd !== expectedWrappers[index]?.end || item.sourceText !== expectedWrappers[index]?.text)) {
     issues.push('WRAPPER_INVALID')
   }
-  if (wrapperItems.length > 2 || (wrapperItems[1] && (
-    wrapperItems[1].sourceStart !== expectedWrapper?.end ||
-    !/^please\s+$/i.test(wrapperItems[1].sourceText)
-  ))) issues.push('WRAPPER_INVALID')
   if (operations.length === 0 || operations.length > MAX_OPERATIONS) issues.push('OPERATION_COUNT_INVALID')
 
   for (let index = 0; index < operations.length; index += 1) {
@@ -440,7 +507,7 @@ export function classifyAskDwReadOnlyOperation({
 } = {}) {
   let proposal = null
   try {
-    proposal = extractor({ text, mode })
+    proposal = extractor({ text, mode, knownEntities })
   } catch {
     return failed(['EXTRACTION_FAILED'])
   }

@@ -5,7 +5,11 @@ import {
   recognizeRegisteredAskDwReadOnlyJob,
 } from './askDwOperationStructure.js'
 
-export { extractDirectAskDwOperationPhrase } from './askDwOperationStructure.js'
+export {
+  ASK_DW_OPERATION_PRESENTATION,
+  extractDirectAskDwOperationPhrase,
+  inspectAskDwFounderOperationPresentation,
+} from './askDwOperationStructure.js'
 
 export const ASK_DW_JOB = Object.freeze({
   EXPLAIN: 'EXPLAIN',
@@ -65,11 +69,19 @@ export function isCompleteKnownReadOnlyModelOperation({ operationPhrase } = {}) 
 }
 
 function positivelyRecognizedJob(value) {
-  if (hasAny(value, ACT_TERMS) || isMarkPaidCommand(value)) return ASK_DW_JOB.ACT
+  if (recognizeAskDwControlledActionJob({ text: value })) return ASK_DW_JOB.ACT
   if (hasAny(value, DECIDE_TERMS)) return ASK_DW_JOB.DECIDE
   if (hasAny(value, PREDICT_TERMS)) return ASK_DW_JOB.PREDICT
   if (hasAny(value, INVESTIGATE_TERMS)) return ASK_DW_JOB.INVESTIGATE
   return recognizeRegisteredAskDwReadOnlyJob(value)?.job ?? null
+}
+
+/** Existing controlled activation vocabulary; never evidence of read-only safety. */
+export function recognizeAskDwControlledActionJob({ text } = {}) {
+  const value = normalizedText(text)
+  return hasAny(value, ACT_TERMS) || isMarkPaidCommand(value)
+    ? Object.freeze({ job: ASK_DW_JOB.ACT, source: 'deterministic_controlled_action_recognizer' })
+    : null
 }
 
 /**
@@ -81,7 +93,7 @@ function positivelyRecognizedJob(value) {
 export function recognizeKnownReadOnlyAskDwJob({ text, knownEntities = [] } = {}) {
   const value = normalizedText(text)
   if (!value) return null
-  const operationPhrase = extractDirectAskDwOperationPhrase(text)
+  const operationPhrase = extractDirectAskDwOperationPhrase(text, { knownEntities })
   const structural = operationPhrase == null ? null : classifyAskDwReadOnlyOperation({
     text,
     mode: ASK_DW_OPERATION_MODE.FOUNDER_REQUEST,

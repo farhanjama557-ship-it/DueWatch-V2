@@ -4,10 +4,12 @@ import assert from 'node:assert/strict'
 import {
   ASK_DW_OPERATION_COMPONENT,
   ASK_DW_OPERATION_MODE,
+  ASK_DW_OPERATION_PRESENTATION,
   ASK_DW_OPERATION_SAFETY,
   ASK_DW_READ_ONLY_OPERATION_REGISTRY,
   classifyAskDwReadOnlyOperation,
   extractAskDwOperationStructure,
+  inspectAskDwFounderOperationPresentation,
   validateAskDwOperationStructure,
 } from '../src/lib/dwIntelligence/askDwOperationStructure.js'
 
@@ -189,5 +191,88 @@ test('G7-OS10 model commitments use the same complete structural accounting', ()
     'I will compare Atlas and Reimburse Cedar.',
   ]) {
     assert.equal(readOnly(text, { mode: ASK_DW_OPERATION_MODE.MODEL_COMMITMENT }).readOnly, false, text)
+  }
+})
+
+test('G7-OS11 imperatives use the same structure without a fabricated modal wrapper', () => {
+  const plain = extractAskDwOperationStructure({
+    text: 'Explain the Atlas balance.', knownEntities: ENTITIES,
+  })
+  assert.ok(plain)
+  assert.equal(plain.components.some((item) => item.kind === ASK_DW_OPERATION_COMPONENT.WRAPPER), false)
+  assert.equal(readOnly('Explain the Atlas balance.').readOnly, true)
+  assert.equal(inspectAskDwFounderOperationPresentation({
+    text: 'Explain the Atlas balance.', knownEntities: ENTITIES,
+  }).presentation, ASK_DW_OPERATION_PRESENTATION.IMPERATIVE)
+
+  const polite = extractAskDwOperationStructure({
+    text: 'Please explain the Atlas balance.', knownEntities: ENTITIES,
+  })
+  const wrappers = polite.components.filter((item) => item.kind === ASK_DW_OPERATION_COMPONENT.WRAPPER)
+  assert.equal(wrappers.length, 1)
+  assert.equal(wrappers[0].sourceText, 'Please ')
+  assert.equal(readOnly('Please explain the Atlas balance.').readOnly, true)
+})
+
+test('G7-OS12 safe imperative families are completely accounted for', () => {
+  for (const text of [
+    'Explain the Atlas balance.',
+    'Please explain the Atlas balance.',
+    'Investigate why Atlas is late.',
+    'Please investigate Atlas.',
+    'Forecast cash this week.',
+    'Recommend what to do next.',
+    'Compare Atlas and Cedar.',
+    'Calculate DSO.',
+    'Explain and summarize the Atlas history.',
+    'Compare Atlas and Cedar and explain the difference.',
+  ]) {
+    const result = readOnly(text)
+    assert.equal(result.status, ASK_DW_OPERATION_SAFETY.READ_ONLY, text)
+    assert.equal(result.readOnly, true, text)
+  }
+})
+
+test('G7-OS13 unknown and mixed imperatives fail closed under structural accounting', () => {
+  for (const text of [
+    'Reimburse Atlas.',
+    'Please reimburse Atlas.',
+    'Forgive the late fee.',
+    'Ping Atlas tomorrow.',
+    'Return the payment to Atlas.',
+    "Write down Atlas's balance.",
+    'Explain Atlas and reimburse Cedar.',
+    'Please explain Atlas and reimburse Cedar.',
+    'Investigate Atlas and reimburse Cedar.',
+    'Forecast cash this week and reimburse Atlas.',
+    'Recommend what to do next and reimburse Atlas.',
+    'Explain Atlas & reimburse Cedar.',
+    'Explain Atlas plus reimburse Cedar.',
+    'Compare Atlas and Cedar and reimburse Atlas.',
+  ]) {
+    const result = readOnly(text)
+    assert.equal(result.status, ASK_DW_OPERATION_SAFETY.FAIL_CLOSED_CLARIFY, text)
+    assert.equal(result.readOnly, false, text)
+  }
+})
+
+test('G7-OS14 presentation form cannot increase operation capability', () => {
+  const structures = [
+    ['explain the Atlas balance', true],
+    ['investigate why Atlas is late', true],
+    ['forecast cash this week', true],
+    ['recommend what to do next', true],
+    ['compare Atlas and Cedar and explain the difference', true],
+    ['reimburse Atlas', false],
+    ['forgive the late fee', false],
+    ['explain Atlas and reimburse Cedar', false],
+    ['investigate Atlas and reimburse Cedar', false],
+    ['compare Atlas and Cedar and reimburse Atlas', false],
+  ]
+  for (const [operation, expected] of structures) {
+    for (const text of [`Can you ${operation}?`, `${operation[0].toUpperCase()}${operation.slice(1)}.`,
+      `Please ${operation}.`]) {
+      assert.equal(readOnly(text).readOnly, expected, text)
+    }
   }
 })

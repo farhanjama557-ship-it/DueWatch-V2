@@ -23,8 +23,10 @@
  */
 
 import {
-  extractDirectAskDwOperationPhrase,
+  ASK_DW_OPERATION_PRESENTATION,
+  inspectAskDwFounderOperationPresentation,
   isCompleteKnownReadOnlyModelOperation,
+  recognizeAskDwControlledActionJob,
   recognizeKnownReadOnlyAskDwJob,
 } from './askDwIntent.js'
 
@@ -290,13 +292,20 @@ function dwSelfOperationPhrase(text) {
 }
 
 function ownsUnknownOperationalLanguage(text, mode, knownEntities = []) {
-  const phrase = mode === ASK_DW_PARSE_MODE.QUESTION
-    ? extractDirectAskDwOperationPhrase(text)
-    : dwSelfOperationPhrase(text)
+  const founderPresentation = mode === ASK_DW_PARSE_MODE.QUESTION
+    ? inspectAskDwFounderOperationPresentation({ text, knownEntities })
+    : null
+  const phrase = founderPresentation?.operationPhrase ??
+    (mode === ASK_DW_PARSE_MODE.QUESTION ? null : dwSelfOperationPhrase(text))
   if (phrase == null) return false
   const knownReadOnlyQuestion = mode === ASK_DW_PARSE_MODE.QUESTION &&
     recognizeKnownReadOnlyAskDwJob({ text, knownEntities }) != null
   if (knownReadOnlyQuestion) return false
+  // Existing exact controlled imperatives already enter the G5-controlled ACT
+  // path. Structural ownership closes only the unknown/mixed fallback seam; it
+  // must not replace that established activation path with an authority query.
+  if (founderPresentation?.presentation === ASK_DW_OPERATION_PRESENTATION.IMPERATIVE &&
+      (G5_ACTIONS.includes(parseAction(text)) || recognizeAskDwControlledActionJob({ text }))) return false
   // Output is deliberately stricter than input. Recognising a founder's
   // request for analysis does not permit the model to promise future or
   // background work; only the already-established output predicates survive.
@@ -991,16 +1000,20 @@ export function classifyAskDwAuthorityRequest(text, { knownEntities = [] } = {})
   // the answer — whether the question says "allowed", "forbidden", "barred",
   // "restricted", or nothing of the kind.
   const approvalPrerequisite = asksAboutApprovalPrerequisite(stripped)
+  const operationalPresentation = inspectAskDwFounderOperationPresentation({
+    text: stripped, knownEntities,
+  })
   // In a prerequisite question the controlled operation's actor is established
   // by the relation itself. A noun such as "email" before the embedded `send`
   // must not be mistaken for the first controlled verb and bind the founder.
-  const questionActor = approvalPrerequisite
+  const questionActor = approvalPrerequisite ||
+    operationalPresentation?.presentation === ASK_DW_OPERATION_PRESENTATION.IMPERATIVE
     ? ASK_DW_ACTOR.DW
     : parseActor(stripped, ASK_DW_PARSE_MODE.QUESTION)
   const asksAboutDwControlledAction =
     interrogative && AR_ACT.test(stripped) && questionActor === ASK_DW_ACTOR.DW
   const unknownOperationalQuestion =
-    interrogative && ownsUnknownOperationalLanguage(stripped, ASK_DW_PARSE_MODE.QUESTION, knownEntities)
+    ownsUnknownOperationalLanguage(stripped, ASK_DW_PARSE_MODE.QUESTION, knownEntities)
   const overview = CAPABILITY_OVERVIEW.test(stripped) || AUTHORITY_ENQUIRY.test(stripped)
   const isAuthorityRequest = Boolean(
     !historical && (

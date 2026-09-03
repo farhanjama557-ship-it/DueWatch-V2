@@ -44,8 +44,13 @@ import {
   classifyAskDwConversationalTurn,
 } from '../src/lib/dwIntelligence/askDwConversationalTurn.js'
 import {
+  classifyAskDwIntent,
   recognizeKnownReadOnlyAskDwJob,
 } from '../src/lib/dwIntelligence/askDwIntent.js'
+import {
+  ASK_DW_OPERATION_SAFETY,
+  classifyAskDwReadOnlyOperation,
+} from '../src/lib/dwIntelligence/askDwOperationStructure.js'
 import { createAskDwOrchestrator } from '../src/lib/dwIntelligence/askDwOrchestrator.js'
 
 const AS_OF = '2026-09-02T09:00:00.000Z'
@@ -1616,7 +1621,7 @@ async function importAuthorityBoundaryMutant(replacements, label, intentReplacem
 test('G7-SD5 mutation proof: every structural ownership repair is load-bearing', async () => {
   const oldQuestionOwnership = await importAuthorityBoundaryMutant([
     ['(unknownOperationalCandidate && !exempted) ||', 'false ||'],
-    ['interrogative && ownsUnknownOperationalLanguage(stripped, ASK_DW_PARSE_MODE.QUESTION, knownEntities)', 'interrogative && false'],
+    ['ownsUnknownOperationalLanguage(stripped, ASK_DW_PARSE_MODE.QUESTION, knownEntities)', 'false'],
   ], 'unknown-question-model-owned')
   assert.equal(oldQuestionOwnership.classifyAskDwAuthorityRequest(
     'Will you reach out to Atlas tomorrow?').isAuthorityRequest, false,
@@ -1825,5 +1830,91 @@ test('G7-SD11 mutation proof: argument validation prevents a safe operation span
   ])
   for (const question of MIXED_READ_ONLY_AND_UNKNOWN_QUESTIONS) {
     assert.equal(mutant.classifyAskDwAuthorityRequest(question).isAuthorityRequest, false, question)
+  }
+})
+
+const SAFE_IMPERATIVE_JOBS = Object.freeze([
+  ['Explain the Atlas balance.', 'EXPLAIN'],
+  ['Please explain the Atlas balance.', 'EXPLAIN'],
+  ['Investigate why Atlas is late.', 'INVESTIGATE'],
+  ['Please investigate Atlas.', 'INVESTIGATE'],
+  ['Forecast cash this week.', 'PREDICT'],
+  ['Recommend what to do next.', 'DECIDE'],
+  ['Compare Atlas and Cedar.', 'EXPLAIN'],
+  ['Calculate DSO.', 'EXPLAIN'],
+  ['Explain and summarize the Atlas history.', 'EXPLAIN'],
+  ['Compare Atlas and Cedar and explain the difference.', 'EXPLAIN'],
+])
+
+const UNKNOWN_OR_MIXED_IMPERATIVES = Object.freeze([
+  'Reimburse Atlas.',
+  'Please reimburse Atlas.',
+  'Forgive the late fee.',
+  'Ping Atlas tomorrow.',
+  'Return the payment to Atlas.',
+  "Write down Atlas's balance.",
+  'Explain Atlas and reimburse Cedar.',
+  'Please explain Atlas and reimburse Cedar.',
+  'Investigate Atlas and reimburse Cedar.',
+  'Forecast cash this week and reimburse Atlas.',
+  'Recommend what to do next and reimburse Atlas.',
+  'Explain Atlas & reimburse Cedar.',
+  'Explain Atlas plus reimburse Cedar.',
+  'Compare Atlas and Cedar and reimburse Atlas.',
+])
+
+test('G7-SD12 known imperatives use complete positive structure and preserve their Ask DW jobs', () => {
+  for (const [text, expectedJob] of SAFE_IMPERATIVE_JOBS) {
+    const structural = classifyAskDwReadOnlyOperation({ text, knownEntities: KNOWN_ENTITIES })
+    assert.equal(structural.status, ASK_DW_OPERATION_SAFETY.READ_ONLY, text)
+    const recognized = recognizeKnownReadOnlyAskDwJob({ text, knownEntities: KNOWN_ENTITIES })
+    assert.equal(recognized?.job, expectedJob, text)
+    assert.equal(classifyAskDwAuthorityRequest(text, { knownEntities: KNOWN_ENTITIES }).isAuthorityRequest,
+      false, text)
+    const turn = classifyAskDwConversationalTurn({ text, knownEntities: KNOWN_ENTITIES })
+    assert.equal(turn.turnType, ASK_DW_TURN.AR_JOB, text)
+    assert.equal(turn.job, expectedJob, text)
+  }
+})
+
+test('G7-SD13 every unknown or mixed imperative is deterministically owned end to end', async () => {
+  for (const text of UNKNOWN_OR_MIXED_IMPERATIVES) {
+    const structural = classifyAskDwReadOnlyOperation({ text, knownEntities: KNOWN_ENTITIES })
+    assert.equal(structural.status, ASK_DW_OPERATION_SAFETY.FAIL_CLOSED_CLARIFY, text)
+    assert.equal(recognizeKnownReadOnlyAskDwJob({ text, knownEntities: KNOWN_ENTITIES }), null, text)
+
+    // The usability classifier may still report its historical fallback, but
+    // that result is not positive safety proof and may not own the real turn.
+    assert.ok(classifyAskDwIntent({ text }).job, text)
+    const request = classifyAskDwAuthorityRequest(text, { knownEntities: KNOWN_ENTITIES })
+    assert.equal(request.isAuthorityRequest, true, text)
+    assert.equal(request.proposition.unknownOperationalCandidate, true, text)
+    assert.equal(G5_ACTIONS.includes(request.proposition.canonicalAction), false, text)
+
+    const turn = classifyAskDwConversationalTurn({ text, knownEntities: KNOWN_ENTITIES })
+    assert.equal(turn.turnType, ASK_DW_TURN.AUTHORITY_QUESTION, text)
+    assert.equal(turn.requiresDeterministicAuthority, true, text)
+
+    const result = await colludingOrchestrator('Yes.').run({
+      mode: 'normal', text,
+      context: { tenantId: 'tenant-a', companyBrainReadModel: brainReadModel([]) },
+    })
+    assert.equal(result.answer.authoritySource, 'DETERMINISTIC_G5_PROJECTION', text)
+    assert.equal(result.answer.authorityStatus, 'CLARIFICATION_REQUIRED', text)
+    assert.notEqual(result.answer.executiveConclusion, 'Yes.', text)
+    assert.equal(result.answer.modelOwnsAuthorityProposition, false, text)
+  }
+})
+
+test('G7-SD14 mutation proof: missing imperative presentation restores unsafe fallback routing', async () => {
+  const mutant = await importAuthorityBoundaryMutant([], 'wrapperless-fallback-restored', [], [
+    [
+      'const imperative = wrapperlessImperativeStart(source, knownEntities)',
+      'const imperative = null // mutation: wrapper missing falls back to lexical/default intent',
+    ],
+  ])
+  for (const text of UNKNOWN_OR_MIXED_IMPERATIVES) {
+    assert.equal(mutant.classifyAskDwAuthorityRequest(text, { knownEntities: KNOWN_ENTITIES }).isAuthorityRequest,
+      false, text)
   }
 })
