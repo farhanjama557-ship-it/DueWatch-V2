@@ -4,6 +4,7 @@ import { buildAskDwDailyPriorities } from './askDwDailyPriorities.js'
 import { ASK_DW_TURN } from './askDwConversationalTurn.js'
 import { buildAskDwAuthorityAnswer, renderAskDwAuthority } from './askDwAuthorityRenderer.js'
 import { collectAskDwKnownEntities } from './askDwAuthorityProposition.js'
+import { buildDwGovernanceContext } from './dwGovernanceContext.js'
 import { enforceAskDwGrounding } from './askDwGroundingGuard.js'
 import {
   DW_EPISTEMIC_LADDER,
@@ -120,11 +121,19 @@ function buildConversationLayer({ tenantId, text, caseContext, context }) {
       knownEntities,
     })
     : null
+  // The governance envelope is built from the SAME Company Brain context, by
+  // the same shared builder proactive DW Intelligence uses. Turn classification
+  // and authority-answer rendering stay here, where the founder's utterance is:
+  // proactive must not inherit them.
+  const governance = buildDwGovernanceContext({
+    tenantId, companyBrainContext: companyBrain, knownEntities,
+  })
   // Reported authority travels as a typed, non-governing structure beside the
   // answer, so historical permission evidence has a home that is not free
   // model prose.
   return freeze({
     turn, companyBrain, knownEntities, priorities, authorityRendering, authorityAnswer,
+    governance,
     authorityQuestionSemantic: authorityAnswer?.questionSemantic ?? null,
   })
 }
@@ -484,6 +493,10 @@ export function createAskDwOrchestrator({
           authorityQuestionSemanticPreserved: conversation.authorityQuestionSemantic != null,
           authorityQuestionActorValidatedBeforeResolution: true,
           quotedAuthorityCanGovern: false,
+          // G8-CP1: both entry points admit input through one gate and read
+          // one governance envelope, which references state and never owns it.
+          sharedInvestigationAdmission: true,
+          governanceEnvelopeIsReferenceOnly: conversation.governance?.governs === false,
           authorityPropositionsCheckedPerProposition: true,
           deterministicGroundingEnforced: true,
         }),

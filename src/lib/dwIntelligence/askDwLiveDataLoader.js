@@ -1,9 +1,16 @@
 import { evaluateNextActionAuthority } from '../nextActionAuthority.js'
 import { toHandledKeys, toPendingInvoiceIds } from '../pulseAuthority.js'
 import { assertAuthenticatedTenant } from './askDwSupabaseReadTools.js'
+import {
+  DW_INVESTIGATION_BOUNDS,
+  DW_INVESTIGATION_SOURCE,
+  admitDwInvestigationInput,
+} from './dwInvestigationInput.js'
 
-const MAX_EVIDENCE = 100
-const MAX_PRECEDENTS = 100
+// The bounded read window is owned by the shared admission gate, so the
+// founder and proactive lanes cannot drift to different numbers.
+const MAX_EVIDENCE = DW_INVESTIGATION_BOUNDS.MAX_EVIDENCE
+const MAX_PRECEDENTS = DW_INVESTIGATION_BOUNDS.MAX_PRECEDENTS
 
 function safeArray(value) {
   return Array.isArray(value) ? value : []
@@ -211,6 +218,29 @@ export async function loadAskDwLiveInvoiceInput({
     now,
   })
 
+  // Admission runs through the shared gate, not through loader-local rules, so
+  // the founder lane and the proactive lane bound and verify identically.
+  const { intelligenceInput } = admitDwInvestigationInput({
+    source: DW_INVESTIGATION_SOURCE.ASK_DW,
+    tenantId,
+    invoice,
+    client,
+    now,
+    evidence: mapEvidenceRows(evidenceRows),
+    memory: mapMemory(memoryRows, memoryLinks),
+    tombstones: mapTombstones(tombstoneRows, tombstoneLinks),
+    precedents: precedentRows.map((row) => mapPrecedent(row, now instanceof Date ? now : new Date(now))),
+    pooling: null,
+    prediction: null,
+    handledKeys,
+    pendingInvoiceIds,
+    authorityEvaluation,
+    founderApproved: false,
+    preferenceEvents: [],
+    disputed: false,
+    sandboxTransport: true,
+  })
+
   return {
     context: {
       tenantId,
@@ -218,23 +248,7 @@ export async function loadAskDwLiveInvoiceInput({
       clientId: client.id,
       asOf: now instanceof Date ? now.toISOString() : String(now),
     },
-    intelligenceInput: {
-      tenantId,
-      invoice,
-      client,
-      now,
-      evidence: mapEvidenceRows(evidenceRows),
-      memory: mapMemory(memoryRows, memoryLinks),
-      tombstones: mapTombstones(tombstoneRows, tombstoneLinks),
-      precedents: precedentRows.map((row) => mapPrecedent(row, now instanceof Date ? now : new Date(now))),
-      pooling: null,
-      prediction: null,
-      authorityEvaluation,
-      founderApproved: false,
-      preferenceEvents: [],
-      disputed: false,
-      sandboxTransport: true,
-    },
+    intelligenceInput,
     liveReadReceipt: {
       invoiceRead: true,
       clientRead: true,
