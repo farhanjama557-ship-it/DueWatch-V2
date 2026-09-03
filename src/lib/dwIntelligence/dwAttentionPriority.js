@@ -21,6 +21,8 @@
  *   - move canonical money, or resolve a conflict it reports.
  */
 
+import { resolveAskDwAuthority } from './askDwAuthorityRenderer.js'
+
 /** Ordered highest to lowest. Founder judgement always outranks collection work. */
 export const DW_ATTENTION_REASON = Object.freeze({
   FOUNDER_DECISION_REQUIRED: 'FOUNDER_DECISION_REQUIRED',
@@ -28,6 +30,7 @@ export const DW_ATTENTION_REASON = Object.freeze({
   SUPPORTING_SOURCE_REVOKED: 'SUPPORTING_SOURCE_REVOKED',
   CHANGED_SINCE_REVIEW: 'CHANGED_SINCE_REVIEW',
   BLOCKED_ON_MISSING_AUTHORITY: 'BLOCKED_ON_MISSING_AUTHORITY',
+  BLOCKED_ON_OPERATIONAL_POLICY: 'BLOCKED_ON_OPERATIONAL_POLICY',
   NEEDS_FOUNDER_ANSWER: 'NEEDS_FOUNDER_ANSWER',
   AWAITING_REVIEW: 'AWAITING_REVIEW',
 })
@@ -38,8 +41,9 @@ const REASON_RANK = Object.freeze({
   [DW_ATTENTION_REASON.SUPPORTING_SOURCE_REVOKED]: 2,
   [DW_ATTENTION_REASON.CHANGED_SINCE_REVIEW]: 3,
   [DW_ATTENTION_REASON.BLOCKED_ON_MISSING_AUTHORITY]: 4,
-  [DW_ATTENTION_REASON.NEEDS_FOUNDER_ANSWER]: 5,
-  [DW_ATTENTION_REASON.AWAITING_REVIEW]: 6,
+  [DW_ATTENTION_REASON.BLOCKED_ON_OPERATIONAL_POLICY]: 5,
+  [DW_ATTENTION_REASON.NEEDS_FOUNDER_ANSWER]: 6,
+  [DW_ATTENTION_REASON.AWAITING_REVIEW]: 7,
 })
 
 const REASON_EXPLANATION = Object.freeze({
@@ -48,6 +52,7 @@ const REASON_EXPLANATION = Object.freeze({
   [DW_ATTENTION_REASON.SUPPORTING_SOURCE_REVOKED]: 'A source behind something you approved was revoked.',
   [DW_ATTENTION_REASON.CHANGED_SINCE_REVIEW]: 'This changed after you reviewed it.',
   [DW_ATTENTION_REASON.BLOCKED_ON_MISSING_AUTHORITY]: 'DW cannot act here without an explicit grant.',
+  [DW_ATTENTION_REASON.BLOCKED_ON_OPERATIONAL_POLICY]: "DW's operating rules do not clear this without you.",
   [DW_ATTENTION_REASON.NEEDS_FOUNDER_ANSWER]: 'DW needs an answer from you to continue.',
   [DW_ATTENTION_REASON.AWAITING_REVIEW]: 'Waiting for your review.',
 })
@@ -57,6 +62,7 @@ export const DW_ATTENTION_BLOCKER = Object.freeze({
   FOUNDER_DECISION: 'FOUNDER_DECISION',
   FOUNDER_ANSWER: 'FOUNDER_ANSWER',
   MISSING_AUTHORITY: 'MISSING_AUTHORITY',
+  OPERATIONAL_POLICY: 'OPERATIONAL_POLICY',
   UNRESOLVED_CONFLICT: 'UNRESOLVED_CONFLICT',
   FOUNDER_REVIEW: 'FOUNDER_REVIEW',
 })
@@ -67,6 +73,7 @@ const REASON_BLOCKER = Object.freeze({
   [DW_ATTENTION_REASON.SUPPORTING_SOURCE_REVOKED]: DW_ATTENTION_BLOCKER.FOUNDER_REVIEW,
   [DW_ATTENTION_REASON.CHANGED_SINCE_REVIEW]: DW_ATTENTION_BLOCKER.FOUNDER_REVIEW,
   [DW_ATTENTION_REASON.BLOCKED_ON_MISSING_AUTHORITY]: DW_ATTENTION_BLOCKER.MISSING_AUTHORITY,
+  [DW_ATTENTION_REASON.BLOCKED_ON_OPERATIONAL_POLICY]: DW_ATTENTION_BLOCKER.OPERATIONAL_POLICY,
   [DW_ATTENTION_REASON.NEEDS_FOUNDER_ANSWER]: DW_ATTENTION_BLOCKER.FOUNDER_ANSWER,
   [DW_ATTENTION_REASON.AWAITING_REVIEW]: DW_ATTENTION_BLOCKER.FOUNDER_REVIEW,
 })
@@ -84,12 +91,25 @@ function safeArray(value) {
   return Array.isArray(value) ? value : []
 }
 
+/** Reads a tenant label off any of the shapes the callers pass. */
+function tenantOf(value) {
+  if (!value || typeof value !== 'object') return null
+  return value.tenantId ?? value.userId ?? null
+}
+
 /**
- * Reads whether a case is held up by the ABSENCE of authority. This is not an
- * authority evaluation: the case's own authority summary already carries G5's
- * answer, and all that happens here is noticing it said no.
+ * OPERATIONAL policy, which is not G5 authority.
+ *
+ * item.authority comes from the Phase 2B proof, which carries
+ * evaluateNextActionAuthority's answer: whether DW's own operating RULES clear
+ * this action right now. That is a different question from whether the founder
+ * has granted DW standing authority under G5, and conflating them produces
+ * false sentences in both directions — "DW has no explicit grant" when a grant
+ * exists, and "DW is permitted" when only an operating rule matched.
+ *
+ * So this reads operational state only, and says so in its name.
  */
-function blockedOnMissingAuthority(item) {
+function blockedOnOperationalPolicy(item) {
   const authority = item?.authority
   if (!authority) return false
   if (authority.canActAutomatically === true) return false
@@ -99,9 +119,24 @@ function blockedOnMissingAuthority(item) {
     authority.actual === 'EXPIRED'
 }
 
+/**
+ * Whether G5 itself says no. This is NOT a second evaluator: it hands a fully
+ * typed request to the existing G5-owned resolver and reads the answer. A
+ * request that cannot be built deterministically — no action, no scope, no
+ * channel — yields null, and the queue then says nothing about grants at all
+ * rather than reporting an absence it cannot see.
+ */
+function g5DeniesRequest({ item, authorityProjection, evaluatedAt }) {
+  const request = item?.g5Request
+  if (!request || !authorityProjection) return null
+  if (!request.canonicalAction || !request.scopeType) return null
+  const resolution = resolveAskDwAuthority({ authorityProjection, request, evaluatedAt })
+  return resolution.governing === false
+}
+
 function entry({
   source, reason, subject, clientId = null, invoiceId = null,
-  detail = null, refs = [], needsFounder = true,
+  detail = null, refs = [], needsFounder = true, observedAt = null,
 }) {
   return {
     source,
@@ -113,6 +148,7 @@ function entry({
     invoiceId,
     detail,
     supportingRefs: [...refs].filter(Boolean),
+    observedAt,
     needsFounder,
     blockedBy: REASON_BLOCKER[reason] ?? null,
     // Ranking is a reading of existing state; it authorises nothing.
@@ -122,12 +158,44 @@ function entry({
 }
 
 /**
- * The identity a demand on founder attention actually has. An event burst or a
- * replayed proof produces several rows about ONE invoice, and three rows do not
- * mean three decisions — they mean one decision observed three times.
+ * The identity a demand on founder attention actually has: the CASE, not the
+ * reason. An event burst or a replayed proof produces several rows about one
+ * invoice, and three rows do not mean three decisions — they mean one decision
+ * observed three times. Keying on the reason as well meant a case whose reason
+ * changed between proof events (approval, then a question) still interrupted
+ * the founder twice about the same invoice.
  */
 function attentionIdentity(item) {
-  return [item.reason, item.clientId ?? '', item.invoiceId ?? '', item.subject ?? ''].join('|')
+  // A Company Brain item's case identity is its REVIEW KEY, not its subject:
+  // an unresolved conflict and a changed-since-review item can share a subject
+  // while being two genuinely different things the founder must look at.
+  if (item.source === 'COMPANY_BRAIN') {
+    return ['COMPANY_BRAIN', item.supportingRefs[0] ?? item.subject ?? ''].join('|')
+  }
+  return [item.source, item.clientId ?? '', item.invoiceId ?? ''].join('|')
+}
+
+/**
+ * Which of several observations of one case is CURRENT.
+ *
+ * Currentness is read from the observation timestamps the projection already
+ * carries. It is never inferred from severity: an older approval must not
+ * outrank a newer state just because approval ranks higher. When the events
+ * disagree and no timestamp can order them, currentness is not guessed —
+ * the ambiguity is reported and the queue stops calling itself complete.
+ */
+function chooseCurrent(existing, candidate) {
+  const a = Date.parse(existing.observedAt ?? '')
+  const b = Date.parse(candidate.observedAt ?? '')
+  if (Number.isFinite(a) && Number.isFinite(b)) {
+    return { current: b > a ? candidate : existing, ambiguous: false }
+  }
+  if (Number.isFinite(b)) return { current: candidate, ambiguous: false }
+  if (Number.isFinite(a)) return { current: existing, ambiguous: false }
+  // No ordering evidence at all. Identical observations are a replay, which is
+  // not ambiguous; genuinely different ones are.
+  const differs = existing.reason !== candidate.reason
+  return { current: existing, ambiguous: differs }
 }
 
 /**
@@ -139,10 +207,26 @@ function attentionIdentity(item) {
  */
 export function buildDwAttention({
   tenantId, needsYouReadModel = null, companyBrainContext = null,
-  governance = null, limit = 5,
+  governance = null, authorityProjection = null, limit = 5,
 } = {}) {
   const tenant = String(tenantId || '').trim()
   if (!tenant) throw new Error('DW attention tenantId required')
+
+  // NESTED tenant identity, not just a label. Validating only that tenantId is
+  // non-empty let a projection belonging to one tenant be presented as
+  // another's: the caller supplied the label, and nothing checked that the
+  // data underneath it agreed. Foreign input fails closed rather than being
+  // relabelled, so no foreign subject, ref, id or fingerprint can appear.
+  for (const [name, value] of [
+    ['needs-you read model', needsYouReadModel],
+    ['Company Brain context', companyBrainContext],
+    ['governance envelope', governance],
+  ]) {
+    const owner = tenantOf(value)
+    if (value != null && owner != null && String(owner) !== tenant) {
+      throw new Error(`DW attention ${name} tenant mismatch: refusing to relabel another tenant's state`)
+    }
+  }
 
   const entries = []
   const degraded = []
@@ -151,11 +235,18 @@ export function buildDwAttention({
   // judgement; this module does not second-guess it, only reads its reasons.
   if (needsYouReadModel) {
     for (const item of safeArray(needsYouReadModel.items)) {
-      const reason = blockedOnMissingAuthority(item)
+      const g5Denied = g5DeniesRequest({
+        item,
+        authorityProjection,
+        evaluatedAt: authorityProjection?.evaluatedAt ?? null,
+      })
+      const reason = g5Denied === true
         ? DW_ATTENTION_REASON.BLOCKED_ON_MISSING_AUTHORITY
-        : item.state === 'APPROVAL'
-          ? DW_ATTENTION_REASON.FOUNDER_DECISION_REQUIRED
-          : DW_ATTENTION_REASON.NEEDS_FOUNDER_ANSWER
+        : blockedOnOperationalPolicy(item)
+          ? DW_ATTENTION_REASON.BLOCKED_ON_OPERATIONAL_POLICY
+          : item.state === 'APPROVAL'
+            ? DW_ATTENTION_REASON.FOUNDER_DECISION_REQUIRED
+            : DW_ATTENTION_REASON.NEEDS_FOUNDER_ANSWER
       entries.push(entry({
         source: 'DW_INTELLIGENCE',
         reason,
@@ -164,6 +255,7 @@ export function buildDwAttention({
         invoiceId: item.invoiceId ?? null,
         detail: item.why ?? null,
         refs: [item.runId],
+        observedAt: item.at ?? item.lastUpdatedAt ?? null,
       }))
     }
   } else {
@@ -207,7 +299,11 @@ export function buildDwAttention({
         refs: [item.reviewKey],
       }))
     }
-  } else if (companyBrainContext) {
+  } else {
+    // Absent and unreadable are the same thing here: CP2's queue depends on
+    // Company Brain governance, so no read means the answer is unknown, not
+    // clean. Treating a missing context as complete let "nothing needs you"
+    // be said without ever having looked.
     degraded.push('COMPANY_BRAIN_UNAVAILABLE')
   }
 
@@ -221,6 +317,7 @@ export function buildDwAttention({
   // is hidden — the founder is asked once, and can still see all the proof.
   const byIdentity = new Map()
   let duplicatesSuppressed = 0
+  let currentnessAmbiguous = false
   for (const item of ordered) {
     const identity = attentionIdentity(item)
     const existing = byIdentity.get(identity)
@@ -229,11 +326,19 @@ export function buildDwAttention({
       continue
     }
     duplicatesSuppressed += 1
-    for (const ref of item.supportingRefs) {
-      if (!existing.supportingRefs.includes(ref)) existing.supportingRefs.push(ref)
-    }
+    const { current, ambiguous } = chooseCurrent(existing, item)
+    if (ambiguous) currentnessAmbiguous = true
+    // Every observed event stays inspectable; only the interruption collapses.
+    const refs = [...existing.supportingRefs]
+    for (const ref of item.supportingRefs) if (!refs.includes(ref)) refs.push(ref)
+    byIdentity.set(identity, { ...current, supportingRefs: refs })
   }
+  if (currentnessAmbiguous) degraded.push('CASE_CURRENTNESS_AMBIGUOUS')
   const deduped = [...byIdentity.values()]
+    .sort((a, b) =>
+      a.reasonRank - b.reasonRank ||
+      String(a.subject).localeCompare(String(b.subject)) ||
+      String(a.supportingRefs[0] ?? '').localeCompare(String(b.supportingRefs[0] ?? '')))
 
   return freeze({
     schemaVersion: DW_ATTENTION_VERSION,
@@ -241,7 +346,7 @@ export function buildDwAttention({
     // Degraded reads are surfaced, never smoothed over: "nothing needs you" is
     // only sayable when everything that decides that was actually readable.
     complete: degraded.length === 0,
-    degradedInputs: degraded,
+    degradedInputs: [...degraded],
     total: deduped.length,
     duplicatesSuppressed,
     items: deduped.slice(0, limit),

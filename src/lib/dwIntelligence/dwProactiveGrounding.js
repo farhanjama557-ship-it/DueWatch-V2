@@ -85,6 +85,16 @@ const DAY_COUNT_CLAIM = /\b(\d{1,5})\s*(?:\+\s*)?days?\s+(?:overdue|late|past\s+
  */
 const PROMISE_CLAIM = /\b(?:promis\w*|committed\s+to\s+pay|agreed\s+to\s+pay|said\s+they\s+would\s+pay|undertook\s+to\s+pay)\b/i
 
+/** A promise DW may describe: admitted, and not merely asserted by someone. */
+const PROMISE_ABSENT = 'NONE'
+const ADMITTED_PROMISE = new Set([
+  'PROPOSED', 'CONFIRMED', 'DUE_TODAY', 'PARTIAL', 'FULFILLED', 'BROKEN',
+  'RENEGOTIATED', 'CANCELLED',
+])
+
+/** Saying the promise failed. Only a BROKEN promise supports it. */
+const BROKEN_PROMISE_LANGUAGE = /\b(?:broke|broken|breaking|failed\s+to\s+(?:keep|honou?r)|did\s+not\s+(?:keep|honou?r)|reneged)\b/i
+
 /** Language that asserts the queue is empty or everything is fine. */
 const ALL_CLEAR = /\b(?:nothing|no\s+(?:issues?|items?|cases?|action))\s+(?:needs|need|requires|require)\b|\ball\s+clear\b|\beverything\s+(?:is\s+)?(?:fine|ok|okay|on\s+track|handled)\b|\bnothing\s+(?:to\s+do|for\s+you)\b/i
 
@@ -127,16 +137,59 @@ function sentencesOf(text) {
 }
 
 /**
- * A receipt proves an action happened. Anything else — a recommendation, a
- * staged action, a grant, a provider capability — proves only that it could
- * have, which is a different sentence entirely.
+ * The action a completed-action sentence actually claims. Prose is NEVER a
+ * security identifier — this only says WHICH action was asserted, so a send
+ * receipt cannot silently cover a refund sentence. Tenant, invoice and client
+ * come from the structured claim, never from a name in the text.
  */
-function hasValidReceipt(receipts) {
-  return safeArray(receipts).some((receipt) =>
-    receipt &&
-    typeof receipt.claimId === 'string' && receipt.claimId.trim() !== '' &&
-    typeof receipt.actionType === 'string' && receipt.actionType.trim() !== '' &&
-    receipt.status === 'succeeded')
+const ACTION_VOCABULARY = Object.freeze([
+  [/\b(?:sent|send|sending|emailed|texted|messaged|contacted|called|chased|nudged|reminded)\b/i, 'send_reminder'],
+  [/\b(?:escalated|escalating)\b/i, 'send_collection_message'],
+  [/\b(?:refunded|refunding)\b/i, 'issue_refund'],
+  [/\b(?:waived|waiving)\b/i, 'waive_late_fee'],
+  [/\b(?:charged|charging|applied)\b/i, 'apply_late_fee'],
+  [/\b(?:settled|settling)\b/i, 'settle_invoice'],
+  [/\bwrote\s+off|\bwritten\s+off\b/i, 'write_off_invoice'],
+])
+
+function assertedActions(sentence) {
+  const actions = new Set()
+  for (const [pattern, action] of ACTION_VOCABULARY) {
+    if (pattern.test(sentence)) actions.add(action)
+  }
+  return [...actions]
+}
+
+/**
+ * A receipt proves ONE action, for ONE tenant, invoice and client.
+ *
+ * The previous check accepted any object carrying status 'succeeded' — a value
+ * the real execution-claim vocabulary (in_flight | sent | send_failed |
+ * uncertain) never produces — and then treated every completed-action sentence
+ * in the narrative as covered by it. A receipt for another invoice, another
+ * tenant or another action proved nothing about the sentence in front of it.
+ *
+ * The real receipt shape is { userId, invoiceId, ruleId, actionType,
+ * idempotencyKey }, written beside the execution claim; a claim reaches a
+ * terminal successful state as status 'sent'.
+ */
+const TERMINAL_SUCCESS = new Set(['sent'])
+
+function receiptProves({ receipts, claim, action }) {
+  if (!claim) return false
+  return safeArray(receipts).some((receipt) => {
+    if (!receipt || typeof receipt !== 'object') return false
+    if (!TERMINAL_SUCCESS.has(receipt.status)) return false
+    if (typeof receipt.actionType !== 'string' || receipt.actionType.trim() === '') return false
+    if (typeof receipt.idempotencyKey !== 'string' || receipt.idempotencyKey.trim() === '') return false
+    // Identity must match the structured claim in every dimension it carries.
+    if (String(receipt.userId ?? '') !== String(claim.tenantId ?? '')) return false
+    if (String(receipt.invoiceId ?? '') !== String(claim.invoiceId ?? '')) return false
+    if (claim.clientId != null && receipt.clientId != null &&
+        String(receipt.clientId) !== String(claim.clientId)) return false
+    // And it must be a receipt for THIS action, not merely for some action.
+    return receipt.actionType === action
+  })
 }
 
 /**
@@ -154,6 +207,7 @@ export function enforceDwProactiveGrounding({
   truthLock = null,
   governance = null,
   executionReceipts = [],
+  executionClaim = null,
   attention = null,
   companyBrainContext = null,
   toolRuns = [],
@@ -165,11 +219,26 @@ export function enforceDwProactiveGrounding({
   // The shared claim checks, reused rather than reimplemented. The narrative is
   // adapted into the candidate shape the guard already understands; nothing
   // here parses it as a founder command.
-  const receiptBacked = hasValidReceipt(executionReceipts)
-  // A sentence whose claim a receipt already proves is not re-judged as a
-  // permission claim; the receipt outranks an inference about authority.
+  // Each completed-action sentence is judged on ITS OWN action against the
+  // structured claim. One valid receipt never blankets the narrative.
+  const proven = (sentence) => {
+    if (!COMPLETED_ACTION.test(sentence)) return false
+    const actions = assertedActions(sentence)
+    if (actions.length === 0) return false
+    return actions.every((action) => receiptProves({
+      receipts: executionReceipts, claim: executionClaim, action,
+    }))
+  }
+  const unprovenExecution = []
+  for (const part of narrativeParts(narrative)) {
+    for (const sentence of sentencesOf(part)) {
+      if (COMPLETED_ACTION.test(sentence) && !proven(sentence)) unprovenExecution.push(sentence)
+    }
+  }
+  // A sentence a receipt already proves is not re-judged as a permission claim;
+  // the receipt outranks an inference about authority.
   const keep = (value) => sentencesOf(value)
-    .filter((sentence) => !(receiptBacked && COMPLETED_ACTION.test(sentence)))
+    .filter((sentence) => !proven(sentence))
     .join(' ')
     .trim() || null
 
@@ -202,18 +271,22 @@ export function enforceDwProactiveGrounding({
     else add(code, `Shared grounding refused this claim: ${code}`)
   }
 
-  // A completed action needs a receipt. Nothing else will do.
-  if (COMPLETED_ACTION.test(text) && !receiptBacked) {
+  // A completed action needs a receipt for THAT action. Nothing else will do.
+  for (const sentence of unprovenExecution) {
     add(DW_PROACTIVE_ISSUE.EXECUTION_WITHOUT_RECEIPT,
-      'Narrative claims an action was performed without a valid execution receipt.')
+      `Narrative claims an action was performed without a matching execution receipt: "${sentence}"`)
   }
 
   // "Nothing needs you" is only sayable when everything that decides it was
   // readable. A degraded input makes silence a guess, not an answer.
   if (ALL_CLEAR.test(text)) {
-    const brainUnavailable = governance != null &&
+    // Absent is not clean. Saying nothing needs the founder requires that the
+    // things which decide that were actually read; a missing governance
+    // envelope or a missing attention result is an unread input, not an empty
+    // queue, so unknown fails closed exactly like degraded does.
+    const brainUnavailable = governance == null ||
       governance.companyBrain?.available !== true
-    const attentionIncomplete = attention != null && attention.complete !== true
+    const attentionIncomplete = attention == null || attention.complete !== true
     if (brainUnavailable || attentionIncomplete) {
       add(DW_PROACTIVE_ISSUE.ALL_CLEAR_WHILE_DEGRADED,
         'Narrative reports nothing outstanding while an input it depends on was unreadable.')
@@ -231,13 +304,22 @@ export function enforceDwProactiveGrounding({
     }
   }
 
-  // A promise is admitted state, never an inference from lateness.
+  // A promise is admitted state, and the SPECIFIC thing said about it must
+  // match that state. "Some promise exists" is not enough: a fulfilled promise
+  // cannot be narrated as broken, and an unverified claim is not a promise.
+  //
+  // The vocabulary is phase2bArControl's PROMISE_STATE: NONE, PROPOSED,
+  // CONFIRMED, DUE_TODAY, PARTIAL, FULFILLED, BROKEN, RENEGOTIATED, CANCELLED,
+  // CLAIMED_UNVERIFIED.
   if (PROMISE_CLAIM.test(text)) {
-    const promise = truthLock?.arState?.promise ?? null
-    const supported = promise != null && promise.status != null && promise.status !== 'NONE'
-    if (!supported) {
+    const status = truthLock?.arState?.promise?.status ?? PROMISE_ABSENT
+    const admitted = ADMITTED_PROMISE.has(status)
+    if (!admitted) {
       add(DW_PROACTIVE_ISSUE.UNSUPPORTED_PROMISE_CLAIM,
-        'Narrative asserts a promise to pay that admitted state does not hold.')
+        `Narrative asserts a promise that admitted state does not hold (status: ${status}).`)
+    } else if (BROKEN_PROMISE_LANGUAGE.test(text) && status !== 'BROKEN') {
+      add(DW_PROACTIVE_ISSUE.UNSUPPORTED_PROMISE_CLAIM,
+        `Narrative says the promise was broken, but admitted state is ${status}.`)
     }
   }
 
@@ -261,13 +343,18 @@ export function enforceDwProactiveGrounding({
       'Narrative surfaces instruction-shaped retrieved content as DW\'s own words.')
   }
 
-  // Urgency must be carried by a typed reason. Tone is not evidence.
+  // Urgency is severity, and a typed attention reason proves only that
+  // attention is warranted. Letting any queued item license "EMERGENCY" meant
+  // an ordinary AWAITING_REVIEW could justify alarm — invented severity.
+  //
+  // No typed severity state exists in the repository yet, so extreme urgency
+  // vocabulary is refused outright rather than inferred from balance, customer
+  // importance, tone or the mere presence of work. The deterministic
+  // alternative, "this needs your attention", is always available and always
+  // true when a typed reason exists.
   if (URGENCY.test(text)) {
-    const carried = safeArray(attention?.items).length > 0
-    if (!carried) {
-      add(DW_PROACTIVE_ISSUE.UNSUPPORTED_URGENCY,
-        'Narrative asserts urgency that no typed attention reason supports.')
-    }
+    add(DW_PROACTIVE_ISSUE.UNSUPPORTED_URGENCY,
+      'Narrative asserts urgency or severity that no typed severity state supports.')
   }
 
   // An unresolved conflict may be described, never quietly decided.

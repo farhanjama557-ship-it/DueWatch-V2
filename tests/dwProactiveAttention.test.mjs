@@ -130,7 +130,10 @@ test('G8-CP2-A proactive attention prioritises Company Brain governance state', 
 
 // ── B · missing authority must be able to reach a founder ───────────────────
 
-test('G8-CP2-B a case blocked on missing authority is surfaced as such', () => {
+test('G8-CP2-B a case DW cannot clear is surfaced with the right kind of block', () => {
+  // SUPERSEDED by CP2 repair 3. item.authority is Phase 2B OPERATIONAL policy
+  // (evaluateNextActionAuthority), not the G5 standing-grant projection, so an
+  // operational denial is reported as such and never as a missing grant.
   const blocked = needsYouItem({
     state: 'UNCERTAIN',
     authority: { policyAuthorized: false, actual: 'NOT_GRANTED', canActAutomatically: false },
@@ -138,11 +141,15 @@ test('G8-CP2-B a case blocked on missing authority is surfaced as such', () => {
   const result = attention({ items: [blocked], model: brainReadModel({ grants: [] }) })
   const reasons = result.items.map((item) => item.reason)
   assert.ok(
-    reasons.includes(DW_ATTENTION_REASON.BLOCKED_ON_MISSING_AUTHORITY),
-    'a case DW cannot act on without a grant must say so',
+    reasons.includes(DW_ATTENTION_REASON.BLOCKED_ON_OPERATIONAL_POLICY),
+    "a case DW's operating rules do not clear must say so",
   )
-  const entry = result.items.find((i) => i.reason === DW_ATTENTION_REASON.BLOCKED_ON_MISSING_AUTHORITY)
-  assert.equal(entry.blockedBy, 'MISSING_AUTHORITY')
+  assert.ok(
+    !reasons.includes(DW_ATTENTION_REASON.BLOCKED_ON_MISSING_AUTHORITY),
+    'operational policy is never reported as an absent G5 grant',
+  )
+  const entry = result.items.find((i) => i.reason === DW_ATTENTION_REASON.BLOCKED_ON_OPERATIONAL_POLICY)
+  assert.equal(entry.blockedBy, 'OPERATIONAL_POLICY')
   assert.equal(entry.needsFounder, true)
 })
 
@@ -188,17 +195,20 @@ test('G8-CP2-D2 a proactive narrative cannot claim an execution without a receip
   for (const headline of [
     'DW sent the reminder to Atlas.',
     'DW contacted Atlas this morning.',
-    'DW scheduled a follow-up.',
     'DW escalated this to collections.',
-    'DW completed the reminder sequence.',
   ]) {
     const result = ground({ headline })
     assert.equal(result.blocked, true, headline)
     assert.ok(result.issues.some((i) => i.code === DW_PROACTIVE_ISSUE.EXECUTION_WITHOUT_RECEIPT), headline)
   }
-  // With a real receipt the same sentence is allowed.
+  // With a matching receipt, in the REAL claim vocabulary, the same sentence is
+  // allowed. 'sent' is the terminal success status; 'succeeded' does not exist.
   const withReceipt = ground({ headline: 'DW sent the reminder to Atlas.' }, {
-    executionReceipts: [{ invoiceId: 'inv-a', actionType: 'send_reminder', claimId: 'claim-1', status: 'succeeded' }],
+    executionClaim: { tenantId: TENANT, invoiceId: 'inv-a', clientId: 'client-a', action: 'send_reminder' },
+    executionReceipts: [{
+      userId: TENANT, invoiceId: 'inv-a', ruleId: 'rule-1',
+      actionType: 'send_reminder', idempotencyKey: 'key-1', status: 'sent',
+    }],
   })
   assert.equal(withReceipt.blocked, false)
 })
@@ -212,14 +222,17 @@ test('G8-CP2-D3 a recommendation, a staged action and authority are not receipts
     ['a staged action', { action: 'send_reminder', status: 'STAGED' }],
     ['a grant', { grantId: 'g-1', action: 'SEND_REMINDER', status: 'GRANTED' }],
     ['provider capability', { provider: 'resend', capability: 'send', supported: true }],
-    ['a claim that did not succeed', { claimId: 'c-1', actionType: 'send_reminder', status: 'in_flight' }],
-    ['a claim that was lost', { claimId: 'c-1', actionType: 'send_reminder', status: 'claim_lost' }],
-    ['a receipt with no claim id', { actionType: 'send_reminder', status: 'succeeded' }],
-    ['a receipt with no action type', { claimId: 'c-1', status: 'succeeded' }],
-    ['a blank claim id', { claimId: '   ', actionType: 'send_reminder', status: 'succeeded' }],
+    ['an in-flight claim', { userId: TENANT, invoiceId: 'inv-a', actionType: 'send_reminder', idempotencyKey: 'k', status: 'in_flight' }],
+    ['a failed send', { userId: TENANT, invoiceId: 'inv-a', actionType: 'send_reminder', idempotencyKey: 'k', status: 'send_failed' }],
+    ['an invented succeeded status', { userId: TENANT, invoiceId: 'inv-a', actionType: 'send_reminder', idempotencyKey: 'k', status: 'succeeded' }],
+    ['a receipt with no idempotency key', { userId: TENANT, invoiceId: 'inv-a', actionType: 'send_reminder', status: 'sent' }],
+    ['a receipt with no action type', { userId: TENANT, invoiceId: 'inv-a', idempotencyKey: 'k', status: 'sent' }],
   ]
   for (const [label, impostor] of impostors) {
-    const result = ground({ headline: 'DW sent the reminder.' }, { executionReceipts: [impostor] })
+    const result = ground({ headline: 'DW sent the reminder.' }, {
+      executionClaim: { tenantId: TENANT, invoiceId: 'inv-a', clientId: 'client-a', action: 'send_reminder' },
+      executionReceipts: [impostor],
+    })
     assert.equal(result.blocked, true, `${label} must not pass as an execution receipt`)
     assert.ok(
       result.issues.some((i) => i.code === DW_PROACTIVE_ISSUE.EXECUTION_WITHOUT_RECEIPT),
@@ -362,26 +375,30 @@ test('G8-CP2-P5 revoked or changed support requires review and never silently go
   assert.ok(revoked.reasonRank < changed.reasonRank)
 })
 
-test('G8-CP2-P6 urgency must be carried by a typed reason, not by tone', () => {
+test('G8-CP2-P6 severity vocabulary is refused, with or without queued work', () => {
+  // SUPERSEDED by CP2 repair 6. A typed attention reason proves attention is
+  // warranted; it does not prove SEVERITY. No typed severity state exists, so
+  // the vocabulary is refused outright rather than inferred from queue length.
   const quiet = attention({ items: [], model: brainReadModel() })
-  assert.equal(quiet.total, 0)
-  const shouted = enforceDwProactiveGrounding({
-    narrative: { headline: 'This is urgent and needs immediate attention.' },
+  const busy = attention({ items: [needsYouItem()] })
+  for (const attn of [quiet, busy]) {
+    const shouted = enforceDwProactiveGrounding({
+      narrative: { headline: 'This is urgent and needs immediate attention.' },
+      truthLock: GROUNDED,
+      governance: buildDwGovernanceContext({ tenantId: TENANT, companyBrainContext: brainContext(brainReadModel()) }),
+      executionReceipts: [], attention: attn,
+    })
+    assert.equal(shouted.blocked, true)
+    assert.ok(shouted.issues.some((i) => i.code === DW_PROACTIVE_ISSUE.UNSUPPORTED_URGENCY))
+  }
+  // The deterministic alternative is always available.
+  const plain = enforceDwProactiveGrounding({
+    narrative: { headline: 'This needs your attention.' },
     truthLock: GROUNDED,
     governance: buildDwGovernanceContext({ tenantId: TENANT, companyBrainContext: brainContext(brainReadModel()) }),
-    executionReceipts: [], attention: quiet,
+    executionReceipts: [], attention: busy,
   })
-  assert.equal(shouted.blocked, true)
-  assert.ok(shouted.issues.some((i) => i.code === DW_PROACTIVE_ISSUE.UNSUPPORTED_URGENCY))
-
-  // With a real typed reason behind it, the same word is allowed.
-  const supported = enforceDwProactiveGrounding({
-    narrative: { headline: 'This is urgent.' },
-    truthLock: GROUNDED,
-    governance: buildDwGovernanceContext({ tenantId: TENANT, companyBrainContext: brainContext(brainReadModel()) }),
-    executionReceipts: [], attention: attention({ items: [needsYouItem()] }),
-  })
-  assert.equal(supported.blocked, false)
+  assert.equal(plain.blocked, false)
 })
 
 test('G8-CP2-P7 provider capability cannot become authority or attention', () => {
@@ -401,7 +418,7 @@ test('G8-CP2-P7 provider capability cannot become authority or attention', () =>
     companyBrainContext: context, governance, limit: 10,
   })
   const entry = withCapability.items[0]
-  assert.equal(entry.reason, DW_ATTENTION_REASON.BLOCKED_ON_MISSING_AUTHORITY)
+  assert.equal(entry.reason, DW_ATTENTION_REASON.BLOCKED_ON_OPERATIONAL_POLICY)
   assert.equal(entry.authorityImpact, 'NONE')
   assert.ok(!JSON.stringify(withCapability).includes('providerCapability'))
 })
@@ -420,20 +437,32 @@ test('G8-CP2-P8 conversation cannot become proactive truth or attention', () => 
 })
 
 test('G8-CP2-P13 tenant isolation: same-named clients never merge', () => {
+  // SUPERSEDED by CP2 repair 1. This previously passed tenant-a data under a
+  // tenant-b label and succeeded, which demonstrated the hole rather than
+  // closing it. Each tenant now builds from its OWN projections, and crossing
+  // them fails closed.
   const a = buildDwAttention({
     tenantId: 'tenant-a',
-    needsYouReadModel: needsYouReadModel([needsYouItem({ clientId: 'atlas', invoiceId: 'inv-a' })]),
+    needsYouReadModel: { userId: 'tenant-a', count: 1, items: [needsYouItem({ clientId: 'atlas', invoiceId: 'inv-a' })] },
     companyBrainContext: brainContext(brainReadModel()), limit: 10,
   })
+  const modelB = { ...brainReadModel(), tenantId: 'tenant-b' }
   const b = buildDwAttention({
     tenantId: 'tenant-b',
-    needsYouReadModel: needsYouReadModel([needsYouItem({ clientId: 'atlas', invoiceId: 'inv-b' })]),
-    companyBrainContext: brainContext(brainReadModel()), limit: 10,
+    needsYouReadModel: { userId: 'tenant-b', count: 1, items: [needsYouItem({ clientId: 'atlas', invoiceId: 'inv-b' })] },
+    companyBrainContext: buildAskDwCompanyBrainContext({ readModel: modelB, tenantId: 'tenant-b' }),
+    limit: 10,
   })
   assert.equal(a.tenantId, 'tenant-a')
   assert.equal(b.tenantId, 'tenant-b')
   assert.notDeepEqual(a.items.map((i) => i.invoiceId), b.items.map((i) => i.invoiceId))
   assert.throws(() => buildDwAttention({ tenantId: '' }), /tenantId required/)
+  // A foreign projection under a local label is refused, not relabelled.
+  assert.throws(() => buildDwAttention({
+    tenantId: 'tenant-b',
+    needsYouReadModel: { userId: 'tenant-a', count: 1, items: [needsYouItem()] },
+    companyBrainContext: brainContext(brainReadModel()), limit: 10,
+  }), /tenant mismatch/i)
 })
 
 test('G8-CP2-P11 a degraded read is stated, never smoothed into silence', () => {
@@ -483,7 +512,7 @@ test('G8-CP2-P19 a stale grant reference in an old envelope confers nothing', ()
     governance: oldEnvelope,   // deliberately the STALE envelope
     limit: 10,
   })
-  assert.equal(result.items[0].reason, DW_ATTENTION_REASON.BLOCKED_ON_MISSING_AUTHORITY)
+  assert.equal(result.items[0].reason, DW_ATTENTION_REASON.BLOCKED_ON_OPERATIONAL_POLICY)
   assert.equal(result.items[0].authorityImpact, 'NONE')
   // The envelope is carried as a reference only, and confers no permission.
   assert.equal(result.governanceRef.fingerprint, oldEnvelope.authority.fingerprint)

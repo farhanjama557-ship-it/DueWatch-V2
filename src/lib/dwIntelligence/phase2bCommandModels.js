@@ -3,6 +3,7 @@ import {
   DW_UI_STATE,
   FOUNDER_ACTION_BOUNDARY,
 } from './phase2bReadModel.js'
+import { buildDwAttention } from './dwAttentionPriority.js'
 
 const COMPLETE_RUN_STATES = new Set(['completed', 'failed'])
 
@@ -119,7 +120,10 @@ export function projectWhatsDoneReadModel({ userId, cases = [] } = {}) {
  * future server decision, but the browser receives no permission token and no
  * direct execution capability.
  */
-export function projectNeedsYouCommandReadModel({ userId, cases = [] } = {}) {
+export function projectNeedsYouCommandReadModel({
+  userId, cases = [], companyBrainContext = null, governance = null,
+  authorityProjection = null,
+} = {}) {
   const items = []
 
   for (const input of safeArray(cases)) {
@@ -156,10 +160,38 @@ export function projectNeedsYouCommandReadModel({ userId, cases = [] } = {}) {
   // Recency is a display order, not a financial-priority policy.
   items.sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')))
 
+  // G8-CP2: the governed attention ordering, from the primitive Ask DW reads.
+  // This is where the proactive lane stops being Company Brain blind — an
+  // unresolved conflict, revoked support or a case DW cannot act on now ranks
+  // here for the same reason and in the same order as it does for the founder
+  // asking directly. The queue is a reading of state; it authorises nothing.
+  const attention = buildDwAttention({
+    tenantId: userId,
+    needsYouReadModel: {
+      userId: userId ?? null,
+      count: items.length,
+      items: items.map((item) => ({
+        runId: item.runId,
+        invoiceId: item.invoiceId,
+        clientId: item.clientId,
+        state: item.state,
+        at: item.at,
+        why: item.why,
+        recommendation: item.recommendation,
+        authority: item.authority,
+      })),
+    },
+    companyBrainContext,
+    governance,
+    authorityProjection,
+    limit: Math.max(items.length, 5),
+  })
+
   return freezeDeep({
     userId: userId ?? null,
     count: items.length,
     items,
+    attention,
     executionAvailable: false,
     authorityCanBeGrantedHere: false,
     boundary: FOUNDER_ACTION_BOUNDARY,
