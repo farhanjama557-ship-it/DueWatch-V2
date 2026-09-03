@@ -1244,6 +1244,108 @@ standalone bundle and clean-room proof are produced after this doc-only commit
 and reported in the final handoff.
 
 ==================================================
+9k. CONTEXTUAL-IMPERATIVE ENTRY-SEAM FREEZE REPAIR
+==================================================
+
+Starting candidate: 21d1f665509e7503ef02d0d97ecd5cdd0c4176ed
+Implementation:     496ce0d6fcef8af10153a521a730089036c85096
+Branch:             g7-safe-by-default-action-boundary (isolated local repair)
+
+ROOT REPAIR. The wrapperless founder-operation presentation seam now consumes
+the existing CP5 reference-only focus rather than requiring an explicit target
+name. A shared finite reference grammar identifies contextual forms such as
+pronouns and typed client/invoice references. That grammar is shared with the
+existing entity resolver's stop-word extraction; it creates no second entity
+resolver and does not resolve or trust an identity. CP5 remains responsible for
+tenant-scoped live revalidation of the active client/invoice reference.
+
+TARGET IS NOT OPERATION. Operation structure now reports EXPLICIT,
+CONTEXTUAL_REFERENCE or ACTIVE_FOCUS_ELLIPSIS as presentation metadata without
+changing the closed WRAPPER/OPERATION/ARGUMENT/RELATION schema. A verified
+active client/invoice focus can establish only that a contextual or bounded
+elliptical command has a subject. It never makes the predicate read-only.
+Unknown predicates therefore enter the existing structural validator, fail
+closed, and route to deterministic clarification. An unresolved contextual
+reference is typed as unknown scope and also clarifies rather than inheriting a
+scope or reaching classifyAskDwIntent's fallback EXPLAIN.
+
+ORDERING AND OUTPUT. Elliptical entry is opt-in and is applied by the
+conversational classifier only after greetings, acknowledgements, challenges,
+corrections/new evidence, exact evidence requests, Company Brain, What Changed,
+Needs You, priorities, portfolio status, evidence and follow-up categories have
+had precedence. This preserves "why?", "anything else?", "what about them?",
+"that one", "back to Atlas", "prove it" and ordinary small talk. Model-output
+validation preserves its prior bounded read-only argument behavior and gains no
+new future/background commitment. No hostile verb was added to AR_ACT,
+AR_ACT_VERB or the read-only registry.
+
+HOSTILE, PROPERTY AND MUTATION PROOF. G7-OS15 proves all supplied contextual
+unknown imperatives enter the same structure and remain FAIL_CLOSED_CLARIFY.
+OS16 covers one- and multiword active-focus ellipsis (Escalate, Pursue and Reach
+out) and proves focus cannot make an operation safe. OS17 crosses explicit
+entity, verified pronoun, typed AR referent and omitted-target presentations and
+proves reference form cannot increase capability. G7-SD15 runs every supplied
+contextual form through presentation extraction, structural classification,
+positive read-only recognition, authority ownership, conversational routing
+and the real orchestrator with a colluding model/verifier returning "Yes.";
+deterministic clarification always owns the answer. SD16 does the same for bare
+ellipsis while checking preserved conversational categories. SD17 proves a
+pronoun without active focus clarifies. SD18 is the reference-form capability
+property. SD19 removes contextual and elliptical structural entry in a source
+mutant and proves the hostile cases regress to model-owned fallback.
+
+SELF-REVIEW GATE:
+
+  1. Contextual target can prove an operation safe?          NO
+  2. Missing active focus resolves an ambiguous pronoun?     NO
+  3. Bare active-focus command reaches fallback EXPLAIN?     NO
+  4. Reference presentation increases capability?           NO
+  5. Colluding model "Yes." survives the real path?         NO
+  6. Existing greeting/evidence/follow-up route swallowed?   NO
+  7. Model future/background commitments widened?            NO
+  8. Hostile verbs added to ACT/read-only vocabularies?      NO
+  9. New entity, authority or execution engine created?      NO
+ 10. G5 semantics or migrations changed?                     NO
+ 11. Historical M2D files changed?                           NO
+ 12. G8 implementation entered the tree?                    NO
+
+VALIDATION (actual committed implementation tree):
+
+  Structural + boundary   107 tests; 107 pass; 0 fail; 0 skip
+  G5 gate                 362 tests; 362 pass; 0 fail; 0 skip
+  G6 gate                 504 tests; 490 pass; 0 fail; 14 skip
+  Ask DW                  386 tests; 386 pass; 0 fail; 0 skip
+  G7 focused              207 tests; 207 pass; 0 fail; 0 skip
+  Full npm test          1705 tests; 1691 pass; 0 fail; 14 skip
+  Production build       PASS (existing externalized-node/chunk warnings only)
+  git diff --check       CLEAN
+  System Brain audit     PASS; 14 routes, 7 Ask DW read tools,
+                         tenant_row_data_read:false,
+                         aggregate_hash:d6aaaf3e29501c491bf96880a91671c02124dbbd5bc20e113aec457daf65e4b1
+
+The fourteen G6 PostgreSQL runtime tests were honestly skipped because no
+PostgreSQL server/socket was available. Live provider and browser evaluation
+were not run; the deterministic real orchestrator and colluding-model harness
+were run for every supplied contextual and elliptical hostile case.
+
+SCANS AND LOCKS. Credential literals, canonical financial mutations,
+authority/execution primitives, provider/network calls, tenant data-path
+additions, Company Brain/G5 changes, migration changes and G8 files are absent
+from the implementation diff. The shared entity-resolver change only reuses
+finite reference tokens in its existing read-only extraction stop words; it
+adds no query or tenant access. Historical M2D Git blob locks remain exactly:
+
+  supabase/functions/_shared/askDwOpenAiContract.js
+    e3870f6ffc62fea71118a9202d79af00cdf70477
+  supabase/functions/ask-dw-model/index.ts
+    b687f54b07ac7f9f31596a7cdf42a472d4ab8855
+
+The canonical local m2g/company-brain-bootstrap-g7 branch remained unmoved at
+7136985beb7e9e664989d964e09a256fbf77ebce. Nothing was pushed. A complete-history
+standalone bundle and clean-room proof are produced after this doc-only commit
+and reported in the final handoff.
+
+==================================================
 10. EXIT DECISION
 ==================================================
 
@@ -1253,7 +1355,7 @@ input/output authority closure in section 9d, the question-semantics closure
 in section 9e, the safe-by-default action boundary in section 9f, and the
 shared read-only job repair in section 9g, and the mixed-operation composition
 repair in section 9h, and the closed-world operation-accounting replacement in
-section 9i, and the imperative founder entry-seam repair in section 9j, is a
-G7 FREEZE CANDIDATE. All material source-level
+section 9i, the imperative founder entry-seam repair in section 9j, and the
+contextual-imperative entry repair in section 9k, is a G7 FREEZE CANDIDATE. All material source-level
 requirements have implementation and executable evidence. External validation
 limitations are stated above rather than hidden. G8 was not started.
