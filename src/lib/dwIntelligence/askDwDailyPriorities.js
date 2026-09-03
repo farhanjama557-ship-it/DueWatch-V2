@@ -9,71 +9,28 @@
  *
  * Every entry carries the exact reason it ranked where it did, so a founder can
  * ask "why is Atlas first?" and get a real answer rather than a restatement.
+ *
+ * G8-CP2: the ordering policy itself now lives in dwAttentionPriority.js, which
+ * both this lane and proactive DW Intelligence read. This module is the Ask DW
+ * projection of that one answer, not a second implementation of it.
  */
+
+import { DW_ATTENTION_REASON, buildDwAttention } from './dwAttentionPriority.js'
 
 const PRIORITIES_VERSION = 'ASK_DW_DAILY_PRIORITIES_V0'
 
 /**
- * Ordered highest to lowest. The ordering is a fixed, reviewable policy, not a
- * score a model can talk its way around.
+ * The Ask DW-facing name for the shared attention vocabulary, ordered highest
+ * to lowest. It is an alias, not a second list: two lists would be two
+ * orderings waiting to disagree.
  */
-export const ASK_DW_PRIORITY_REASON = Object.freeze({
-  FOUNDER_DECISION_REQUIRED: 'FOUNDER_DECISION_REQUIRED',
-  UNRESOLVED_CONFLICT: 'UNRESOLVED_CONFLICT',
-  SUPPORTING_SOURCE_REVOKED: 'SUPPORTING_SOURCE_REVOKED',
-  CHANGED_SINCE_REVIEW: 'CHANGED_SINCE_REVIEW',
-  BLOCKED_ON_MISSING_AUTHORITY: 'BLOCKED_ON_MISSING_AUTHORITY',
-  NEEDS_FOUNDER_ANSWER: 'NEEDS_FOUNDER_ANSWER',
-  AWAITING_REVIEW: 'AWAITING_REVIEW',
-})
-
-const REASON_RANK = Object.freeze({
-  [ASK_DW_PRIORITY_REASON.FOUNDER_DECISION_REQUIRED]: 0,
-  [ASK_DW_PRIORITY_REASON.UNRESOLVED_CONFLICT]: 1,
-  [ASK_DW_PRIORITY_REASON.SUPPORTING_SOURCE_REVOKED]: 2,
-  [ASK_DW_PRIORITY_REASON.CHANGED_SINCE_REVIEW]: 3,
-  [ASK_DW_PRIORITY_REASON.BLOCKED_ON_MISSING_AUTHORITY]: 4,
-  [ASK_DW_PRIORITY_REASON.NEEDS_FOUNDER_ANSWER]: 5,
-  [ASK_DW_PRIORITY_REASON.AWAITING_REVIEW]: 6,
-})
-
-const REASON_EXPLANATION = Object.freeze({
-  [ASK_DW_PRIORITY_REASON.FOUNDER_DECISION_REQUIRED]: 'DW is holding this until you decide.',
-  [ASK_DW_PRIORITY_REASON.UNRESOLVED_CONFLICT]: 'Evidence disagrees and no rule says which governs.',
-  [ASK_DW_PRIORITY_REASON.SUPPORTING_SOURCE_REVOKED]: 'A source behind something you approved was revoked.',
-  [ASK_DW_PRIORITY_REASON.CHANGED_SINCE_REVIEW]: 'This changed after you reviewed it.',
-  [ASK_DW_PRIORITY_REASON.BLOCKED_ON_MISSING_AUTHORITY]: 'DW cannot act here without an explicit grant.',
-  [ASK_DW_PRIORITY_REASON.NEEDS_FOUNDER_ANSWER]: 'DW needs an answer from you to continue.',
-  [ASK_DW_PRIORITY_REASON.AWAITING_REVIEW]: 'Waiting for your review.',
-})
+export const ASK_DW_PRIORITY_REASON = DW_ATTENTION_REASON
 
 function freeze(value) {
   if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value
   Object.freeze(value)
   for (const nested of Object.values(value)) freeze(nested)
   return value
-}
-
-function safeArray(value) {
-  return Array.isArray(value) ? value : []
-}
-
-function entry({ source, reason, subject, clientId = null, invoiceId = null, detail = null, refs = [] }) {
-  return {
-    source,
-    reason,
-    reasonRank: REASON_RANK[reason],
-    // The founder-facing sentence for this reason, kept deterministic.
-    why: REASON_EXPLANATION[reason],
-    subject,
-    clientId,
-    invoiceId,
-    detail,
-    refs: [...refs],
-    // Ranking is a reading of existing state; it authorises nothing.
-    authorityImpact: 'NONE',
-    directlyExecutable: false,
-  }
 }
 
 /**
@@ -86,89 +43,33 @@ function entry({ source, reason, subject, clientId = null, invoiceId = null, det
 export function buildAskDwDailyPriorities({
   tenantId, needsYouReadModel = null, companyBrainContext = null, limit = 5,
 } = {}) {
-  const tenant = String(tenantId || '').trim()
-  if (!tenant) throw new Error('Ask DW daily priorities tenantId required')
-
-  const entries = []
-  const degraded = []
-
-  // Canonical AR cases that already need the founder. This projection is the
-  // existing owner of that judgement; G7 does not second-guess it.
-  if (needsYouReadModel) {
-    for (const item of safeArray(needsYouReadModel.items)) {
-      entries.push(entry({
-        source: 'DW_INTELLIGENCE',
-        reason: item.state === 'APPROVAL'
-          ? ASK_DW_PRIORITY_REASON.FOUNDER_DECISION_REQUIRED
-          : ASK_DW_PRIORITY_REASON.NEEDS_FOUNDER_ANSWER,
-        subject: item.clientId || item.invoiceId || 'AR case',
-        clientId: item.clientId ?? null,
-        invoiceId: item.invoiceId ?? null,
-        detail: item.why ?? null,
-        refs: [item.runId].filter(Boolean),
-      }))
-    }
-  } else {
-    // Say what is missing rather than implying the queue is empty.
-    degraded.push('DW_INTELLIGENCE_NEEDS_YOU_UNAVAILABLE')
-  }
-
-  if (companyBrainContext?.available) {
-    for (const conflict of companyBrainContext.conflicts) {
-      if (conflict.conflictStatus !== 'CONFLICTED') continue
-      entries.push(entry({
-        source: 'COMPANY_BRAIN',
-        reason: ASK_DW_PRIORITY_REASON.UNRESOLVED_CONFLICT,
-        subject: conflict.subject,
-        clientId: conflict.clientId ?? null,
-        detail: conflict.why ?? null,
-        refs: [conflict.reviewKey],
-      }))
-    }
-    for (const item of companyBrainContext.changedSinceReview) {
-      entries.push(entry({
-        source: 'COMPANY_BRAIN',
-        reason: item.supportingSourceRevoked
-          ? ASK_DW_PRIORITY_REASON.SUPPORTING_SOURCE_REVOKED
-          : ASK_DW_PRIORITY_REASON.CHANGED_SINCE_REVIEW,
-        subject: item.subject,
-        clientId: item.clientId ?? null,
-        detail: item.why ?? null,
-        refs: [item.reviewKey],
-      }))
-    }
-    for (const item of companyBrainContext.pendingFounderDecisions) {
-      if (item.itemType === 'CONFLICT') continue
-      if (item.changedSinceReview || item.supportingSourceRevoked) continue
-      entries.push(entry({
-        source: 'COMPANY_BRAIN',
-        reason: ASK_DW_PRIORITY_REASON.AWAITING_REVIEW,
-        subject: item.subject,
-        clientId: item.clientId ?? null,
-        detail: item.why ?? null,
-        refs: [item.reviewKey],
-      }))
-    }
-  } else if (companyBrainContext) {
-    degraded.push('COMPANY_BRAIN_UNAVAILABLE')
-  }
-
-  const ordered = entries
-    .sort((a, b) =>
-      a.reasonRank - b.reasonRank ||
-      String(a.subject).localeCompare(String(b.subject)) ||
-      String(a.refs[0] ?? '').localeCompare(String(b.refs[0] ?? '')))
-
+  // CP2: one implementation, two projections. The attention primitive is
+  // lane-neutral -- it already consumed DW Intelligence's needs-you read model
+  // and the Company Brain context -- so Ask DW reads it rather than keeping a
+  // second copy of the same ordering policy. The Ask DW contract is unchanged.
+  const attention = buildDwAttention({
+    tenantId, needsYouReadModel, companyBrainContext, limit,
+  })
   return freeze({
     schemaVersion: PRIORITIES_VERSION,
-    tenantId: tenant,
-    // Degraded reads are surfaced, never smoothed over: "nothing needs you" is
-    // only sayable when everything that decides that was actually readable.
-    complete: degraded.length === 0,
-    degradedInputs: degraded,
-    total: ordered.length,
-    items: ordered.slice(0, limit),
-    remaining: Math.max(0, ordered.length - limit),
+    tenantId: attention.tenantId,
+    complete: attention.complete,
+    degradedInputs: [...attention.degradedInputs],
+    total: attention.total,
+    items: attention.items.map((item) => ({
+      source: item.source,
+      reason: item.reason,
+      reasonRank: item.reasonRank,
+      why: item.why,
+      subject: item.subject,
+      clientId: item.clientId,
+      invoiceId: item.invoiceId,
+      detail: item.detail,
+      refs: [...item.supportingRefs],
+      authorityImpact: item.authorityImpact,
+      directlyExecutable: item.directlyExecutable,
+    })),
+    remaining: attention.remaining,
     boundaries: freeze({
       derivedFromExistingProjections: true,
       modelChoseOrder: false,
