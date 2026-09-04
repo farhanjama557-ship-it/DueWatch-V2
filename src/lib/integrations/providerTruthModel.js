@@ -16,13 +16,32 @@
  * Collapse those and DueWatch starts chasing paid invoices and dropping unpaid
  * ones — the two failures that cost a founder their customers.
  *
- * The six dimensions are NOT redeclared here. They are the Company Brain's
- * canonical money-truth classes, and the suite proves this list is the same
- * one BEHAVIOURALLY, by asserting the Company Brain still refuses to create a
- * claim in each of them.
+ * The six dimensions are MIRRORED from the Company Brain's canonical
+ * money-truth classes. That set is private to a frozen G8 module, so this one
+ * declares the same six strings and the suite locks the mirror: exact count,
+ * exact names, the Brain still refusing each as canonical money truth, and the
+ * frozen file itself unchanged from the accepted G8 base.
  */
 
-/** T1-T6. The strings are the Company Brain's MONEY_TRUTH_CLASSES, unchanged. */
+import { canonicalValueEquals } from './canonicalValue.js'
+
+/**
+ * T1-T6 — a MIRROR of the frozen G8 money-truth vocabulary.
+ *
+ * Stated precisely, because the earlier wording overstated it: G8's
+ * MONEY_TRUTH_CLASSES is a PRIVATE const in src/lib/companyBrain/index.js and
+ * G8 is frozen, so M2H cannot import it and this module declares the same six
+ * strings itself. That is a mirror, not a reuse, and mirrors drift.
+ *
+ * What keeps it honest is a lock, not a claim: the suite asserts the count and
+ * the exact six names, asserts the Company Brain still refuses each one as
+ * canonical money truth, and asserts companyBrain/index.js is unchanged from
+ * the accepted G8 base. The behavioural check alone would not prove the two
+ * sets are identical — it would miss a seventh class added on the G8 side —
+ * which is why the frozen-ancestry check sits beside it.
+ *
+ * G8 is NOT modified to export the private set.
+ */
 export const PROVIDER_TRUTH_DIMENSION = Object.freeze({
   T1_INVOICE_AR_STATE: 'INVOICE_AR_STATE',
   T2_PAYMENT_ATTEMPT_STATE: 'PAYMENT_ATTEMPT_STATE',
@@ -140,8 +159,22 @@ export function promoteGeneralization(from, to) {
     throw new Error(
       `refusing to promote ${from} straight to ${to}: a finding rises one level at a time`)
   }
+  // The ceiling. One-step promotion was still a staircase: five calls walked
+  // G0 to G5, so provider research could mint a LOCKED canonical rule on its
+  // own. Locking a rule is a deliberate system-closure act, not the last step
+  // of a loop, and CP1 owns no closure gate — so it exposes no way to produce
+  // G5 at all. No `systemClosure: true` flag either; a boolean any caller can
+  // set is the same defect wearing a longer name.
+  if (to === GENERALIZATION_LEVEL.G5_LOCKED_CANONICAL_RULE) {
+    throw new Error(
+      'refusing to produce a locked canonical rule: G5 is reached by deliberate ' +
+      'system closure, which this checkpoint does not own')
+  }
   return to
 }
+
+/** The highest level generic provider research can reach. */
+export const MAX_GENERIC_GENERALIZATION = GENERALIZATION_LEVEL.G4_CANDIDATE_CANONICAL_INVARIANT
 
 /**
  * Whether two observations actually disagree.
@@ -170,7 +203,9 @@ export function classifyDisagreement(a = {}, b = {}) {
       dimensions: Object.freeze([a.truthDimension ?? null]),
     })
   }
-  if (JSON.stringify(a.value ?? null) === JSON.stringify(b.value ?? null)) {
+  // Canonical structural equality, NOT serialisation equality: two providers
+  // describing the same balance in different key order do not disagree.
+  if (canonicalValueEquals(a.value ?? null, b.value ?? null)) {
     return Object.freeze({
       marker: CONTRADICTION_MARKER.NO_CONTRADICTION,
       reason: 'The observations agree.',

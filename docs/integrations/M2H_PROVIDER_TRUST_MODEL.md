@@ -42,8 +42,14 @@ passed to `describeProviderCapability` throws.
 
 ## Observation ≠ interpretation
 
-Raw observations are immutable and hashed; interpretations reference them and may be
-replaced. Our understanding of a provider *will* be wrong at least once, and when it is
+Raw observations are immutable **structured JSON snapshots** — not exact HTTP wire bytes
+and not verbatim request bodies; key order and byte formatting are not preserved, and the
+hash is over the canonical structural form. Interpretations reference them and may be
+replaced.
+
+*Future requirement, recorded not assumed:* exact request-body capture for webhook
+signature verification needs the bytes as received and belongs to the runtime/lifecycle
+checkpoint (CP6). Our understanding of a provider *will* be wrong at least once, and when it is
 the fix must not require re-fetching history we can no longer obtain.
 
 Worked example: a QuickBooks `Payment` with `TotalAmt = 0` linked to a CreditMemo and an

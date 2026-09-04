@@ -2,8 +2,10 @@ M2H-CP1 — provider lab and integration trust kernel
 Base: 236a9dee0c5a4a6bb417db466e562ae3e3c4f950 (G8 freeze candidate)
 Branch: m2h/company-brain-integrations-cp1
 
+REPAIR (evidence closure + semantic equality) applied on top of 3d44efe.
+
 TESTS
-  Provider Lab (kernel/scenarios/hostile)   82 pass / 0 fail / 0 skipped
+  Provider Lab (4 suites incl. closure)    103 pass / 0 fail / 0 skipped
   G8 (5 suites incl. CP4 freeze matrix)    139 pass / 0 fail
   CP1/CP2 proactive                         66 pass / 0 fail
   Ask DW incl. G7                          386 pass / 0 fail
@@ -11,13 +13,24 @@ TESTS
   DW Intelligence / Phase2B                214 pass / 0 fail
   M2D locks + replay                        24 pass / 0 fail
   PostgreSQL RPC/RLS                        14 pass / 0 fail (real server)
-  FULL SUITE                              1991 pass / 0 fail / 0 skipped
+  FULL SUITE                              2012 pass / 0 fail / 0 skipped
 
 MUTATIONS
-  40 applied, 40 killed, 0 survivors, none committed.
-  One initial survivor (P12 "stale accepted as fresh") was a genuine coverage
-  gap in the age path of resolveFreshness; a test was added, not the mutation
-  discarded.
+  56 applied, 56 killed, 0 survivors, none committed (40 original + 16 for the
+  repaired seams: G5 closure, composite evidence, canonical equality, mirror).
+  Two initial survivors were real signals, not noise:
+    P12 "stale accepted as fresh" — a genuine coverage gap in the age path of
+        resolveFreshness; a test was added.
+    R07 "E7 accepts provider names" — masked by the distinct-provider count;
+        the test now asserts the specific refusal so the guard stands alone.
+
+REPAIRED
+  G5 unreachable by any generic code path; MAX_GENERIC_GENERALIZATION = G4.
+  E3/E6/E7/E8 composite-only; E8 UNISSUABLE without a domain artifact.
+  Canonical structural equality (objects unordered, arrays ordered).
+  T1-T6 described honestly as a MIRROR, locked incl. frozen-ancestry check.
+  Raw payload described as a structured JSON snapshot, not wire bytes;
+  exact-byte capture for signature verification recorded as a CP6 requirement.
 
 BUILD    npm run build — green
 DIFF     git diff --check — clean

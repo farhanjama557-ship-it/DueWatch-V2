@@ -19,7 +19,8 @@ import {
   ownerMaySpeakTo, promoteGeneralization, classifyDisagreement,
 } from '../../src/lib/integrations/providerTruthModel.js'
 import {
-  EVIDENCE_CLASS, OBSERVATION_ENVIRONMENT, recordEvidence, evidenceGrantsAuthority,
+  EVIDENCE_CLASS, OBSERVATION_ENVIRONMENT, PRIMITIVE_EVIDENCE_CLASSES,
+  recordEvidence, composeEvidence, evidenceGrantsAuthority,
 } from '../../src/lib/integrations/providerEvidence.js'
 import { interpretObservation, reinterpret } from '../../src/lib/integrations/providerObservation.js'
 import {
@@ -259,26 +260,39 @@ test('H20 a provider quirk cannot silently become a universal DueWatch rule', ()
 })
 
 // 21-23 — evidence is not power
-test('H21 a mock provider cannot claim E4/E5/E6', () => {
-  for (const cls of [EVIDENCE_CLASS.E4_SANDBOX_OBSERVED, EVIDENCE_CLASS.E5_SANDBOX_REPRODUCED,
-    EVIDENCE_CLASS.E6_DOC_PLUS_SANDBOX]) {
+test('H21 a mock provider cannot claim E4/E5, and cannot claim E6 at all', () => {
+  for (const cls of [EVIDENCE_CLASS.E4_SANDBOX_OBSERVED, EVIDENCE_CLASS.E5_SANDBOX_REPRODUCED]) {
     assert.throws(() => recordEvidence({
       evidenceClass: cls, environment: OBSERVATION_ENVIRONMENT.MOCK, refs: ['x'],
     }), /mock cannot be the evidence/, cls)
   }
+  // E6 is composite: it cannot be recorded directly from any environment.
+  assert.throws(() => recordEvidence({
+    evidenceClass: EVIDENCE_CLASS.E6_DOC_PLUS_SANDBOX,
+    environment: OBSERVATION_ENVIRONMENT.PROVIDER_SANDBOX, refs: ['x'],
+  }), /composite/i)
 })
 
-test('H22 an evidence class does not act as authority', () => {
+test('H22 an evidence class does not act as authority — primitive or composed', () => {
   assert.equal(evidenceGrantsAuthority(), false)
-  for (const cls of Object.values(EVIDENCE_CLASS)) {
+  for (const cls of PRIMITIVE_EVIDENCE_CLASSES) {
     const record = recordEvidence({
-      evidenceClass: cls,
-      environment: cls.startsWith('E4') || cls.startsWith('E5') || cls.startsWith('E6')
+      evidenceClass: cls, provider: 'mock_ledger',
+      environment: cls.startsWith('E4') || cls.startsWith('E5')
         ? OBSERVATION_ENVIRONMENT.PROVIDER_SANDBOX : OBSERVATION_ENVIRONMENT.MOCK,
       refs: ['ref'],
     })
     assert.equal(record.grantsAuthority, false, cls)
   }
+  // A composed class carries more provenance and exactly as little power.
+  const composed = composeEvidence({
+    evidenceClass: EVIDENCE_CLASS.E3_SCHEMA_PLUS_DOC,
+    components: [
+      recordEvidence({ evidenceClass: EVIDENCE_CLASS.E1_SCHEMA_CONFIRMED, provider: 'p', environment: OBSERVATION_ENVIRONMENT.MOCK, refs: ['s'] }),
+      recordEvidence({ evidenceClass: EVIDENCE_CLASS.E2_DOC_CONFIRMED, provider: 'p', environment: OBSERVATION_ENVIRONMENT.MOCK, refs: ['d'] }),
+    ],
+  })
+  assert.equal(composed.grantsAuthority, false)
 })
 
 test('H23 model confidence does not change source ownership', () => {

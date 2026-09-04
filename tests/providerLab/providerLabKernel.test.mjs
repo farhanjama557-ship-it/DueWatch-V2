@@ -118,8 +118,10 @@ test('one provider observation cannot jump to a locked canonical rule', () => {
 // ── Evidence ─────────────────────────────────────────────────────────────────
 
 test('a mock environment cannot claim a live-observation evidence class', () => {
-  for (const cls of [EVIDENCE_CLASS.E4_SANDBOX_OBSERVED, EVIDENCE_CLASS.E5_SANDBOX_REPRODUCED,
-    EVIDENCE_CLASS.E6_DOC_PLUS_SANDBOX]) {
+  // E6 is no longer listed here because it is no longer directly recordable at
+  // all: it is composite, and providerLabEvidenceClosure proves it must be
+  // composed from a doc component plus a real sandbox component.
+  for (const cls of [EVIDENCE_CLASS.E4_SANDBOX_OBSERVED, EVIDENCE_CLASS.E5_SANDBOX_REPRODUCED]) {
     assert.throws(() => recordEvidence({ evidenceClass: cls, environment: OBSERVATION_ENVIRONMENT.MOCK }),
       /mock cannot be the evidence/, cls)
     assert.throws(() => recordEvidence({ evidenceClass: cls, environment: OBSERVATION_ENVIRONMENT.FIXTURE_REPLAY }),
@@ -141,7 +143,10 @@ test('documentation classes require a citation', () => {
 test('evidence classes are not a ranking and never grant authority', () => {
   assert.equal(EVIDENCE_CLASS_IS_RANKED, false)
   assert.equal(evidenceGrantsAuthority(), false)
-  const record = recordEvidence({ evidenceClass: EVIDENCE_CLASS.E8_ACCOUNTING_DOMAIN_SUPPORTED })
+  // A primitive class, since E8 can no longer be conjured by naming it.
+  const record = recordEvidence({
+    evidenceClass: EVIDENCE_CLASS.E0_HYPOTHESIS, environment: OBSERVATION_ENVIRONMENT.MOCK,
+  })
   assert.equal(record.grantsAuthority, false)
   assert.equal(record.isRanked, false)
 })

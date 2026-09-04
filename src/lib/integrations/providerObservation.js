@@ -5,9 +5,21 @@
  * be wrong at least once. When it is, the fix must not require re-fetching
  * history we can no longer obtain.
  *
- *   OBSERVATION    what the provider literally returned. Immutable. Never
- *                  edited, never "corrected", never normalised in place.
+ *   OBSERVATION    the provider's returned payload as an immutable structured
+ *                  JSON snapshot. Never edited, never "corrected", never
+ *                  normalised in place.
  *   INTERPRETATION what DueWatch currently believes it means. Replaceable.
+ *
+ * PRECISELY WHAT IS STORED, since an earlier comment here overstated it: this
+ * is a structured JSON snapshot of the parsed payload, NOT the exact original
+ * HTTP wire bytes and NOT a verbatim request body. Key order and byte-level
+ * formatting are not preserved, and the hash is over the canonical structural
+ * form. That is sufficient for interpretation and provenance, and insufficient
+ * for webhook signature verification, which needs the exact bytes as received.
+ *
+ * FUTURE REQUIREMENT, recorded rather than silently assumed: exact request-body
+ * capture for signature verification belongs to the runtime/lifecycle
+ * checkpoint (CP6). It is deliberately NOT added here.
  *
  * The worked example that motivates it: a QuickBooks Payment with TotalAmt 0
  * linked to a CreditMemo and an Invoice. Interpreted as "cash received" it
@@ -16,24 +28,7 @@
  * we learn the difference, the bytes must still be there.
  */
 
-function stableStringify(value) {
-  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`
-  if (value && typeof value === 'object') {
-    return `{${Object.keys(value).sort()
-      .map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`).join(',')}}`
-  }
-  return JSON.stringify(value)
-}
-
-function contentHash(value) {
-  const text = stableStringify(value)
-  let hash = 2166136261
-  for (let index = 0; index < text.length; index += 1) {
-    hash ^= text.charCodeAt(index)
-    hash = Math.imul(hash, 16777619)
-  }
-  return (hash >>> 0).toString(16).padStart(8, '0')
-}
+import { canonicalHash as contentHash } from './canonicalValue.js'
 
 function deepFreeze(value) {
   if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value
@@ -71,8 +66,8 @@ export function createProviderObservation(input = {}) {
     observedAt: required(input.observedAt, 'observation observedAt'),
     apiVersion: input.apiVersion ?? null,
     environment: input.environment ?? null,
-    // The bytes, verbatim, plus a hash so a later reinterpretation can prove it
-    // is reading the same observation.
+    // The structured payload snapshot, plus a canonical hash so a later
+    // reinterpretation can prove it is reading the same observation.
     rawPayload: JSON.parse(JSON.stringify(payload)),
     rawHash: contentHash(payload),
     id: `obs:${required(input.provider, 'p')}:${required(input.externalObjectId, 'o')}:${contentHash({

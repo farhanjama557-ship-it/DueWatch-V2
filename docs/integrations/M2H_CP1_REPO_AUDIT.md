@@ -6,7 +6,7 @@ Base: `236a9dee0c5a4a6bb417db466e562ae3e3c4f950` (G8 freeze candidate).
 
 | Existing primitive | Verdict | Reason |
 |---|---|---|
-| `MONEY_TRUTH_CLASSES` (`src/lib/companyBrain/index.js`) — the six canonical money-truth classes | **REUSE** | These are exactly T1–T6. `providerTruthModel.js` uses the same six strings and the suite proves identity *behaviourally*: the Company Brain must still refuse `createClaim` for each one. |
+| `MONEY_TRUTH_CLASSES` (`src/lib/companyBrain/index.js`) — the six canonical money-truth classes | **MIRROR (not reuse)** | The set is a **private** const in a frozen G8 module, so it cannot be imported and `providerTruthModel.js` declares the same six strings itself. That is a mirror, and mirrors drift — so it is **locked**: exact count, exact names, the Brain still refusing each as canonical money truth, **and** `companyBrain/index.js` byte-identical to the accepted G8 base (which the behavioural check alone would not catch — it would miss a seventh class added on the G8 side). G8 is **not** modified to export it. |
 | `createSource` / `createArtifact` / `createClaim` (G1) | **REUSE (later)** | Company Brain ingestion of provider sources/artifacts/claims belongs to CP7, not CP1. No parallel ingestion model was created. |
 | `assertCompanyBrainCannotWriteCanonicalMoney` | **REUSE** | Asserted directly in the M2H hostile suite (H24). M2H adds the mirrored `assertProviderCannotWriteCanonicalMoney`. |
 | `detectConflicts` (G3/G4 conflict + precedence model) | **REUSE (later)** | CP1 only needs to *classify* whether a disagreement exists at all. Resolution stays with the existing conflict/precedence machinery. |

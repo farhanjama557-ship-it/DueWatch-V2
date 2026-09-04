@@ -14,6 +14,28 @@
 | E7 | multiple materially different providers support the rule |
 | E8 | grounded in accounting/domain principle rather than one API |
 
+### Primitive vs composite
+
+**A caller may assert a primitive class; a composite class must be earned.**
+
+| | Classes | Rule |
+|---|---|---|
+| Primitive | E0, E1, E2, E4, E5 | assertable directly — each names one kind of proof the caller can supply |
+| Composite | E3, E6, E7, E8 | `composeEvidence()` only; `recordEvidence()` refuses them outright |
+
+- **E3** requires an E1 *and* an E2 component — not one arbitrary citation labelled E3.
+- **E6** requires an E2 component *and* a real sandbox component (E4 or E5).
+- **E7** requires components covering **two materially distinct providers**. Two records
+  about the same provider are one provider, whatever class each carries, and a list of
+  provider *names* with no evidence records behind it earns nothing.
+- **E8** requires an explicit accounting/domain-support artifact that no provider record
+  can substitute for. **CP1 has none, so E8 is currently UNISSUABLE** — which is the
+  correct outcome: better unable to mint E8 than minting a fake one.
+
+Composed records **retain their components**, so "which two providers?" has an answer
+rather than a label. Composition adds structure, never altitude: no rank, no score, no
+`>= E6`.
+
 **These are kinds of proof, not amounts of it.** `EVIDENCE_CLASS_IS_RANKED === false`, and
 no comparison function exists, so no code can "upgrade" a claim by picking a bigger
 number. Whether a field exists is a schema question; how a provider behaves when a
@@ -39,8 +61,16 @@ A real disagreement needs the **same dimension, same subject, different values**
 pattern → `G3` candidate canonical concept → `G4` candidate canonical invariant →
 `G5` locked canonical rule.
 
-`promoteGeneralization` moves **one level at a time** and refuses to skip. One provider
-behaving a certain way is a fact about that provider, not a DueWatch rule.
+`promoteGeneralization` moves **one level at a time** and refuses to skip — and it
+**cannot produce G5 at all**. One-step promotion was still a staircase: five calls walked
+G0→G5, so provider research could mint a LOCKED canonical rule by looping. Locking is a
+deliberate system-closure act that CP1 does not own, so:
+
+    GENERIC PROVIDER RESEARCH CAN PRODUCE AT MOST G4_CANDIDATE_CANONICAL_INVARIANT
+
+`MAX_GENERIC_GENERALIZATION === G4`. G5 remains vocabulary for a later closure gate, with
+no function able to mint it and **no `systemClosure: true` flag** — a boolean any caller
+can set is the same defect wearing a longer name.
 
 ## Freshness and invalidation
 
