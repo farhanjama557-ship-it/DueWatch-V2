@@ -29,6 +29,11 @@ import {
 
 console.log(`# providerLab seed=${PROVIDER_LAB_SEED}`)
 
+/** The expected connection every replay event must carry. */
+const LAB_CONNECTION = Object.freeze({
+  tenantId: LAB_TENANT, provider: MOCK_LEDGER_ADAPTER.provider, providerAccountId: LAB_ACCOUNT,
+})
+
 const FRESH = { state: FRESHNESS_STATE.FRESH, mayGovern: true }
 const ledgerClaim = (balance) => ({ value: { balance } })
 
@@ -160,55 +165,73 @@ test('S020 a same-name client collision leaves attribution unknown', () => {
 // ── Webhook replay (S012-S014 and the rest of the delivery matrix) ───────────
 
 test('S012 duplicate delivery and duplicate event are both idempotent', () => {
-  const engine = createReplayEngine()
-  assert.equal(engine.deliver({ deliveryId: 'd1', eventId: 'e1', sequence: 1, mutationType: 'PAYMENT_CREATED' }).outcome, 'ACCEPTED')
-  assert.equal(engine.deliver({ deliveryId: 'd1', eventId: 'e1', sequence: 1 }).outcome, 'DUPLICATE_DELIVERY')
+  const engine = createReplayEngine({ tenantId: LAB_TENANT, provider: MOCK_LEDGER_ADAPTER.provider, providerAccountId: LAB_ACCOUNT })
+  assert.equal(engine.deliver({ ...LAB_CONNECTION, deliveryId: 'd1', eventId: 'e1', sequence: 1, mutationType: 'PAYMENT_CREATED' }).outcome, 'ACCEPTED')
+  assert.equal(engine.deliver({ ...LAB_CONNECTION, deliveryId: 'd1', eventId: 'e1', sequence: 1 }).outcome, 'DUPLICATE_DELIVERY')
   // Same semantic event, NEW delivery id — still the same event.
-  assert.equal(engine.deliver({ deliveryId: 'd2', eventId: 'e1', sequence: 1 }).outcome, 'DUPLICATE_EVENT')
+  assert.equal(engine.deliver({ ...LAB_CONNECTION, deliveryId: 'd2', eventId: 'e1', sequence: 1 }).outcome, 'DUPLICATE_EVENT')
 })
 
 test('S013 out-of-order arrival converges through refetch, not through arrival order', () => {
-  const forward = createReplayEngine()
+  const forward = createReplayEngine({ tenantId: LAB_TENANT, provider: MOCK_LEDGER_ADAPTER.provider, providerAccountId: LAB_ACCOUNT })
   for (const [d, e, s] of [['d1', 'e1', 1], ['d2', 'e2', 2], ['d3', 'e3', 3]]) {
-    forward.deliver({ deliveryId: d, eventId: e, sequence: s, mutationType: 'INVOICE_UPDATED' })
+    forward.deliver({ ...LAB_CONNECTION, deliveryId: d, eventId: e, sequence: s, mutationType: 'INVOICE_UPDATED' })
   }
-  const reversed = createReplayEngine()
+  const reversed = createReplayEngine({ tenantId: LAB_TENANT, provider: MOCK_LEDGER_ADAPTER.provider, providerAccountId: LAB_ACCOUNT })
   for (const [d, e, s] of [['d3', 'e3', 3], ['d1', 'e1', 1], ['d2', 'e2', 2]]) {
-    reversed.deliver({ deliveryId: d, eventId: e, sequence: s, mutationType: 'INVOICE_UPDATED' })
+    reversed.deliver({ ...LAB_CONNECTION, deliveryId: d, eventId: e, sequence: s, mutationType: 'INVOICE_UPDATED' })
   }
-  assert.deepEqual(forward.settle().refetched.sort(), reversed.settle().refetched.sort())
+  // The convergence claim is about the OBLIGATION the events created, which is
+  // identical either way. Comparing settle().refetched would compare two empty
+  // lists, since neither engine has performed an authoritative read yet.
+  assert.deepEqual([...forward.pendingRefetch].sort(), [...reversed.pendingRefetch].sort())
+  assert.ok(forward.pendingRefetch.length > 0)
+  // And both converge only once those reads actually succeed.
+  assert.equal(forward.settle().converged, false)
+  assert.equal(forward.settle({ successfulRefetches: forward.pendingRefetch }).converged, true)
 })
 
 test('S013 a late old event is marked out-of-order and still writes no state', () => {
-  const engine = createReplayEngine()
-  engine.deliver({ deliveryId: 'd2', eventId: 'e2', sequence: 5, mutationType: 'INVOICE_UPDATED' })
-  const late = engine.deliver({ deliveryId: 'd1', eventId: 'e1', sequence: 1, mutationType: 'INVOICE_UPDATED' })
+  const engine = createReplayEngine({ tenantId: LAB_TENANT, provider: MOCK_LEDGER_ADAPTER.provider, providerAccountId: LAB_ACCOUNT })
+  engine.deliver({ ...LAB_CONNECTION, deliveryId: 'd2', eventId: 'e2', sequence: 5, mutationType: 'INVOICE_UPDATED' })
+  const late = engine.deliver({ ...LAB_CONNECTION, deliveryId: 'd1', eventId: 'e1', sequence: 1, mutationType: 'INVOICE_UPDATED' })
   assert.equal(late.outcome, 'ACCEPTED_OUT_OF_ORDER')
   assert.equal(late.stateWrittenFromEvent, false)
 })
 
 test('S014 a retry after a processing failure re-delivers safely', () => {
-  const engine = createReplayEngine()
-  const first = engine.deliver({ deliveryId: 'd1', eventId: 'e1', sequence: 1, mutationType: 'PAYMENT_DELETED' })
+  const engine = createReplayEngine({ tenantId: LAB_TENANT, provider: MOCK_LEDGER_ADAPTER.provider, providerAccountId: LAB_ACCOUNT })
+  const first = engine.deliver({ ...LAB_CONNECTION, deliveryId: 'd1', eventId: 'e1', sequence: 1, mutationType: 'PAYMENT_DELETED' })
   assert.equal(first.outcome, 'ACCEPTED')
   // The processor died before settling; the provider retries with a new id.
-  const retry = engine.deliver({ deliveryId: 'd1-retry', eventId: 'e1', sequence: 1, mutationType: 'PAYMENT_DELETED' })
+  const retry = engine.deliver({ ...LAB_CONNECTION, deliveryId: 'd1-retry', eventId: 'e1', sequence: 1, mutationType: 'PAYMENT_DELETED' })
   assert.equal(retry.outcome, 'DUPLICATE_EVENT')
   // The refetch obligation survives the failure.
   assert.ok(engine.pendingRefetch.includes('invoice'))
 })
 
 test('a dropped event cannot create false certainty', () => {
-  const engine = createReplayEngine()
-  engine.deliver({ deliveryId: 'd1', eventId: 'e1', sequence: 1, mutationType: 'UNKNOWN_PROVIDER_EVENT' })
+  const engine = createReplayEngine({ tenantId: LAB_TENANT, provider: MOCK_LEDGER_ADAPTER.provider, providerAccountId: LAB_ACCOUNT })
+  engine.deliver({ ...LAB_CONNECTION, deliveryId: 'd1', eventId: 'e1', sequence: 1, mutationType: 'UNKNOWN_PROVIDER_EVENT' })
   // Unknown scope means everything is suspect, so nothing is silently intact.
   assert.ok(engine.pendingRefetch.length > 0)
 })
 
-test('an event for the wrong tenant or provider account is rejected', () => {
-  const engine = createReplayEngine()
-  assert.equal(engine.deliver({ deliveryId: 'x', eventId: 'x', tenantId: LAB_TENANT_B }).outcome, 'REJECTED_SCOPE')
-  assert.equal(engine.deliver({ deliveryId: 'y', eventId: 'y', providerAccountId: LAB_ACCOUNT_B }).outcome, 'REJECTED_SCOPE')
+test('an event for the wrong tenant, provider or provider account is rejected', () => {
+  const connection = { tenantId: LAB_TENANT, provider: MOCK_LEDGER_ADAPTER.provider, providerAccountId: LAB_ACCOUNT }
+  const engine = createReplayEngine(connection)
+  const foreign = [
+    ['tenant', { ...connection, tenantId: LAB_TENANT_B }],
+    ['provider', { ...connection, provider: MOCK_PROCESSOR_ADAPTER.provider }],
+    ['provider account', { ...connection, providerAccountId: LAB_ACCOUNT_B }],
+  ]
+  for (const [label, identity] of foreign) {
+    assert.equal(engine.deliver({
+      ...identity, deliveryId: `d-${label}`, eventId: `e-${label}`,
+      mutationType: 'PAYMENT_DELETED',
+    }).outcome, 'REJECTED_SCOPE', label)
+  }
+  // Nothing foreign left a mark on this connection's obligations.
   assert.deepEqual(engine.pendingRefetch, [])
 })
 
@@ -272,7 +295,7 @@ test('every generated company yields a defensible eligibility for every invoice'
 test('generated event streams replay identically for the same seed', () => {
   const company = generateAdversarialCompany(PROVIDER_LAB_SEED)
   const run = () => {
-    const engine = createReplayEngine()
+    const engine = createReplayEngine({ tenantId: LAB_TENANT, provider: MOCK_LEDGER_ADAPTER.provider, providerAccountId: LAB_ACCOUNT })
     for (const event of company.events) engine.deliver(event)
     return engine.settle().refetched.sort()
   }

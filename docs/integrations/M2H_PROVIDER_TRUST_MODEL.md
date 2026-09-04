@@ -62,6 +62,50 @@ proposition — inferring it from the thing being checked would make the check c
 than looked up. Binding it to a durable `connectionId` with an OAuth lifecycle is **CP6**
 work, and nothing here pretends that record exists.
 
+## Local constructor provenance — the systematic rule
+
+> **A public field is not provenance.**
+
+`kind`, `rawHash`, `evidenceId`, `state: 'FRESH'` and `admitted: true` are all data a
+caller can type or copy. None of them decides whether an object is real. Eight
+module-private `WeakSet`/`WeakMap` registries do, across five modules:
+
+| Object | Proven by |
+|---|---|
+| provider observation | produced by `createProviderObservation` |
+| interpretation | produced by `interpretObservation`, **bound to that exact observation** |
+| freshness result | returned by `resolveFreshness`, **bound to that exact observation** |
+| claim result | returned by `admitProviderClaim` (admitted **and** rejected) |
+| evidence record / domain artifact | as documented in the evidence matrix |
+
+A spread copy is a different object and fails every one. `governingClaims` considers only
+registered results and **reports** unrecognised ones as `untrustedInputs` rather than
+silently dropping them.
+
+**What this proves:** this exact object passed the constructor or resolver that owns it,
+*in this process*. **Not** that the provider sent anything, that a source was really
+unreachable, that `invalidatedAt` came from a trusted lifecycle, or that the clock was
+authoritative.
+
+**Process-bound, and this matters for CP6:** WeakSet membership does not survive
+serialisation. When CP6 rehydrates observations, freshness or claims from durable storage
+it will need its own verification boundary at the rehydration point — this mechanism
+cannot cross a process edge.
+
+## Replay is connection-scoped, and settlement requires a read
+
+Every delivered event must carry `tenantId`, `provider` and `providerAccountId`
+**explicitly**; there is no fallback to the expected values, because defaulting a missing
+identity to what you were hoping for is the opposite of failing closed. Scope is validated
+**before** duplicate tracking, invalidation, refetch accumulation or sequence movement, so
+a foreign event leaves no mark.
+
+A refetch obligation clears only when a target was **actually re-read successfully**.
+Calling `settle()` proves nothing: with no successes, or an unavailable source, the
+obligation stands and `converged` is `false`; a partial refetch clears only what it
+refreshed. The old version returned `converged: true` simply because it had been called,
+modelling *"we intended to refetch"* as *"we now know the truth"*.
+
 ## Observation ≠ interpretation
 
 Raw observations are immutable **structured JSON snapshots** — not exact HTTP wire bytes

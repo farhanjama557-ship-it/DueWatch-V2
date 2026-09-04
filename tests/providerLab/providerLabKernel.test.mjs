@@ -333,7 +333,11 @@ test('governing claims exclude and REPORT everything non-fresh', () => {
   }).admitted
   const stale = observeThrough(MOCK_LEDGER_ADAPTER, {
     payload: MOCK_LEDGER_ADAPTER.emit({ invoiceId: 'inv-2', balance: 200 }), externalObjectId: 'b',
-    freshness: { state: FRESHNESS_STATE.STALE, mayGovern: false },
+    // Freshness INPUTS: the harness resolves the result itself, because a
+    // hand-written { state: 'STALE' } is now refused exactly like a
+    // hand-written FRESH one.
+    observedAt: '2020-01-01T00:00:00Z',
+    freshnessContext: { now: LAB_NOW, maxAgeMs: 1000 },
   }).admitted
   const result = governingClaims([fresh, stale], T.T1_INVOICE_AR_STATE)
   assert.equal(result.governing.length, 1)

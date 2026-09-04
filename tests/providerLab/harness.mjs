@@ -122,7 +122,10 @@ export function observeThrough(adapter, {
   payload, tenantId = LAB_TENANT, providerAccountId = LAB_ACCOUNT,
   observedAt = LAB_NOW, eventId = null, deliveryId = null,
   objectType = 'object', externalObjectId = 'obj-1',
-  freshness = null, evidenceClass = EVIDENCE_CLASS.E0_HYPOTHESIS,
+  // Freshness INPUTS, not a freshness result. A test-only way to hand in a
+  // pre-made { state: 'FRESH' } would be a backdoor production code could
+  // imitate, which is the defect this closes.
+  freshnessContext = null, evidenceClass = EVIDENCE_CLASS.E0_HYPOTHESIS,
   // What this observation is offered as evidence FOR. Provider-neutral by
   // construction: the lab's adapters are mocks, so the default names the
   // scenario role rather than any provider.
@@ -150,8 +153,8 @@ export function observeThrough(adapter, {
       // never from the observation being checked.
       tenantId, provider: adapter.provider, providerAccountId,
       observation, interpretation, evidence,
-      freshness: freshness ?? resolveFreshness({
-        observation, now: observedAt, maxAgeMs: 86_400_000,
+      freshness: resolveFreshness({
+        observation, now: observedAt, maxAgeMs: 86_400_000, ...(freshnessContext ?? {}),
       }),
     }),
   }
@@ -215,11 +218,17 @@ export const SCENARIOS = Object.freeze([
  * system that lets it decide state will believe a retried old event over the
  * newer one it already had.
  */
-export function createReplayEngine() {
+export function createReplayEngine({
+  tenantId = LAB_TENANT, provider = MOCK_LEDGER_ADAPTER.provider,
+  providerAccountId = LAB_ACCOUNT,
+} = {}) {
+  // The EXPECTED connection context, fixed when the engine is created. Events
+  // are checked against it; they never supply it.
+  const expected = { tenantId, provider, providerAccountId }
   const seenDeliveries = new Set()
   const seenEvents = new Map()
   const log = []
-  let refetchSet = new Set()
+  const refetchSet = new Set()
   let sequenceHighWater = -1
 
   return {
@@ -227,15 +236,25 @@ export function createReplayEngine() {
      * @param {object} event.deliveryId unique per delivery attempt
      * @param {object} event.eventId    stable per semantic event
      * @param {number} event.sequence   provider ordering, when it exposes one
+     *
+     * Every event must carry its full identity explicitly. There is no
+     * fallback to the expected values: defaulting a missing tenant or provider
+     * to "whatever we were hoping for" is the opposite of failing closed.
      */
     deliver(event = {}) {
-      const { deliveryId, eventId, sequence = null, mutationType = null,
-        tenantId = LAB_TENANT, providerAccountId = LAB_ACCOUNT } = event
+      const { deliveryId, eventId, sequence = null, mutationType = null } = event
 
-      if (tenantId !== LAB_TENANT || providerAccountId !== LAB_ACCOUNT) {
-        log.push({ eventId, outcome: 'REJECTED_SCOPE' })
-        return { outcome: 'REJECTED_SCOPE', refetch: [...refetchSet] }
+      // Scope is validated FIRST — before duplicate tracking, invalidation,
+      // refetch accumulation or sequence movement — so a foreign event cannot
+      // leave a mark on this connection's state.
+      for (const field of ['tenantId', 'provider', 'providerAccountId']) {
+        const supplied = event[field]
+        if (typeof supplied !== 'string' || !supplied.trim() || supplied !== expected[field]) {
+          log.push({ eventId, outcome: 'REJECTED_SCOPE', field })
+          return { outcome: 'REJECTED_SCOPE', field, refetch: [...refetchSet] }
+        }
       }
+
       // Same delivery twice is a transport retry: idempotent by delivery id.
       if (deliveryId && seenDeliveries.has(deliveryId)) {
         log.push({ eventId, outcome: 'DUPLICATE_DELIVERY' })
@@ -267,11 +286,41 @@ export function createReplayEngine() {
         stateWrittenFromEvent: false,
       }
     },
-    /** The authoritative read the events made necessary. */
-    settle() {
-      const required = [...refetchSet]
-      refetchSet = new Set()
-      return { refetched: required, converged: true }
+
+    /**
+     * Applies the result of an authoritative read.
+     *
+     * An obligation clears only when a target was actually re-read
+     * SUCCESSFULLY. The previous version cleared everything and returned
+     * converged: true simply because it had been called, which modelled "we
+     * intended to refetch" as "we now know the truth" — the exact confusion
+     * the freshness model exists to prevent.
+     */
+    applyAuthoritativeRefetch({ targets = [], sourceAvailable = true } = {}) {
+      // An unreachable source refreshes nothing, however many targets were
+      // named for it.
+      const refreshed = sourceAvailable
+        ? targets.filter((target) => refetchSet.has(target))
+        : []
+      for (const target of refreshed) refetchSet.delete(target)
+      return {
+        refreshed: [...refreshed],
+        sourceAvailable,
+        pending: [...refetchSet],
+        converged: refetchSet.size === 0,
+      }
+    },
+
+    /** Where the connection stands. Calling it proves nothing on its own. */
+    settle({ successfulRefetches = [], sourceAvailable = true } = {}) {
+      const applied = this.applyAuthoritativeRefetch({
+        targets: successfulRefetches, sourceAvailable,
+      })
+      return {
+        refetched: applied.refreshed,
+        pending: applied.pending,
+        converged: applied.converged,
+      }
     },
     get log() { return [...log] },
     get pendingRefetch() { return [...refetchSet] },

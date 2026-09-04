@@ -35,7 +35,30 @@
  */
 
 import { ownerMaySpeakTo, CLAIM_SOURCE_OWNER } from './providerTruthModel.js'
-import { FRESHNESS_STATE, freshnessMayGovern } from './providerFreshness.js'
+import {
+  FRESHNESS_STATE, freshnessMayGovern, freshnessBelongsToObservation,
+} from './providerFreshness.js'
+import {
+  isConstructedProviderObservation, interpretationBelongsToObservation,
+} from './providerObservation.js'
+
+/**
+ * Claim results this module actually produced.
+ *
+ * governingClaims previously believed any object carrying `admitted: true`,
+ * which made the entire admission tuple optional: a caller could type the
+ * field and skip tenant, provider, account, ownership and freshness at once.
+ *
+ * Every result — admitted OR rejected — is registered, and only registered
+ * results are considered. Unregistered inputs are not silently dropped either;
+ * they are counted and reported, because a caller quietly losing half its
+ * claims is its own kind of wrong answer.
+ *
+ * Local and process-bound, like the other registries here: it proves this
+ * object came from admitProviderClaim in this process, not that anything
+ * external is true. CP6 owns rehydration.
+ */
+const CONSTRUCTED_PROVIDER_CLAIM_RESULTS = new WeakSet()
 
 export const PROVIDER_CLAIM_ADMISSION = Object.freeze({
   ADMITTED: 'ADMITTED',
@@ -44,6 +67,8 @@ export const PROVIDER_CLAIM_ADMISSION = Object.freeze({
   REJECTED_PROVIDER_ACCOUNT: 'REJECTED_PROVIDER_ACCOUNT',
   REJECTED_OWNER_CANNOT_SPEAK: 'REJECTED_OWNER_CANNOT_SPEAK',
   REJECTED_MALFORMED: 'REJECTED_MALFORMED',
+  REJECTED_UNCONSTRUCTED: 'REJECTED_UNCONSTRUCTED',
+  REJECTED_FRESHNESS_NOT_RESOLVED: 'REJECTED_FRESHNESS_NOT_RESOLVED',
 })
 
 function frozen(value) {
@@ -61,18 +86,29 @@ export function admitProviderClaim({
   tenantId = null, provider = null, providerAccountId = null, observation = null,
   interpretation = null, evidence = null, freshness = null,
 } = {}) {
-  const reject = (admission, reason) => frozen({
-    kind: 'M2H_PROVIDER_CLAIM_V0', admitted: false, admission, reason, claim: null,
-  })
+  const reject = (admission, reason) => {
+    const result = frozen({
+      kind: 'M2H_PROVIDER_CLAIM_V0', admitted: false, admission, reason, claim: null,
+    })
+    CONSTRUCTED_PROVIDER_CLAIM_RESULTS.add(result)
+    return result
+  }
 
   if (!observation || !interpretation) {
     return reject(PROVIDER_CLAIM_ADMISSION.REJECTED_MALFORMED,
       'A claim requires both an observation and an interpretation of it.')
   }
-  if (interpretation.observationId !== observation.id ||
-      interpretation.observationHash !== observation.rawHash) {
-    return reject(PROVIDER_CLAIM_ADMISSION.REJECTED_MALFORMED,
-      'The interpretation does not belong to this observation.')
+  // Constructor provenance before anything else: a forged observation with a
+  // coordinated forged interpretation can satisfy every public-field check.
+  if (!isConstructedProviderObservation(observation)) {
+    return reject(PROVIDER_CLAIM_ADMISSION.REJECTED_UNCONSTRUCTED,
+      'The observation was not produced by createProviderObservation.')
+  }
+  // Exact object binding, not matching ids and hashes: two objects can be
+  // made to agree on any pair of public fields.
+  if (!interpretationBelongsToObservation(interpretation, observation)) {
+    return reject(PROVIDER_CLAIM_ADMISSION.REJECTED_UNCONSTRUCTED,
+      'The interpretation was not produced from this exact observation.')
   }
   if (String(tenantId ?? '') !== String(observation.tenantId ?? '')) {
     return reject(PROVIDER_CLAIM_ADMISSION.REJECTED_TENANT,
@@ -100,7 +136,14 @@ export function admitProviderClaim({
       `${interpretation.sourceOwner} does not own ${interpretation.truthDimension}.`)
   }
 
-  return frozen({
+  // Freshness must be an answer this repository's resolver gave for THIS
+  // observation. A caller-written { state: 'FRESH' } is a wish.
+  if (freshness != null && !freshnessBelongsToObservation(freshness, observation)) {
+    return reject(PROVIDER_CLAIM_ADMISSION.REJECTED_FRESHNESS_NOT_RESOLVED,
+      'Freshness must come from resolveFreshness for this exact observation.')
+  }
+
+  const admittedResult = frozen({
     kind: 'M2H_PROVIDER_CLAIM_V0',
     admitted: true,
     admission: PROVIDER_CLAIM_ADMISSION.ADMITTED,
@@ -121,6 +164,8 @@ export function admitProviderClaim({
       grantsAuthority: false,
     },
   })
+  CONSTRUCTED_PROVIDER_CLAIM_RESULTS.add(admittedResult)
+  return admittedResult
 }
 
 /**
@@ -142,7 +187,11 @@ export function assertProviderCannotWriteCanonicalMoney(mutation = {}) {
  * owed" and "we could not read the ledger".
  */
 export function governingClaims(claims = [], truthDimension = null) {
-  const relevant = claims.filter((claim) =>
+  // Only results this module produced. `admitted: true` on a plain object is a
+  // caller's assertion, not an admission.
+  const trusted = claims.filter((claim) => CONSTRUCTED_PROVIDER_CLAIM_RESULTS.has(claim))
+  const untrustedInputs = claims.length - trusted.length
+  const relevant = trusted.filter((claim) =>
     claim?.admitted && claim.claim.truthDimension === truthDimension)
   const governing = relevant.filter((claim) => freshnessMayGovern(claim.claim.freshness?.state))
   const withheld = relevant.filter((claim) => !freshnessMayGovern(claim.claim.freshness?.state))
@@ -153,7 +202,10 @@ export function governingClaims(claims = [], truthDimension = null) {
       subject: claim.claim.subject,
       freshness: claim.claim.freshness?.state ?? FRESHNESS_STATE.UNKNOWN,
     })),
-    complete: withheld.length === 0,
+    // Reported, never smoothed over: an unrecognised input means the caller's
+    // list was not what it thought it was, and the answer is not complete.
+    untrustedInputs,
+    complete: withheld.length === 0 && untrustedInputs === 0,
   })
 }
 

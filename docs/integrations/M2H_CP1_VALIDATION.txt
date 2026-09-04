@@ -5,7 +5,7 @@ Branch: m2h/company-brain-integrations-cp1
 REPAIR (evidence closure + semantic equality) applied on top of 3d44efe.
 
 TESTS
-  Provider Lab (7 suites)                  168 pass / 0 fail / 0 skipped
+  Provider Lab (8 suites)                  194 pass / 0 fail / 0 skipped
   G8 (5 suites incl. CP4 freeze matrix)    139 pass / 0 fail
   CP1/CP2 proactive                         66 pass / 0 fail
   Ask DW incl. G7                          386 pass / 0 fail
@@ -13,12 +13,12 @@ TESTS
   DW Intelligence / Phase2B                214 pass / 0 fail
   M2D locks + replay                        24 pass / 0 fail
   PostgreSQL RPC/RLS                        14 pass / 0 fail (real server)
-  FULL SUITE                              2077 pass / 0 fail / 0 skipped
+  FULL SUITE                              2103 pass / 0 fail / 0 skipped
 
 MUTATIONS
-  94 applied, 94 killed, 0 survivors, none committed (40 original + 16 evidence
-  closure + 14 proposition identity + 15 provider identity + 9 evidence
-  constructor / E8 identity).
+  116 applied, 116 killed, 0 survivors, none committed (40 original + 16
+  evidence closure + 14 proposition identity + 15 provider identity + 9
+  evidence constructor + 22 local trust boundary / replay).
   Two initial survivors were real signals, not noise:
     P12 "stale accepted as fresh" — a genuine coverage gap in the age path of
         resolveFreshness; a test was added.
@@ -51,6 +51,11 @@ REPAIRED
   composed records are registered so nesting works without relaxing the check.
   E8 always carries a proposition (from the artifact when there are no
   components) and its evidenceId includes the artifact's canonical fields.
+  Observations, interpretations, freshness results and claim results are all
+  proven by module-private WeakSet membership with exact object binding, never
+  by a public field; governingClaims reports untrustedInputs. The replay engine
+  is connection-scoped with no identity fallback, and a refetch obligation
+  clears only on a successful authoritative read.
 
 BUILD    npm run build — green
 DIFF     git diff --check — clean

@@ -49,6 +49,11 @@ import {
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const read = (relative) => readFileSync(path.join(root, relative), 'utf8')
+/** The expected connection every replay event must carry. */
+const LAB_CONNECTION = Object.freeze({
+  tenantId: LAB_TENANT, provider: MOCK_LEDGER_ADAPTER.provider, providerAccountId: LAB_ACCOUNT,
+})
+
 const FRESH = { state: FRESHNESS_STATE.FRESH, mayGovern: true }
 
 const INTEGRATION_MODULES = [
@@ -111,12 +116,14 @@ test('H5 communication evidence cannot become payment truth', () => {
   })
   assert.equal(interpretation.truthDimension, null)
   assert.equal(admitted.claim.truthDimension, null)
-  // And it cannot be promoted by relabelling the owner.
-  const forged = interpretObservation({
+  // And it cannot be promoted by relabelling the owner. Two doors, both shut:
+  // an object shaped like an observation is not one...
+  assert.throws(() => interpretObservation({
     observation: { ...admitted, kind: 'M2H_PROVIDER_OBSERVATION_V0' },
     truthDimension: T.T3_PAYMENT_RECEIPT_STATE, sourceOwner: OWNER.COMMUNICATION_SOURCE,
-  })
-  assert.equal(ownerMaySpeakTo(forged.sourceOwner, forged.truthDimension), false)
+  }), /createProviderObservation/)
+  // ...and even a genuine one cannot let a communication source speak for money.
+  assert.equal(ownerMaySpeakTo(OWNER.COMMUNICATION_SOURCE, T.T3_PAYMENT_RECEIPT_STATE), false)
 })
 
 test('H6 contract evidence cannot become a current ledger balance', () => {
@@ -188,26 +195,29 @@ test('H12 SOURCE_UNAVAILABLE is not empty, zero or "no issue"', () => {
 
 // 13-15 — delivery is not truth
 test('H13 duplicate events are idempotent', () => {
-  const engine = createReplayEngine()
-  const first = engine.deliver({ deliveryId: 'd1', eventId: 'e1', sequence: 1, mutationType: 'PAYMENT_CREATED' })
-  const second = engine.deliver({ deliveryId: 'd1', eventId: 'e1', sequence: 1, mutationType: 'PAYMENT_CREATED' })
+  const engine = createReplayEngine({ tenantId: LAB_TENANT, provider: MOCK_LEDGER_ADAPTER.provider, providerAccountId: LAB_ACCOUNT })
+  const first = engine.deliver({ ...LAB_CONNECTION, deliveryId: 'd1', eventId: 'e1', sequence: 1, mutationType: 'PAYMENT_CREATED' })
+  const second = engine.deliver({ ...LAB_CONNECTION, deliveryId: 'd1', eventId: 'e1', sequence: 1, mutationType: 'PAYMENT_CREATED' })
   assert.equal(first.outcome, 'ACCEPTED')
   assert.equal(second.outcome, 'DUPLICATE_DELIVERY')
   assert.deepEqual(first.refetch, second.refetch)
 })
 
 test('H14 out-of-order events converge and never write state from the event', () => {
-  const engine = createReplayEngine()
-  const late = engine.deliver({ deliveryId: 'd9', eventId: 'e9', sequence: 9, mutationType: 'INVOICE_UPDATED' })
-  const older = engine.deliver({ deliveryId: 'd1', eventId: 'e1', sequence: 1, mutationType: 'INVOICE_UPDATED' })
+  const engine = createReplayEngine({ tenantId: LAB_TENANT, provider: MOCK_LEDGER_ADAPTER.provider, providerAccountId: LAB_ACCOUNT })
+  const late = engine.deliver({ ...LAB_CONNECTION, deliveryId: 'd9', eventId: 'e9', sequence: 9, mutationType: 'INVOICE_UPDATED' })
+  const older = engine.deliver({ ...LAB_CONNECTION, deliveryId: 'd1', eventId: 'e1', sequence: 1, mutationType: 'INVOICE_UPDATED' })
   assert.equal(late.stateWrittenFromEvent, false)
   assert.equal(older.outcome, 'ACCEPTED_OUT_OF_ORDER')
-  assert.equal(engine.settle().converged, true)
+  // Convergence is the authoritative READ, not the arrival of events: settling
+  // with nothing refreshed leaves the obligation exactly where it was.
+  assert.equal(engine.settle().converged, false)
+  assert.equal(engine.settle({ successfulRefetches: engine.pendingRefetch }).converged, true)
 })
 
 test('H15 a dropped event cannot create false certainty', () => {
-  const engine = createReplayEngine()
-  engine.deliver({ deliveryId: 'd1', eventId: 'e1', mutationType: 'A_MUTATION_WE_HAVE_NEVER_SEEN' })
+  const engine = createReplayEngine({ tenantId: LAB_TENANT, provider: MOCK_LEDGER_ADAPTER.provider, providerAccountId: LAB_ACCOUNT })
+  engine.deliver({ ...LAB_CONNECTION, deliveryId: 'd1', eventId: 'e1', mutationType: 'A_MUTATION_WE_HAVE_NEVER_SEEN' })
   // Unknown scope ⇒ everything suspect ⇒ refetch obligation outstanding.
   assert.ok(engine.pendingRefetch.length > 0)
 })

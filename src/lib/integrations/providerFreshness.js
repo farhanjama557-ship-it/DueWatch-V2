@@ -22,6 +22,41 @@
  *   hold.
  */
 
+/**
+ * LOCAL RESOLVER PROVENANCE.
+ *
+ * `{ state: 'FRESH' }` is an object literal, so accepting a caller's freshness
+ * meant a caller could simply declare that a stale, invalidated or unreachable
+ * source was current — and governing status followed. The public state string
+ * cannot be the proof of the state.
+ *
+ * A freshness result is one this module's resolver returned, for THAT exact
+ * observation. Both facts are held privately; neither is a field a caller can
+ * copy.
+ *
+ * WHAT THIS PROVES, precisely: this object came out of resolveFreshness for
+ * this observation, in this process. It does NOT prove sourceAvailable was
+ * honestly obtained, that invalidatedAt came from a trusted lifecycle, that
+ * the clock was authoritative, or that the provider was really reachable.
+ * Those are durable-runtime facts and belong to CP6.
+ *
+ * PROCESS-BOUND: this membership does not survive serialisation, so CP6 will
+ * need its own verification boundary when rehydrating stored freshness.
+ */
+const CONSTRUCTED_FRESHNESS_RESULTS = new WeakSet()
+/** freshness result -> the exact observation it was resolved for. */
+const FRESHNESS_TO_OBSERVATION = new WeakMap()
+
+/** Narrow predicates. The registries are never exported. */
+export function isResolvedFreshness(candidate) {
+  return CONSTRUCTED_FRESHNESS_RESULTS.has(candidate)
+}
+
+export function freshnessBelongsToObservation(freshness, observation) {
+  if (!CONSTRUCTED_FRESHNESS_RESULTS.has(freshness)) return false
+  return FRESHNESS_TO_OBSERVATION.get(freshness) === observation
+}
+
 export const FRESHNESS_STATE = Object.freeze({
   FRESH: 'FRESH',
   STALE: 'STALE',
@@ -133,9 +168,14 @@ export function resolveFreshness({
   observation = null, now = null, maxAgeMs = null,
   sourceAvailable = true, invalidatedAt = null, refetchRequired = false,
 } = {}) {
-  const mark = (state, reason) => Object.freeze({
-    state, reason, mayGovern: freshnessMayGovern(state),
-  })
+  const mark = (state, reason) => {
+    const result = Object.freeze({ state, reason, mayGovern: freshnessMayGovern(state) })
+    CONSTRUCTED_FRESHNESS_RESULTS.add(result)
+    // Bound to the observation it describes, so a FRESH result for one
+    // observation cannot be presented for another.
+    if (observation) FRESHNESS_TO_OBSERVATION.set(result, observation)
+    return result
+  }
   if (!observation) return mark(FRESHNESS_STATE.UNKNOWN, 'No observation.')
   if (sourceAvailable === false) {
     return mark(FRESHNESS_STATE.SOURCE_UNAVAILABLE,

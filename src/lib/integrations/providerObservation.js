@@ -21,6 +21,51 @@
  * capture for signature verification belongs to the runtime/lifecycle
  * checkpoint (CP6). It is deliberately NOT added here.
  *
+ * LOCAL CONSTRUCTOR PROVENANCE
+ *
+ * A PUBLIC FIELD IS NOT PROVENANCE. `kind: 'M2H_PROVIDER_OBSERVATION_V0'` is a
+ * string any caller can type, and `rawHash` is a checksum any caller can
+ * recompute, so neither can decide whether an object is a real observation.
+ * Both registries below are module-private: an object is an observation only
+ * if this module's constructor produced that exact object, and a spread copy
+ * is a different object.
+ *
+ * An interpretation is additionally BOUND to the exact observation it was made
+ * from. Matching `observationId` and `observationHash` is not that binding —
+ * two forged objects can agree on any pair of public fields — so the relation
+ * is held in a WeakMap keyed by the real objects.
+ *
+ * WHAT THIS PROVES: this exact object passed our constructor in this process.
+ * NOT that the provider sent anything. External origin stays CP2+/CP6.
+ *
+ * PROCESS-BOUND, and this matters later: WeakSet membership does not survive
+ * serialisation. When CP6 rehydrates observations from durable storage it will
+ * need its own verification boundary at the point of rehydration; this local
+ * mechanism cannot be carried across a process edge.
+ */
+
+const CONSTRUCTED_PROVIDER_OBSERVATIONS = new WeakSet()
+const CONSTRUCTED_PROVIDER_INTERPRETATIONS = new WeakSet()
+/** interpretation -> the exact observation object it was derived from. */
+const INTERPRETATION_TO_OBSERVATION = new WeakMap()
+
+/** Narrow read-only predicates. The registries themselves are never exposed. */
+export function isConstructedProviderObservation(candidate) {
+  return CONSTRUCTED_PROVIDER_OBSERVATIONS.has(candidate)
+}
+
+export function isConstructedProviderInterpretation(candidate) {
+  return CONSTRUCTED_PROVIDER_INTERPRETATIONS.has(candidate)
+}
+
+/** Whether this interpretation was made from THIS exact observation object. */
+export function interpretationBelongsToObservation(interpretation, observation) {
+  if (!CONSTRUCTED_PROVIDER_INTERPRETATIONS.has(interpretation)) return false
+  return INTERPRETATION_TO_OBSERVATION.get(interpretation) === observation
+}
+
+/*
+ *
  * The worked example that motivates it: a QuickBooks Payment with TotalAmt 0
  * linked to a CreditMemo and an Invoice. Interpreted as "cash received" it
  * marks an invoice paid that nobody paid. Interpreted as "provider-generated
@@ -52,7 +97,7 @@ function required(value, name) {
 export function createProviderObservation(input = {}) {
   const payload = input.rawPayload
   if (payload === undefined) throw new Error('observation rawPayload required')
-  return deepFreeze({
+  const observation = deepFreeze({
     kind: 'M2H_PROVIDER_OBSERVATION_V0',
     tenantId: required(input.tenantId, 'observation tenantId'),
     provider: required(input.provider, 'observation provider'),
@@ -76,6 +121,8 @@ export function createProviderObservation(input = {}) {
       e: input.eventId ?? null, d: input.deliveryId ?? null, t: input.observedAt,
     })}`,
   })
+  CONSTRUCTED_PROVIDER_OBSERVATIONS.add(observation)
+  return observation
 }
 
 /**
@@ -90,10 +137,12 @@ export function interpretObservation({
   value = null, evidence = null, uncertainty = [], interpretedAt = null,
   interpretationVersion = 'v1',
 } = {}) {
-  if (observation?.kind !== 'M2H_PROVIDER_OBSERVATION_V0') {
-    throw new Error('interpretation requires a provider observation')
+  if (!CONSTRUCTED_PROVIDER_OBSERVATIONS.has(observation)) {
+    throw new Error(
+      'interpretation requires an observation produced by createProviderObservation; ' +
+      'an object carrying the right kind, id or rawHash is not one')
   }
-  return deepFreeze({
+  const interpretation = deepFreeze({
     kind: 'M2H_PROVIDER_INTERPRETATION_V0',
     observationId: observation.id,
     observationHash: observation.rawHash,
@@ -113,6 +162,9 @@ export function interpretObservation({
     grantsAuthority: false,
     writesCanonicalMoney: false,
   })
+  CONSTRUCTED_PROVIDER_INTERPRETATIONS.add(interpretation)
+  INTERPRETATION_TO_OBSERVATION.set(interpretation, observation)
+  return interpretation
 }
 
 /**
@@ -123,10 +175,12 @@ export function interpretObservation({
  * still the same structured observation snapshot that was recorded.
  */
 export function reinterpret(previous, changes = {}) {
-  if (previous?.kind !== 'M2H_PROVIDER_INTERPRETATION_V0') {
-    throw new Error('reinterpret requires a previous interpretation')
+  if (!CONSTRUCTED_PROVIDER_INTERPRETATIONS.has(previous)) {
+    throw new Error(
+      'reinterpret requires an interpretation produced by interpretObservation; ' +
+      'a forged or copied object is not one')
   }
-  return deepFreeze({
+  const replacement = deepFreeze({
     ...previous,
     ...changes,
     // Identity of the underlying observation is not a field an author may edit.
@@ -141,4 +195,9 @@ export function reinterpret(previous, changes = {}) {
     grantsAuthority: false,
     writesCanonicalMoney: false,
   })
+  CONSTRUCTED_PROVIDER_INTERPRETATIONS.add(replacement)
+  // The replacement reads the SAME observation. Rebinding it elsewhere is not
+  // a reinterpretation, it is a transplant.
+  INTERPRETATION_TO_OBSERVATION.set(replacement, INTERPRETATION_TO_OBSERVATION.get(previous))
+  return replacement
 }
