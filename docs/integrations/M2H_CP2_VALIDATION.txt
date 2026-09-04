@@ -12,12 +12,12 @@ SCOPE
 
 TESTS
   Frozen CP1 Provider Lab                    217 pass / 0 fail / 0 skipped
-  New QuickBooks suites                       25 pass / 0 fail / 0 skipped
-  New Xero suites                             28 pass / 0 fail / 0 skipped
+  New QuickBooks suites                       30 pass / 0 fail / 0 skipped
+  New Xero suites                             33 pass / 0 fail / 0 skipped
   New cross-provider suites                   11 pass / 0 fail / 0 skipped
-  New CP2 mutation suites                     19 pass / 0 fail / 0 skipped
+  New CP2 mutation suites                     22 pass / 0 fail / 0 skipped
   New CP2 static suites                        4 pass / 0 fail / 0 skipped
-  Provider Lab total                         304 pass / 0 fail / 0 skipped
+  Provider Lab total                         317 pass / 0 fail / 0 skipped
   G8 freeze suites                           139 pass / 0 fail / 0 skipped
   Ask DW                                     386 pass / 0 fail / 0 skipped
   G5 authority/delegation                    362 pass / 0 fail / 0 skipped
@@ -27,12 +27,24 @@ TESTS
   PostgreSQL RPC/RLS                           0 pass / 0 fail / 14 skipped
     No PostgreSQL server was available. G6-RT0 reports that runtime
     verification was NOT performed; the skip is not represented as a pass.
-  FULL SUITE                                2200 pass / 0 fail / 14 skipped
-    2214 total
+  FULL SUITE                                2213 pass / 0 fail / 14 skipped
+    2227 total
 
 MUTATIONS
-  18 targeted CP2 semantic mutants attempted, 18 killed, 0 survivors.
-  They cover Payment-to-T3 collapse, T3/T4 collapse, provider-account bypass,
+  21 semantic counterexample rows, all green. This inventory is regression
+  coverage and is reported separately from actual source mutation execution.
+
+  3 actual unsafe source mutations applied temporarily and restored; 3 killed,
+  0 survivors:
+    M19 removed tenantId from refetchObligation. CP2-R19 failed because the
+        accepted obligation tenantId was undefined instead of dw-tenant-a.
+    M20 changed Xero envelope validation to inspect only events[0]. CP2-R20
+        failed because a safe+foreign envelope was accepted with an obligation.
+    M21 returned the final v1 segment as QBO operation. CP2-R21 failed because
+        operation was v1 instead of created.
+
+  The 21 semantic counterexamples cover Payment-to-T3 collapse, T3/T4 collapse,
+  provider-account bypass,
   QBO realm bypass, Xero tenant and connection/tenant confusion, payload tenant
   inference, unavailable-as-empty, incomplete paging, event-as-truth, dropped
   refetch, lost unapplied credit, credit-note-as-cash, unsupported prepayment and
@@ -50,9 +62,11 @@ TRUTH / IDENTITY
   to establish DueWatch T6.
 
 CHANGE DETECTION / SYNC
-  Current QBO CloudEvents and explicit legacy replay envelopes, and Xero event
-  envelopes, are scoped before they produce pure authoritative-refetch
-  obligations. Events never write financial truth. Page replay is provider-
+  Refetch obligations retain tenantId + provider + providerAccountId from the
+  trusted connection. Current versioned QBO CloudEvents are parsed as separate
+  entity/operation/version fields; the old envelope is LEGACY_REPLAY_ONLY.
+  Xero's standard events envelope is validated atomically across every event.
+  Events never write financial truth. Page replay is provider-
   account scoped, duplicate-idempotent, newest-version preserving, explicitly
   terminal, and fail-closed on failed/incomplete pages.
 

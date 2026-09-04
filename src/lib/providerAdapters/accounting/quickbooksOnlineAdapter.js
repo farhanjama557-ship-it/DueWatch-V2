@@ -8,6 +8,37 @@ import {
 
 export const QUICKBOOKS_ONLINE_PROVIDER = 'quickbooks_online'
 
+const QBO_CLOUD_EVENT_ENTITIES = new Set(['invoice', 'payment', 'creditmemo'])
+const QBO_CLOUD_EVENT_OPERATIONS = new Set(['created', 'updated', 'deleted', 'voided'])
+
+function parseCloudEventType(rawType, metadataOperation) {
+  const type = materialString(rawType)
+  const metadata = materialString(metadataOperation)?.toLowerCase() ?? null
+  const match = type?.toLowerCase().match(/^qbo\.([a-z][a-z0-9_-]*)\.([a-z][a-z0-9_-]*)\.(v\d+)$/)
+  if (!match) {
+    return freeze({ rawType: type, entity: null, operation: null, version: null,
+      metadataOperation: metadata, metadataConflict: false, classification: 'MALFORMED_TYPE' })
+  }
+  const [, entity, operation, version] = match
+  const metadataConflict = metadata != null && metadata !== operation
+  const classification = metadataConflict ? 'CONTRADICTORY_METADATA'
+    : version !== 'v1' ? 'UNSUPPORTED_VERSION'
+      : !QBO_CLOUD_EVENT_ENTITIES.has(entity) ? 'UNKNOWN_ENTITY'
+        : !QBO_CLOUD_EVENT_OPERATIONS.has(operation) ? 'UNKNOWN_OPERATION'
+          : 'SUPPORTED_V1'
+  return freeze({ rawType: type, entity, operation, version,
+    metadataOperation: metadata, metadataConflict, classification })
+}
+
+function cloudEventTargets(descriptor) {
+  if (descriptor.classification !== 'SUPPORTED_V1') {
+    return ['invoice', 'payment', 'credit_memo', 'allocations', 'customer_unapplied_value']
+  }
+  if (descriptor.entity === 'invoice') return ['invoice', 'allocations']
+  return [descriptor.entity === 'creditmemo' ? 'credit_memo' : 'payment',
+    'invoice', 'allocations', 'customer_unapplied_value']
+}
+
 function linkedTransactions(payload) {
   const lines = Array.isArray(payload?.Line) ? payload.Line : []
   const lineLinks = lines.flatMap((line) => (Array.isArray(line?.LinkedTxn) ? line.LinkedTxn : [])
@@ -85,7 +116,13 @@ export const quickBooksOnlineAdapter = freeze({
     throw new Error(`unsupported QuickBooks object type: ${observation.objectType}`)
   },
   parseChangeEvent({ connection, envelope }) {
-    const identity = requireConnectionIdentity(connection, QUICKBOOKS_ONLINE_PROVIDER)
+    let identity
+    try {
+      identity = requireConnectionIdentity(connection, QUICKBOOKS_ONLINE_PROVIDER)
+    } catch {
+      return freeze({ accepted: false, reason: 'REJECTED_CONNECTION_IDENTITY',
+        stateWrittenFromEvent: false })
+    }
     // Intuit's mandatory 2026 format is an array of CloudEvents. CP2 also
     // accepts the earlier envelope solely as a deterministic replay shape;
     // neither shape is financial truth.
@@ -95,23 +132,15 @@ export const quickBooksOnlineAdapter = freeze({
         return freeze({ accepted: false, reason: 'REJECTED_REALM', stateWrittenFromEvent: false })
       }
       const entities = envelope.map((event) => {
-        const eventType = materialString(event.type) ?? ''
-        const name = materialString(event?.data?.entityName) ??
-          (eventType.match(/(?:^|\.)(invoice|payment|creditmemo)(?:\.|$)/i)?.[1] ?? 'Unknown')
-        return { name: name[0].toUpperCase() + name.slice(1),
-          id: materialString(event.intuitentityid),
-          operation: materialString(event?.data?.operation) ?? eventType.split('.').at(-1),
-          lastUpdated: materialString(event.time), eventId: materialString(event.id) }
+        const descriptor = parseCloudEventType(event.type, event?.data?.operation)
+        const name = descriptor.entity ?? 'unknown'
+        return freeze({ name: name[0].toUpperCase() + name.slice(1),
+          id: materialString(event.intuitentityid), lastUpdated: materialString(event.time),
+          eventId: materialString(event.id), ...descriptor })
       })
-      const targets = entities.flatMap((entity) => {
-        if (entity.name.toLowerCase() === 'invoice') return ['invoice', 'allocations']
-        if (['payment', 'creditmemo'].includes(entity.name.toLowerCase())) {
-          return ['payment', 'invoice', 'allocations', 'customer_unapplied_value']
-        }
-        return ['invoice', 'payment', 'allocations', 'customer_unapplied_value']
-      })
+      const targets = entities.flatMap(cloudEventTargets)
       return freeze({ accepted: true, eventFormat: 'CLOUDEVENTS_1_0', eventEntities: entities,
-        obligation: refetchObligation({ provider: identity.provider,
+        obligation: refetchObligation({ tenantId: identity.tenantId, provider: identity.provider,
           providerAccountId: identity.providerAccountId,
           eventId: entities.map((entity) => entity.eventId ?? `${entity.name}:${entity.id}`).join('|'),
           targets, reason: 'QuickBooks CloudEvent invalidates cached accounting state; authoritative reread required.' }) })
@@ -134,7 +163,7 @@ export const quickBooksOnlineAdapter = freeze({
     return freeze({ accepted: true, eventFormat: 'LEGACY_REPLAY_ONLY', eventEntities: entities.map((entity) => ({
       name: entity.name, id: entity.id, operation: entity.operation,
       lastUpdated: entity.lastUpdated,
-    })), obligation: refetchObligation({ provider: identity.provider,
+    })), obligation: refetchObligation({ tenantId: identity.tenantId, provider: identity.provider,
       providerAccountId: identity.providerAccountId,
       eventId: entities.map((entity) => `${entity.name}:${entity.id}:${entity.lastUpdated}`).join('|'),
       targets, reason: 'QuickBooks event invalidates cached accounting state; authoritative reread required.' }) })

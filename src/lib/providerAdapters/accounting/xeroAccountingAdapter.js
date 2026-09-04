@@ -8,6 +8,16 @@ import {
 
 export const XERO_ACCOUNTING_PROVIDER = 'xero_accounting'
 
+function xeroEventTargets(category) {
+  if (category === 'INVOICE') return ['invoice', 'allocations']
+  const ownTarget = ({ PAYMENT: 'payment', CREDITNOTE: 'credit_note',
+    PREPAYMENT: 'prepayment', OVERPAYMENT: 'overpayment' })[category]
+  return ownTarget
+    ? [ownTarget, 'invoice', 'allocations', 'customer_unapplied_value']
+    : ['invoice', 'payment', 'credit_note', 'prepayment', 'overpayment',
+      'allocations', 'customer_unapplied_value']
+}
+
 function xeroConnectionIdentity(connection) {
   const identity = requireConnectionIdentity(connection, XERO_ACCOUNTING_PROVIDER)
   if (connection?.connectionId && connection.connectionId === identity.providerAccountId) {
@@ -96,19 +106,39 @@ export const xeroAccountingAdapter = freeze({
     if (observation.objectType === 'Overpayment') return allocationInterpretation(observation, 'OVERPAYMENT')
     throw new Error(`unsupported Xero object type: ${observation.objectType}`)
   },
-  parseChangeEvent({ connection, event }) {
-    const identity = xeroConnectionIdentity(connection)
-    const tenantId = materialString(event?.tenantId ?? event?.TenantID)
-    if (!tenantId || tenantId !== identity.providerAccountId) {
+  parseChangeEvent({ connection, envelope }) {
+    let identity
+    try {
+      identity = xeroConnectionIdentity(connection)
+    } catch {
+      return freeze({ accepted: false, reason: 'REJECTED_CONNECTION_IDENTITY',
+        stateWrittenFromEvent: false })
+    }
+    const events = Array.isArray(envelope?.events) ? envelope.events : []
+    if (events.length === 0) {
+      return freeze({ accepted: false, reason: 'REJECTED_XERO_ENVELOPE',
+        stateWrittenFromEvent: false })
+    }
+    if (events.some((event) => {
+      const tenantId = materialString(event?.tenantId ?? event?.TenantID)
+      return !tenantId || tenantId !== identity.providerAccountId
+    })) {
       return freeze({ accepted: false, reason: 'REJECTED_XERO_TENANT', stateWrittenFromEvent: false })
     }
-    const category = materialString(event?.eventCategory ?? event?.EventCategory)
-    const targets = category === 'INVOICE' ? ['invoice', 'allocations']
-      : ['invoice', 'payment', 'allocations', 'customer_unapplied_value']
-    return freeze({ accepted: true, resourceId: event.resourceId ?? event.ResourceID ?? null,
-      resourceUrl: event.resourceUrl ?? event.ResourceUrl ?? null,
-      obligation: refetchObligation({ provider: identity.provider, providerAccountId: identity.providerAccountId,
-        eventId: materialString(event.eventId ?? event.EventID) ?? `${category}:${event.resourceId ?? event.ResourceID}`,
+    const normalizedEvents = events.map((event) => {
+      const category = materialString(event?.eventCategory ?? event?.EventCategory)?.toUpperCase() ?? 'UNKNOWN'
+      const resourceId = materialString(event?.resourceId ?? event?.ResourceID)
+      const eventId = materialString(event?.eventId ?? event?.EventID) ?? `${category}:${resourceId ?? 'unknown'}`
+      return freeze({ eventId, category, resourceId,
+        resourceUrl: materialString(event?.resourceUrl ?? event?.ResourceUrl) })
+    })
+    const uniqueEvents = [...new Map(normalizedEvents.map((event) => [event.eventId, event])).values()]
+      .sort((a, b) => a.eventId.localeCompare(b.eventId))
+    const targets = uniqueEvents.flatMap((event) => xeroEventTargets(event.category))
+    return freeze({ accepted: true, eventFormat: 'XERO_STANDARD_ENVELOPE', eventEntities: uniqueEvents,
+      obligation: refetchObligation({ tenantId: identity.tenantId, provider: identity.provider,
+        providerAccountId: identity.providerAccountId,
+        eventId: uniqueEvents.map((event) => event.eventId).join('|'),
         targets, reason: 'Xero event is notification evidence only; authoritative resource reread required.' }) })
   },
 })

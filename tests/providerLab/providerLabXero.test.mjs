@@ -10,6 +10,7 @@ import { observeAccounting, xeroInvoice, CP2_NOW } from './accountingHarness.mjs
 const CONNECTION = Object.freeze({ tenantId: 'dw-tenant-a', provider: XERO_ACCOUNTING_PROVIDER,
   providerAccountId: 'xero-org-a' })
 const OTHER_ORG = Object.freeze({ ...CONNECTION, providerAccountId: 'xero-org-b' })
+const xeroEnvelope = (...events) => ({ events })
 
 function allocationPayload(kind, overrides = {}) {
   const idField = { Payment: 'PaymentID', CreditNote: 'CreditNoteID', Prepayment: 'PrepaymentID',
@@ -118,8 +119,12 @@ test('X14 unavailable source is unknown, not an empty list', () => {
 })
 
 test('X15 duplicate event targets collapse idempotently', () => {
-  const result = XERO.parseChangeEvent({ connection: CONNECTION, event: {
-    tenantId: 'xero-org-a', eventId: 'e-1', eventCategory: 'INVOICE', resourceId: 'x-inv-1' } })
+  const event = { tenantId: 'xero-org-a', eventId: 'e-1', eventCategory: 'INVOICE',
+    resourceId: 'x-inv-1' }
+  const result = XERO.parseChangeEvent({ connection: CONNECTION,
+    envelope: xeroEnvelope(event, { ...event }) })
+  assert.equal(result.eventFormat, 'XERO_STANDARD_ENVELOPE')
+  assert.equal(result.eventEntities.length, 1)
   assert.deepEqual(result.obligation.targets, ['allocations', 'invoice'])
 })
 
@@ -133,10 +138,11 @@ test('X16 out-of-order modified object cannot overwrite newer provider version',
 })
 
 test('X17 webhook requires authoritative resource reread and writes no truth', () => {
-  const result = XERO.parseChangeEvent({ connection: CONNECTION, event: { tenantId: 'xero-org-a',
+  const result = XERO.parseChangeEvent({ connection: CONNECTION, envelope: xeroEnvelope({ tenantId: 'xero-org-a',
     eventId: 'e-payment', eventCategory: 'PAYMENT', resourceId: 'x-pay-1',
-    resourceUrl: 'https://api.xero.com/api.xro/2.0/Payments/x-pay-1' } })
+    resourceUrl: 'https://api.xero.com/api.xro/2.0/Payments/x-pay-1' }) })
   assert.equal(result.obligation.stateWrittenFromEvent, false)
+  assert.equal(result.obligation.tenantId, 'dw-tenant-a')
   assert.ok(result.obligation.targets.includes('payment'))
 })
 
@@ -147,17 +153,71 @@ test('X18 wrong DueWatch tenant is rejected by CP1 admission', () => {
 })
 
 test('X19 wrong Xero organisation event is rejected before invalidation', () => {
-  assert.deepEqual(XERO.parseChangeEvent({ connection: CONNECTION, event: {
-    tenantId: 'xero-org-b', eventId: 'e-foreign', eventCategory: 'INVOICE' } }),
+  assert.deepEqual(XERO.parseChangeEvent({ connection: CONNECTION, envelope: xeroEnvelope({
+    tenantId: 'xero-org-b', eventId: 'e-foreign', eventCategory: 'INVOICE' }) }),
   { accepted: false, reason: 'REJECTED_XERO_TENANT', stateWrittenFromEvent: false })
 })
 
 test('X20 OAuth connection id cannot masquerade as Xero tenant id', () => {
   const connectionWithOrgBoundary = { ...CONNECTION, connectionId: 'oauth-connection-17' }
-  const result = XERO.parseChangeEvent({ connection: connectionWithOrgBoundary, event: {
-    tenantId: 'oauth-connection-17', eventId: 'attack', eventCategory: 'INVOICE' } })
+  const result = XERO.parseChangeEvent({ connection: connectionWithOrgBoundary, envelope: xeroEnvelope({
+    tenantId: 'oauth-connection-17', eventId: 'attack', eventCategory: 'INVOICE' }) })
   assert.equal(result.accepted, false)
   assert.equal(XERO.connectionIdLifecycleOwner, 'M2H_CP6')
+})
+
+test('Xero standard envelope rejects empty and missing-tenant events without an obligation', () => {
+  for (const envelope of [{}, { events: [] }, xeroEnvelope({ eventId: 'missing-tenant',
+    eventCategory: 'INVOICE' })]) {
+    const result = XERO.parseChangeEvent({ connection: CONNECTION, envelope })
+    assert.equal(result.accepted, false)
+    assert.equal(Object.hasOwn(result, 'obligation'), false)
+  }
+})
+
+test('CP2-R20 Xero rejects whole mixed-tenant envelope atomically', () => {
+  const result = XERO.parseChangeEvent({ connection: CONNECTION, envelope: xeroEnvelope(
+    { tenantId: 'xero-org-a', eventId: 'safe', eventCategory: 'INVOICE', resourceId: 'invoice-safe' },
+    { tenantId: 'xero-org-b', eventId: 'foreign', eventCategory: 'PAYMENT', resourceId: 'payment-foreign' },
+  ) })
+  assert.deepEqual(result, { accepted: false, reason: 'REJECTED_XERO_TENANT',
+    stateWrittenFromEvent: false })
+  assert.equal(Object.hasOwn(result, 'obligation'), false)
+})
+
+test('Xero multiple safe categories aggregate deterministically and idempotently', () => {
+  const events = [
+    ['payment', 'PAYMENT'], ['invoice', 'INVOICE'], ['credit', 'CREDITNOTE'],
+    ['prepayment', 'PREPAYMENT'], ['overpayment', 'OVERPAYMENT'],
+  ].map(([eventId, eventCategory]) => ({ tenantId: 'xero-org-a', eventId, eventCategory,
+    resourceId: `${eventId}-1` }))
+  const forward = XERO.parseChangeEvent({ connection: CONNECTION,
+    envelope: xeroEnvelope(...events, { ...events[0] }) })
+  const reverse = XERO.parseChangeEvent({ connection: CONNECTION,
+    envelope: xeroEnvelope(...events.toReversed()) })
+  assert.equal(forward.eventEntities.length, 5)
+  assert.deepEqual(forward.eventEntities, reverse.eventEntities)
+  assert.deepEqual(forward.obligation, reverse.obligation)
+  assert.deepEqual(forward.obligation.targets, ['allocations', 'credit_note',
+    'customer_unapplied_value', 'invoice', 'overpayment', 'payment', 'prepayment'])
+})
+
+test('Xero obligations retain trusted DueWatch tenant across identical provider events', () => {
+  const envelope = xeroEnvelope({ tenantId: 'xero-org-a', dueWatchTenantId: 'payload-attacker',
+    eventId: 'same-event', eventCategory: 'INVOICE', resourceId: 'invoice-1' })
+  const a = XERO.parseChangeEvent({ connection: CONNECTION, envelope })
+  const b = XERO.parseChangeEvent({ connection: { ...CONNECTION, tenantId: 'dw-tenant-b' }, envelope })
+  assert.equal(a.obligation.tenantId, 'dw-tenant-a')
+  assert.equal(b.obligation.tenantId, 'dw-tenant-b')
+  assert.equal(a.obligation.eventId, b.obligation.eventId)
+  assert.notDeepEqual(a.obligation, b.obligation)
+})
+
+test('Xero rejected connection identity creates no obligation', () => {
+  const result = XERO.parseChangeEvent({ connection: { ...CONNECTION, provider: 'quickbooks_online' },
+    envelope: xeroEnvelope({ tenantId: 'xero-org-a', eventCategory: 'INVOICE' }) })
+  assert.equal(result.accepted, false)
+  assert.equal(Object.hasOwn(result, 'obligation'), false)
 })
 
 test('X20 connection context rejects a providerAccountId copied from connectionId', () => {

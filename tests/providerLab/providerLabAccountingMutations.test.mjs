@@ -23,8 +23,10 @@ const mutants = [
   ['M02 collapse T3/T4', () => T.T3_PAYMENT_RECEIPT_STATE !== T.T4_PAYMENT_CREDIT_ALLOCATION_STATE],
   ['M03 ignore provider account', () => observeAccounting(QBO, { connection: q, objectType: 'Invoice', payload: qboInvoice(), expectedConnection: { ...q, providerAccountId: 'other' } }).admitted.admitted === false],
   ['M04 ignore realm mismatch', () => QBO.parseChangeEvent({ connection: q, envelope: { eventNotifications: [{ realmId: 'other', dataChangeEvent: { entities: [] } }] } }).accepted === false],
-  ['M05 ignore Xero tenant mismatch', () => XERO.parseChangeEvent({ connection: x, event: { tenantId: 'other' } }).accepted === false],
-  ['M06 connection id == tenant id', () => XERO.parseChangeEvent({ connection: { ...x, connectionId: 'oauth' }, event: { tenantId: 'oauth' } }).accepted === false],
+  ['M05 ignore Xero tenant mismatch', () => XERO.parseChangeEvent({ connection: x,
+    envelope: { events: [{ tenantId: 'other' }] } }).accepted === false],
+  ['M06 connection id == tenant id', () => XERO.parseChangeEvent({
+    connection: { ...x, connectionId: 'oauth' }, envelope: { events: [{ tenantId: 'oauth' }] } }).accepted === false],
   ['M07 infer tenant from payload', () => observeAccounting(QBO, { connection: q, objectType: 'Invoice', payload: qboInvoice('i', { tenantId: 'attacker' }) }).observation.tenantId === 'tenant'],
   ['M08 unavailable -> empty', () => observeAccounting(QBO, { connection: q, objectType: 'Invoice', payload: qboInvoice(), freshness: { sourceAvailable: false } }).freshness.state === 'SOURCE_UNAVAILABLE'],
   ['M09 incomplete pagination accepted', () => createAccountingSyncState(q).ingestPage({ connection: q, items: [] }).syncComplete === false],
@@ -37,11 +39,19 @@ const mutants = [
   ['M16 stale invoice governs', () => observeAccounting(QBO, { connection: q, objectType: 'Invoice', payload: qboInvoice(), observedAt: '2020-01-01T00:00:00Z' }).freshness.mayGovern === false],
   ['M17 IsReconciled -> T6', () => observeAccounting(XERO, { connection: x, objectType: 'Payment', payload: { PaymentID: 'p', Invoice: { InvoiceID: 'i' }, Amount: 1, IsReconciled: true, UpdatedDateUTCString: CP2_NOW } }).interpretation.truthDimension !== T.T6_BANK_LEDGER_RECONCILIATION_STATE],
   ['M18 API capability -> authority', () => QBO.supportedByDuewatchAdapter.write === 'NO' && XERO.supportedByDuewatchAdapter.write === 'NO'],
+  ['M19 drop tenantId from refetch obligation', () => QBO.parseChangeEvent({ connection: q,
+    envelope: [{ type: 'qbo.invoice.updated.v1', intuitaccountid: 'realm', id: 'e' }] }).obligation.tenantId === 'tenant'],
+  ['M20 validate only one Xero event', () => XERO.parseChangeEvent({ connection: x,
+    envelope: { events: [{ tenantId: 'org', eventId: 'safe' },
+      { tenantId: 'foreign', eventId: 'foreign' }] } }).accepted === false],
+  ['M21 parse final version as operation', () => QBO.parseChangeEvent({ connection: q,
+    envelope: [{ type: 'qbo.invoice.updated.v1', intuitaccountid: 'realm', id: 'e' }] })
+    .eventEntities[0].operation === 'updated'],
 ]
 
 for (const [name, killed] of mutants) test(`${name} is killed`, () => assert.equal(killed(), true))
 
-test('mutation inventory contains 18 non-equivalent observable targets', () => {
-  assert.equal(mutants.length, 18)
-  assert.equal(new Set(mutants.map(([name]) => name)).size, 18)
+test('semantic counterexample inventory contains 21 non-equivalent observable targets', () => {
+  assert.equal(mutants.length, 21)
+  assert.equal(new Set(mutants.map(([name]) => name)).size, 21)
 })

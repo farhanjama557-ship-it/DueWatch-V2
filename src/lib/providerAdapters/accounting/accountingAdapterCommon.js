@@ -90,9 +90,10 @@ export function createAccountingSyncState(expectedConnection) {
   }
 }
 
-export function refetchObligation({ provider, providerAccountId, eventId, targets, reason }) {
+export function refetchObligation({ tenantId, provider, providerAccountId, eventId, targets, reason }) {
+  const identity = requireConnectionIdentity({ tenantId, provider, providerAccountId }, provider)
   return freeze({
-    kind: 'M2H_CP2_REFETCH_OBLIGATION_V0', provider, providerAccountId,
+    kind: 'M2H_CP2_REFETCH_OBLIGATION_V0', ...identity,
     eventId, targets: [...new Set(targets)].sort(), reason,
     stateWrittenFromEvent: false, persistentLifecycleOwner: 'M2H_CP6',
   })

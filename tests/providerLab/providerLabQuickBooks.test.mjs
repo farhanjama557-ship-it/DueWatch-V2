@@ -117,8 +117,10 @@ test('Q13 duplicate provider event is idempotent at refetch target level', () =>
     { name: 'Invoice', id: 'q-inv-1', operation: 'Update', lastUpdated: CP2_NOW },
     { name: 'Invoice', id: 'q-inv-1', operation: 'Update', lastUpdated: CP2_NOW },
   ] } }] }
-  assert.deepEqual(QBO.parseChangeEvent({ connection: CONNECTION, envelope }).obligation.targets,
-    ['allocations', 'invoice'])
+  const result = QBO.parseChangeEvent({ connection: CONNECTION, envelope })
+  assert.equal(result.eventFormat, 'LEGACY_REPLAY_ONLY')
+  assert.equal(result.obligation.tenantId, 'dw-tenant-a')
+  assert.deepEqual(result.obligation.targets, ['allocations', 'invoice'])
 })
 
 test('Q14 out-of-order page cannot overwrite newer authoritative object', () => {
@@ -130,25 +132,100 @@ test('Q14 out-of-order page cannot overwrite newer authoritative object', () => 
   assert.equal(sync.snapshot.items[0].payload.Balance, 20)
 })
 
-test('Q15 webhook is invalidation only and requires authoritative reread', () => {
+test('Q15 current webhook is invalidation only and requires authoritative reread', () => {
   const result = QBO.parseChangeEvent({ connection: CONNECTION, envelope: [{
     specversion: '1.0', id: 'cloud-event-1', source: 'quickbooks-online',
-    type: 'com.intuit.quickbooks.accounting.payment.deleted', time: CP2_NOW,
+    type: 'qbo.payment.created.v1', time: CP2_NOW,
     intuitentityid: 'q-pay-1', intuitaccountid: 'qbo-realm-a', data: {},
   }] })
   assert.equal(result.eventFormat, 'CLOUDEVENTS_1_0')
+  assert.deepEqual([result.eventEntities[0].entity, result.eventEntities[0].operation,
+    result.eventEntities[0].version], ['payment', 'created', 'v1'])
   assert.equal(result.obligation.stateWrittenFromEvent, false)
+  assert.equal(result.obligation.tenantId, 'dw-tenant-a')
   assert.ok(result.obligation.targets.includes('invoice'))
 })
 
 test('Q15 current CloudEvents validate every account before invalidation', () => {
   const result = QBO.parseChangeEvent({ connection: CONNECTION, envelope: [
-    { specversion: '1.0', id: 'one', type: 'com.intuit.quickbooks.accounting.invoice.updated',
+    { specversion: '1.0', id: 'one', type: 'qbo.invoice.updated.v1',
       time: CP2_NOW, intuitentityid: 'safe', intuitaccountid: 'qbo-realm-a' },
-    { specversion: '1.0', id: 'two', type: 'com.intuit.quickbooks.accounting.invoice.updated',
+    { specversion: '1.0', id: 'two', type: 'qbo.invoice.updated.v1',
       time: CP2_NOW, intuitentityid: 'foreign', intuitaccountid: 'qbo-realm-b' },
   ] })
   assert.deepEqual(result, { accepted: false, reason: 'REJECTED_REALM', stateWrittenFromEvent: false })
+})
+
+test('CP2-R21 QBO versioned type separates operation from version', () => {
+  const cases = [
+    ['qbo.invoice.created.v1', 'invoice', 'created', 'v1'],
+    ['qbo.invoice.updated.v1', 'invoice', 'updated', 'v1'],
+    ['qbo.payment.created.v1', 'payment', 'created', 'v1'],
+    ['qbo.creditmemo.updated.v1', 'creditmemo', 'updated', 'v1'],
+  ]
+  for (const [type, entity, operation, version] of cases) {
+    const result = QBO.parseChangeEvent({ connection: CONNECTION, envelope: [{
+      specversion: '1.0', id: type, type, time: CP2_NOW,
+      intuitentityid: `${entity}-1`, intuitaccountid: 'qbo-realm-a', data: {},
+    }] })
+    assert.equal(result.accepted, true)
+    assert.deepEqual([result.eventEntities[0].entity, result.eventEntities[0].operation,
+      result.eventEntities[0].version, result.eventEntities[0].classification],
+    [entity, operation, version, 'SUPPORTED_V1'])
+    assert.notEqual(result.eventEntities[0].operation, version)
+  }
+})
+
+test('QBO malformed, unknown-entity and future-version types refetch broadly without inventing truth', () => {
+  const cases = [
+    ['not-a-current-type', 'MALFORMED_TYPE', null, null],
+    ['qbo.customer.created.v1', 'UNKNOWN_ENTITY', 'created', 'v1'],
+    ['qbo.invoice.merged.v1', 'UNKNOWN_OPERATION', 'merged', 'v1'],
+    ['qbo.invoice.updated.v2', 'UNSUPPORTED_VERSION', 'updated', 'v2'],
+  ]
+  for (const [type, classification, operation, version] of cases) {
+    const result = QBO.parseChangeEvent({ connection: CONNECTION, envelope: [{
+      specversion: '1.0', id: type, type, time: CP2_NOW,
+      intuitentityid: 'object-1', intuitaccountid: 'qbo-realm-a', data: {},
+    }] })
+    assert.equal(result.eventEntities[0].classification, classification)
+    assert.equal(result.eventEntities[0].operation, operation)
+    assert.equal(result.eventEntities[0].version, version)
+    assert.ok(result.obligation.targets.includes('customer_unapplied_value'))
+    assert.equal(result.obligation.stateWrittenFromEvent, false)
+  }
+})
+
+test('QBO contradictory data.operation is marked and cannot narrow canonical refetch', () => {
+  const result = QBO.parseChangeEvent({ connection: CONNECTION, envelope: [{
+    specversion: '1.0', id: 'conflict', type: 'qbo.invoice.updated.v1', time: CP2_NOW,
+    intuitentityid: 'invoice-1', intuitaccountid: 'qbo-realm-a',
+    data: { operation: 'deleted' },
+  }] })
+  assert.equal(result.eventEntities[0].operation, 'updated')
+  assert.equal(result.eventEntities[0].metadataOperation, 'deleted')
+  assert.equal(result.eventEntities[0].metadataConflict, true)
+  assert.equal(result.eventEntities[0].classification, 'CONTRADICTORY_METADATA')
+  assert.ok(result.obligation.targets.includes('customer_unapplied_value'))
+})
+
+test('CP2-R19 refetch obligations preserve trusted tenant scope and ignore payload tenant', () => {
+  const event = { specversion: '1.0', id: 'same-event', type: 'qbo.invoice.updated.v1',
+    time: CP2_NOW, intuitentityid: 'invoice-1', intuitaccountid: 'qbo-realm-a',
+    data: { tenantId: 'payload-attacker' } }
+  const a = QBO.parseChangeEvent({ connection: CONNECTION, envelope: [event] })
+  const b = QBO.parseChangeEvent({ connection: { ...CONNECTION, tenantId: 'dw-tenant-b' }, envelope: [event] })
+  assert.equal(a.obligation.tenantId, 'dw-tenant-a')
+  assert.equal(b.obligation.tenantId, 'dw-tenant-b')
+  assert.equal(a.obligation.eventId, b.obligation.eventId)
+  assert.notDeepEqual(a.obligation, b.obligation)
+})
+
+test('QBO rejected connection identity creates no obligation', () => {
+  const result = QBO.parseChangeEvent({ connection: { ...CONNECTION, provider: 'xero_accounting' },
+    envelope: [{ intuitaccountid: 'qbo-realm-a', type: 'qbo.invoice.updated.v1' }] })
+  assert.equal(result.accepted, false)
+  assert.equal(Object.hasOwn(result, 'obligation'), false)
 })
 
 test('Q16 wrong DueWatch tenant fails CP1 admission', () => {

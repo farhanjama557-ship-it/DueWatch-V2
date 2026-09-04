@@ -121,12 +121,28 @@ never compares unlike currency amounts as though they shared a unit.
 
 ## Change detection and paging
 
-Provider events are scoped before they can create an invalidation/refetch obligation.
-QBO events must match the connection realm; Xero events must match the connection Xero
-tenant. Event data writes no financial truth. Invoice/payment/credit notifications
-require authoritative resource rereads. Exact wire-body signature verification,
-delivery durability, retry queues, connection health and persistent obligations remain
-CP6.
+Every refetch obligation retains the complete trusted connection tuple: DueWatch
+`tenantId`, provider and `providerAccountId`. The DueWatch tenant always comes from
+connection context, never event metadata or provider payload.
+
+QBO CloudEvent batches validate every `intuitaccountid` against the connection realm
+before producing an obligation. Current versioned types such as
+`qbo.invoice.updated.v1` are parsed into separate entity, operation and version fields;
+malformed, unknown-entity, unknown-operation, future-version and contradictory metadata
+cases produce broad conservative refetches and no financial truth. The earlier Intuit
+envelope is retained only as `LEGACY_REPLAY_ONLY`, not as proof of current webhook
+support.
+
+Xero's standard outer `{ "events": [...] }` envelope is validated atomically: it must
+be non-empty and every event must carry the expected organisation tenant ID. One
+missing or foreign tenant rejects the whole envelope without a partial obligation.
+Duplicate events and category targets are aggregated deterministically and
+idempotently. Invoice, Payment, CreditNote, Prepayment and Overpayment notifications
+all require authoritative resource rereads.
+
+Event data writes no financial truth. CP2 does not claim webhook signature
+authentication: exact raw-body signature verification, delivery durability, retry
+queues, connection health and persistent obligations remain CP6.
 
 The pure sync state requires full tenant/provider/account identity on every page,
 deduplicates by account-scoped object identity, keeps the newest provider update, and
