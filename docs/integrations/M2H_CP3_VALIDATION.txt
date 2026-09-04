@@ -1,0 +1,115 @@
+M2H-CP3 — Stripe payment / invoice connector
+Frozen CP2 base: 688da386c9f77cde5d0f8992c43a814c06164505
+Direct CP2 parent: d193a1d27f004fb6f79305a0bd3db70b518674bf
+Frozen CP1 ancestor: 52f2bbf099eacb015971a6ca756c105328d0434a
+Frozen G8 ancestor: 236a9dee0c5a4a6bb417db466e562ae3e3c4f950
+Branch: m2h/company-brain-integrations-cp3
+Validation date: 2026-09-04 UTC
+
+SCOPE
+  Pure Stripe Provider Lab adapter and fixtures for Invoice, PaymentIntent,
+  Charge, InvoicePayment, PaymentRecord, PaymentAttemptRecord, CreditNote,
+  customer/cash balance transactions, Refund, Dispute, BalanceTransaction,
+  Balance and Payout. No OAuth control plane, persistence, schema, migration,
+  live provider client, webhook receiver, provider write, execution path or UI.
+
+TESTS
+  Frozen CP1 + CP2 Provider Lab baseline        317 pass / 0 fail / 0 skipped
+  New Stripe S1-S40/security suite                46 pass / 0 fail / 0 skipped
+  New Stripe cross-provider suite                  7 pass / 0 fail / 0 skipped
+  New Stripe semantic mutation suite              24 pass / 0 fail / 0 skipped
+  New Stripe static boundary suite                 4 pass / 0 fail / 0 skipped
+  Provider Lab total                             398 pass / 0 fail / 0 skipped
+  G8 freeze suites                               139 pass / 0 fail / 0 skipped
+  Ask DW                                         386 pass / 0 fail / 0 skipped
+  G5 authority/delegation                        362 pass / 0 fail / 0 skipped
+  Company Brain through G6                       490 pass / 0 fail / 14 skipped
+  DW Intelligence / Phase2B                      214 pass / 0 fail / 0 skipped
+  M2D / System Brain                              32 pass / 0 fail / 0 skipped
+  PostgreSQL RPC/RLS                               0 pass / 0 fail / 14 skipped
+    No PostgreSQL server was available. G6-RT0 reports runtime verification
+    was NOT performed; skips are not represented as passes.
+  FULL SUITE                                    2294 pass / 0 fail / 14 skipped
+    2308 total
+
+MUTATIONS
+  23 unique semantic counterexample rows; all 23 killed, 0 survivors. The
+  inventory covers Invoice-paid-to-T3, processing-to-receipt, paid-but-
+  uncaptured Charge, Charge/PaymentIntent double count, InvoicePayment-to-T3,
+  paid-out-of-band receipt inflation, PaymentRecord provenance collapse,
+  credit-as-cash, customer-credit loss, account/mode isolation, event-as-truth,
+  dropped refetch, incomplete/failed paging, out-of-order overwrite, T5-to-T6,
+  and provider-capability-to-authority.
+
+  4 actual unsafe source mutations were applied temporarily, observed failing,
+  and restored; 4 killed, 0 survivors:
+    A. Changed PaymentIntent success guard so processing became T3.
+       S6 failed with PAYMENT_RECEIPT_STATE instead of PAYMENT_ATTEMPT_STATE.
+    B. Removed processor_details.type=stripe from PaymentRecord provenance.
+       S15 failed by admitting custom-processor value as T3.
+    C. Disabled Stripe event livemode comparison.
+       S27 failed because a live event was accepted by a test connection.
+    D. Changed event obligation stateWrittenFromEvent to true.
+       S39 failed because event data appeared to write state.
+
+IDENTITY / MODE
+  Connection context supplies authenticated DueWatch tenant, expected Stripe
+  account and exact test/live mode. Payload never chooses tenant. Event account
+  and mode are validated before any obligation. Connected-account events must
+  name the expected account. Frozen CP1 has no separate mode field, so CP3
+  binds mode into CP1 providerAccountId as <acct>:test or <acct>:live. A test
+  observation presented to a live expected connection is rejected by CP1 as a
+  provider-account mismatch. Object and subject identities are mode-scoped too.
+
+TRUTH DIMENSIONS
+  Invoice maps to T1 only. Non-succeeded PaymentIntent and uncaptured Charge
+  map to T2. Succeeded PaymentIntent and captured successful Charge map to T3,
+  sharing one receipt subject when related. InvoicePayment maps to T4.
+  Self-reported/custom PaymentRecord remains T2; guarded Stripe-reported,
+  Stripe-processor guaranteed value can map T3. Credits/customer balances map
+  T4. Refund/Dispute are T3 reversal/contest context and reopen no AR by
+  inference. BalanceTransaction/Balance/Payout map to T5. T6 is unsupported.
+
+EVENTS / PAGING
+  Events are scope-checked invalidation evidence only. Every obligation says
+  stateWrittenFromEvent=false and requires authoritative account+mode-scoped
+  rereads. Parsed fixture JSON is not raw wire bytes and cannot be called
+  signature-authenticated. CP6 owns signatures, delivery/retry durability and
+  lifecycle. Paging requires explicit has_more and a terminal page; failure,
+  malformed metadata or an incomplete embedded Invoice payments list remains
+  incomplete. Duplicates are idempotent and older versions cannot win.
+
+EVIDENCE / SANDBOX
+  Current official Stripe API and webhook sources were inspected. E1/E2/E3 are
+  used only where same-provider proposition evidence supports them; E7 needs
+  support-bearing evidence from multiple providers. No Stripe sandbox
+  credentials were available and no live API call was made. E4/E5/E6 remain
+  unclaimed. Fixture replay is not sandbox evidence.
+
+BUILD / DIFF
+  npm run build — PASS (Vite production build; pre-existing node:crypto and
+    chunk-size warnings)
+  git diff --check — PASS
+
+SCANS
+  Credentials, secrets and production tokens — none
+  OAuth implementation / Stripe SDK / provider network calls — none
+  DB writes, schema or migrations — none
+  Canonical financial writes — none
+  Provider capability -> G5 authority — none
+  Provider evidence -> execution — none
+  Local G5 evaluator — none
+  Tenant inference from payload / account or mode bypass — none
+  Raw provider state -> ELIGIBLE / handwritten FRESH bypass — none
+  PaymentIntent/Charge/PaymentRecord dimension shortcuts — none beyond guarded mappings
+  T5 -> T6 shortcut — none
+  G5, G8, M2D, UI, CP4 or CP6 changes — none
+
+HISTORICAL LOCKS
+  supabase/functions/_shared/askDwOpenAiContract.js
+    e3870f6ffc62fea71118a9202d79af00cdf70477
+  supabase/functions/ask-dw-model/index.ts
+    b687f54b07ac7f9f31596a7cdf42a472d4ab8855
+
+RESULT
+  Candidate tree is green. CP4 was not started.

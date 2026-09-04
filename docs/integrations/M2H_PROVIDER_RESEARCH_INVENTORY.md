@@ -1,7 +1,8 @@
 # M2H — official provider research inventory
 
-**Status: CP2 researched QuickBooks Online Accounting and Xero Accounting from
-current official sources on 2026-09-04. Other providers remain E0.**
+**Status: CP2 researched QuickBooks Online Accounting and Xero Accounting;
+CP3 researched Stripe payments and invoicing from current official sources on
+2026-09-04. Other providers remain E0.**
 
 CP1 correctly recorded that its environment could not read provider sources. CP2 had
 read access to current official Intuit Developer pages, Xero Developer pages, Xero's
@@ -10,7 +11,8 @@ uses E1/E2/E3 where the cited proposition supports it. No provider sandbox crede
 were available: **E4/E5/E6 remain unclaimed** and fixture replay is not sandbox evidence.
 
 This file remains the cross-checkpoint research ledger: CP2 findings are recorded in
-`M2H_CP2_ACCOUNTING_CONNECTORS.md`; all providers not named above still require the
+`M2H_CP2_ACCOUNTING_CONNECTORS.md`, and CP3 findings in
+`M2H_CP3_STRIPE_CONNECTOR.md`. All providers not named above still require the
 official-source work listed below.
 
 ## Required per provider, before its checkpoint

@@ -19,6 +19,8 @@
     "test:integrations-cp2-qbo": "node --test tests/providerLab/providerLabQuickBooks.test.mjs",
     "test:integrations-cp2-xero": "node --test tests/providerLab/providerLabXero.test.mjs",
     "test:integrations-cp2-cross": "node --test tests/providerLab/providerLabAccountingCrossProvider.test.mjs tests/providerLab/providerLabAccountingMutations.test.mjs",
+    "test:integrations-cp3-stripe": "node --test tests/providerLab/providerLabStripe.test.mjs",
+    "test:integrations-cp3-cross": "node --test tests/providerLab/providerLabStripeCrossProvider.test.mjs tests/providerLab/providerLabStripeMutations.test.mjs",
     "clients:dedupe": "node scripts/client-dedupe.mjs",
     "system-brain:audit": "node scripts/system-brain-audit.mjs",
     "system-brain:deployment": "node scripts/system-brain-deployment-fingerprint.mjs",
