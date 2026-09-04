@@ -165,6 +165,7 @@ function invoicePaymentInterpretation(observation) {
       amountPaid: finiteAmount(p.amount_paid), currency: materialString(p.currency),
       isDefault: p.is_default === true, paymentType,
       paymentIntentId: nativeId(p.payment?.payment_intent),
+      chargeId: nativeId(p.payment?.charge),
       paymentRecordId: nativeId(p.payment?.payment_record),
       paidAt: timestamp(p.status_transitions?.paid_at), livemode: p.__duewatchLivemode,
       provesProcessorReceipt: false,
@@ -266,8 +267,8 @@ function settlementInterpretation(observation, kind) {
 function eventTargets(type) {
   if (/^invoice\./.test(type)) return ['invoice', 'invoice_payment', 'payment_intent', 'credit_note', 'customer_balance']
   if (/^invoice_payment\./.test(type)) return ['invoice_payment', 'invoice', 'payment_intent', 'payment_record']
-  if (/^(refund\.|charge\.refund)/.test(type)) return ['refund', 'charge', 'payment_intent', 'invoice_payment', 'invoice', 'balance_transaction', 'balance']
-  if (/^(dispute\.|charge\.dispute)/.test(type)) return ['dispute', 'charge', 'payment_intent', 'invoice', 'balance_transaction', 'balance']
+  if (/^(refund\.|charge\.refund)/.test(type)) return ['refund', 'charge', 'payment_intent', 'invoice_payment', 'invoice', 'customer_balance', 'balance_transaction', 'balance']
+  if (/^(dispute\.|charge\.dispute)/.test(type)) return ['dispute', 'refund', 'charge', 'payment_intent', 'invoice_payment', 'invoice', 'customer_balance', 'balance_transaction', 'balance']
   if (/^(payment_intent|charge)\./.test(type)) return ['payment_intent', 'charge', 'invoice_payment', 'invoice', 'balance_transaction']
   if (/^(payment_record|payment_attempt_record)\./.test(type)) return ['payment_record', 'payment_attempt_record', 'invoice_payment', 'invoice']
   if (/^(credit_note|customer\.balance|customer_cash_balance_transaction)\./.test(type)) return ['credit_note', 'customer_balance', 'invoice_payment', 'invoice']

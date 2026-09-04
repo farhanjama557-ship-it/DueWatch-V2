@@ -15,11 +15,11 @@ SCOPE
 
 TESTS
   Frozen CP1 + CP2 Provider Lab baseline        317 pass / 0 fail / 0 skipped
-  New Stripe S1-S40/security suite                46 pass / 0 fail / 0 skipped
+  New Stripe S1-S40/security suite                63 pass / 0 fail / 0 skipped
   New Stripe cross-provider suite                  7 pass / 0 fail / 0 skipped
   New Stripe semantic mutation suite              24 pass / 0 fail / 0 skipped
   New Stripe static boundary suite                 4 pass / 0 fail / 0 skipped
-  Provider Lab total                             398 pass / 0 fail / 0 skipped
+  Provider Lab total                             415 pass / 0 fail / 0 skipped
   G8 freeze suites                               139 pass / 0 fail / 0 skipped
   Ask DW                                         386 pass / 0 fail / 0 skipped
   G5 authority/delegation                        362 pass / 0 fail / 0 skipped
@@ -29,8 +29,8 @@ TESTS
   PostgreSQL RPC/RLS                               0 pass / 0 fail / 14 skipped
     No PostgreSQL server was available. G6-RT0 reports runtime verification
     was NOT performed; skips are not represented as passes.
-  FULL SUITE                                    2294 pass / 0 fail / 14 skipped
-    2308 total
+  FULL SUITE                                    2311 pass / 0 fail / 14 skipped
+    2325 total
 
 MUTATIONS
   23 unique semantic counterexample rows; all 23 killed, 0 survivors. The

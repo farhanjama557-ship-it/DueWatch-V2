@@ -319,3 +319,157 @@ test('frozen CP1 admission rejects a test observation when live connection scope
 test('Stripe capability remains read-only and cannot grant authority or execute', () => {
   assert.deepEqual(STRIPE.supportedByDuewatchAdapter, { read: 'YES', write: 'NO' })
 })
+
+test('corpus S3 Invoice paid by PaymentIntent keeps T1 separate from T3', () => {
+  const invoice = obs('Invoice', stripeInvoice('in_s3', { status: 'paid', amount_paid: 10_000,
+    amount_remaining: 0 }))
+  const receipt = obs('PaymentIntent', paymentIntent('pi_s3', { status: 'succeeded', amount_received: 10_000 }))
+  assert.deepEqual([invoice.interpretation.truthDimension, receipt.interpretation.truthDimension],
+    [T.T1_INVOICE_AR_STATE, T.T3_PAYMENT_RECEIPT_STATE])
+})
+
+test('corpus S5 customer credit can zero Invoice without proving T3', () => {
+  const r = obs('Invoice', stripeInvoice('in_credit', { status: 'paid', amount_due: 0,
+    amount_paid: 0, amount_remaining: 0, starting_balance: -10_000 }))
+  assert.equal(r.interpretation.truthDimension, T.T1_INVOICE_AR_STATE)
+  assert.equal(r.interpretation.value.provesProcessorReceipt, false)
+})
+
+test('corpus S6/S7 credit note can reduce or zero Invoice without becoming receipt', () => {
+  for (const [id, remaining] of [['in_credit_open', 5_000], ['in_credit_zero', 0]]) {
+    const r = obs('Invoice', stripeInvoice(id, { amount_remaining: remaining,
+      pre_payment_credit_notes_amount: 5_000, status: remaining ? 'open' : 'paid' }))
+    assert.equal(r.interpretation.truthDimension, T.T1_INVOICE_AR_STATE)
+    assert.equal(r.interpretation.value.prePaymentCreditNotesAmount, 5_000)
+    assert.equal(r.interpretation.value.provesProcessorReceipt, false)
+  }
+})
+
+test('corpus S8 PaymentIntent requires_action is T2', () => {
+  assert.equal(obs('PaymentIntent', paymentIntent('pi_action', { status: 'requires_action' }))
+    .interpretation.truthDimension, T.T2_PAYMENT_ATTEMPT_STATE)
+})
+
+test('corpus S10 canceled PaymentIntent is T2 with cancellation reason', () => {
+  const r = obs('PaymentIntent', paymentIntent('pi_cancel', { status: 'canceled',
+    cancellation_reason: 'requested_by_customer' }))
+  assert.equal(r.interpretation.truthDimension, T.T2_PAYMENT_ATTEMPT_STATE)
+  assert.equal(r.interpretation.value.cancellationReason, 'requested_by_customer')
+})
+
+test('corpus S13 open InvoicePayment has no paid allocation amount', () => {
+  const r = obs('InvoicePayment', { id: 'inpay_open', livemode: false, invoice: 'in_1',
+    status: 'open', amount_requested: 10_000, amount_paid: null, currency: 'usd',
+    payment: { type: 'payment_intent', payment_intent: 'pi_open' } })
+  assert.equal(r.interpretation.value.status, 'open')
+  assert.equal(r.interpretation.value.amountPaid, null)
+})
+
+test('corpus S14/S15/S16 InvoicePayment preserves each modern payment reference kind', () => {
+  const cases = [
+    ['payment_intent', { payment_intent: 'pi_ref' }, 'paymentIntentId', 'pi_ref'],
+    ['charge', { charge: 'ch_ref' }, 'chargeId', 'ch_ref'],
+    ['payment_record', { payment_record: 'pr_ref' }, 'paymentRecordId', 'pr_ref'],
+  ]
+  for (const [type, ref, field, expected] of cases) {
+    const r = obs('InvoicePayment', { id: `inpay_${type}`, livemode: false, invoice: 'in_1',
+      status: 'paid', amount_requested: 100, amount_paid: 100, currency: 'usd',
+      payment: { type, ...ref } })
+    assert.equal(r.interpretation.value[field], expected)
+    assert.equal(r.interpretation.truthDimension, T.T4_PAYMENT_CREDIT_ALLOCATION_STATE)
+  }
+})
+
+test('corpus S22 amount_overpaid stays Invoice T1 context', () => {
+  const r = obs('Invoice', stripeInvoice('in_overpaid', { status: 'paid', amount_remaining: 0,
+    amount_paid: 11_000, amount_overpaid: 1_000 }))
+  assert.equal(r.interpretation.value.amountOverpaid, 1_000)
+  assert.equal(r.interpretation.truthDimension, T.T1_INVOICE_AR_STATE)
+})
+
+test('corpus S24 partial refund preserves exact partial amount without AR inference', () => {
+  const r = obs('Refund', { id: 're_partial', payment_intent: 'pi_1', charge: 'ch_1',
+    amount: 2_500, currency: 'usd', status: 'succeeded', created: 1788541200 })
+  assert.equal(r.interpretation.value.amount, 2_500)
+  assert.equal(r.interpretation.value.reopensInvoiceAr, false)
+})
+
+test('corpus S25/S26 open and resolved disputes remain T3 contest state requiring reread', () => {
+  for (const status of ['needs_response', 'won']) {
+    const r = obs('Dispute', { id: `dp_${status}`, livemode: false, charge: 'ch_1',
+      payment_intent: 'pi_1', amount: 1_000, currency: 'usd', status, balance_transactions: [] })
+    assert.equal(r.interpretation.value.status, status)
+    assert.ok(r.interpretation.uncertainty.includes('AUTHORITATIVE_INVOICE_AND_PROCESSOR_REFETCH_REQUIRED'))
+  }
+})
+
+test('corpus S29 payout in_transit remains T5', () => {
+  const r = obs('Payout', { id: 'po_transit', livemode: false, amount: 970, currency: 'usd',
+    status: 'in_transit', arrival_date: 1788627600 })
+  assert.equal(r.interpretation.truthDimension, T.T5_PROCESSOR_FUNDS_SETTLEMENT_STATE)
+})
+
+test('corpus S37 event order cannot write or establish current money state', () => {
+  const newer = STRIPE.parseChangeEvent({ connection: C, envelope: stripeEvent('charge.updated',
+    { id: 'evt_new', created: 1788541200 }) })
+  const older = STRIPE.parseChangeEvent({ connection: C, envelope: stripeEvent('charge.updated',
+    { id: 'evt_old', created: 1788454800 }) })
+  assert.equal(newer.obligation.stateWrittenFromEvent, false)
+  assert.equal(older.obligation.stateWrittenFromEvent, false)
+})
+
+test('corpus S38 invoice.paid event cannot establish processor receipt', () => {
+  const r = STRIPE.parseChangeEvent({ connection: C, envelope: stripeEvent('invoice.paid') })
+  assert.equal(r.obligation.stateWrittenFromEvent, false)
+  assert.ok(r.obligation.targets.includes('payment_intent'))
+})
+
+test('corpus S39 payment_intent.succeeded event still requires reread', () => {
+  const r = STRIPE.parseChangeEvent({ connection: C,
+    envelope: stripeEvent('payment_intent.succeeded') })
+  assert.equal(r.obligation.stateWrittenFromEvent, false)
+  assert.ok(r.obligation.targets.includes('payment_intent'))
+})
+
+test('corpus S40 payment and settlement currencies are preserved, never equated', () => {
+  const receipt = obs('PaymentIntent', paymentIntent('pi_fx', { status: 'succeeded',
+    amount_received: 10_000, currency: 'eur' }))
+  const settlement = obs('BalanceTransaction', { id: 'txn_fx2', amount: 11_000,
+    net: 10_700, fee: 300, currency: 'usd', exchange_rate: 1.1, status: 'available' })
+  assert.deepEqual([receipt.interpretation.value.currency, settlement.interpretation.value.currency], ['eur', 'usd'])
+  assert.equal(Object.hasOwn(settlement.interpretation.value, 'convertedAmount'), false)
+})
+
+test('S-PR1 through S-PR5 preserve modern PaymentRecord provenance and relationships', () => {
+  const onStripe = obs('PaymentRecord', { id: 'pr_on', livemode: false, reported_by: 'stripe',
+    processor_details: { type: 'stripe' }, amount_guaranteed: { value: 100, currency: 'usd' } })
+  const offStripe = obs('PaymentRecord', { id: 'pr_off2', livemode: false, reported_by: 'self',
+    processor_details: { type: 'custom' }, amount_guaranteed: { value: 100, currency: 'usd' } })
+  const linked = obs('InvoicePayment', { id: 'inpay_pr', livemode: false, invoice: 'in_pr',
+    status: 'paid', amount_requested: 100, amount_paid: 100, currency: 'usd',
+    payment: { type: 'payment_record', payment_record: 'pr_off2' } })
+  const paidInvoice = obs('Invoice', stripeInvoice('in_pr', { status: 'paid', amount_paid: 100,
+    amount_paid_off_stripe: 100, amount_remaining: 0 }))
+  const refundedOffStripe = obs('PaymentRecord', { id: 'pr_refunded', livemode: false,
+    reported_by: 'self', processor_details: { type: 'custom' },
+    amount_guaranteed: { value: 100, currency: 'usd' },
+    amount_refunded: { value: 100, currency: 'usd' } })
+  assert.equal(onStripe.interpretation.truthDimension, T.T3_PAYMENT_RECEIPT_STATE)
+  assert.equal(offStripe.interpretation.truthDimension, T.T2_PAYMENT_ATTEMPT_STATE)
+  assert.equal(linked.interpretation.value.paymentRecordId, 'pr_off2')
+  assert.equal(paidInvoice.interpretation.value.provesProcessorReceipt, false)
+  assert.equal(refundedOffStripe.interpretation.truthDimension, T.T2_PAYMENT_ATTEMPT_STATE)
+  assert.equal(refundedOffStripe.interpretation.value.amountRefunded.value, 100)
+})
+
+test('unknown, partial and stale event snapshots broaden refetch and authenticate nothing', () => {
+  for (const event of [
+    stripeEvent('future.object.changed', { data: { object: {} } }),
+    stripeEvent('invoice.updated', { data: { object: { id: 'in_partial' } } }),
+    stripeEvent('invoice.updated', { created: 1, data: { object: { id: 'in_stale' } } }),
+  ]) {
+    const r = STRIPE.parseChangeEvent({ connection: C, envelope: event })
+    assert.equal(r.obligation.stateWrittenFromEvent, false)
+    assert.equal(r.obligation.signatureVerifiedByAdapter, false)
+  }
+})
