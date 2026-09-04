@@ -132,11 +132,13 @@ test('a mock environment cannot claim a live-observation evidence class', () => 
 })
 
 test('documentation classes require a citation', () => {
-  assert.throws(() => recordEvidence({ propositionKey: 'lab_proposition',
-    evidenceClass: EVIDENCE_CLASS.E2_DOC_CONFIRMED, environment: OBSERVATION_ENVIRONMENT.MOCK,
+  assert.throws(() => recordEvidence({
+    evidenceClass: EVIDENCE_CLASS.E2_DOC_CONFIRMED, provider: 'mock_ledger',
+    propositionKey: 'lab_proposition', environment: OBSERVATION_ENVIRONMENT.MOCK,
   }), /requires a citation/)
-  const cited = recordEvidence({ propositionKey: 'lab_proposition',
-    evidenceClass: EVIDENCE_CLASS.E2_DOC_CONFIRMED,
+  const cited = recordEvidence({
+    evidenceClass: EVIDENCE_CLASS.E2_DOC_CONFIRMED, provider: 'mock_ledger',
+    propositionKey: 'lab_proposition',
     environment: OBSERVATION_ENVIRONMENT.MOCK, refs: ['https://provider.example/docs/x'],
   })
   assert.equal(cited.evidenceClass, EVIDENCE_CLASS.E2_DOC_CONFIRMED)
@@ -301,11 +303,12 @@ test('a claim from another tenant or another provider account is refused', () =>
   const { observation, interpretation } = observeThrough(MOCK_LEDGER_ADAPTER, {
     payload: MOCK_LEDGER_ADAPTER.emit({ invoiceId: 'inv-1', balance: 100 }),
   })
+  const expected = { provider: MOCK_LEDGER_ADAPTER.provider, observation, interpretation }
   assert.equal(admitProviderClaim({
-    tenantId: 'tenant-other', providerAccountId: LAB_ACCOUNT, observation, interpretation,
+    ...expected, tenantId: 'tenant-other', providerAccountId: LAB_ACCOUNT,
   }).admission, PROVIDER_CLAIM_ADMISSION.REJECTED_TENANT)
   assert.equal(admitProviderClaim({
-    tenantId: LAB_TENANT, providerAccountId: 'acct-other', observation, interpretation,
+    ...expected, tenantId: LAB_TENANT, providerAccountId: 'acct-other',
   }).admission, PROVIDER_CLAIM_ADMISSION.REJECTED_PROVIDER_ACCOUNT)
 })
 
@@ -318,7 +321,8 @@ test('a source that does not own a dimension cannot claim it', () => {
     sourceOwner: OWNER.COMMUNICATION_SOURCE, subject: 'inv-1', value: { balance: 0 },
   })
   const result = admitProviderClaim({
-    tenantId: LAB_TENANT, providerAccountId: LAB_ACCOUNT, observation, interpretation: overreach,
+    tenantId: LAB_TENANT, provider: MOCK_LEDGER_ADAPTER.provider,
+    providerAccountId: LAB_ACCOUNT, observation, interpretation: overreach,
   })
   assert.equal(result.admission, PROVIDER_CLAIM_ADMISSION.REJECTED_OWNER_CANNOT_SPEAK)
 })

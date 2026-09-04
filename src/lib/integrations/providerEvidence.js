@@ -106,6 +106,31 @@ const REQUIRES_OFFICIAL_SOURCE = new Set([
   EVIDENCE_CLASS.E6_DOC_PLUS_SANDBOX,
 ])
 
+/**
+ * Classes that constitute SUPPORT for a proposition.
+ *
+ * A hypothesis is a question we have not answered. Two people guessing the same
+ * thing about two different systems is not "multiple providers support this" —
+ * it is the same guess twice, and E7 counting it was how agreement between
+ * unknowns could look like corroboration.
+ *
+ * An explicit closed set, deliberately not `class >= E1`: the classes are kinds
+ * of proof and comparing them numerically is exactly the ranking this module
+ * refuses everywhere else.
+ */
+export const SUPPORT_BEARING_EVIDENCE_CLASSES = Object.freeze([
+  'E1_SCHEMA_CONFIRMED', 'E2_DOC_CONFIRMED', 'E3_SCHEMA_PLUS_DOC',
+  'E4_SANDBOX_OBSERVED', 'E5_SANDBOX_REPRODUCED', 'E6_DOC_PLUS_SANDBOX',
+])
+
+/**
+ * Classes that are statements ABOUT a provider, and therefore cannot exist
+ * without naming one. E0 is exempt: a hypothesis may be about the world.
+ */
+const REQUIRES_PROVIDER = new Set([
+  'E1_SCHEMA_CONFIRMED', 'E2_DOC_CONFIRMED', 'E4_SANDBOX_OBSERVED',
+])
+
 export const OBSERVATION_ENVIRONMENT = Object.freeze({
   MOCK: 'MOCK',
   FIXTURE_REPLAY: 'FIXTURE_REPLAY',
@@ -179,6 +204,13 @@ export function recordEvidence({
     throw new Error(`${evidenceClass} requires a citation to the official provider source`)
   }
   requirePropositionKey(propositionKey, provider)
+  // "Where was this seen?" is not optional for evidence that is a statement
+  // about a provider. Without it, two anonymous captures could reproduce each
+  // other and nothing would know which system had been observed.
+  if (REQUIRES_PROVIDER.has(evidenceClass) &&
+      (typeof provider !== 'string' || !provider.trim())) {
+    throw new Error(`${evidenceClass} requires a provider: it is a statement about one`)
+  }
   // A sandbox observation needs a capture identity, or two observations can
   // never be shown to be independent and E5 becomes unprovable in principle.
   if (evidenceClass === EVIDENCE_CLASS.E4_SANDBOX_OBSERVED &&
@@ -221,6 +253,27 @@ export function evidenceGrantsAuthority() {
 }
 
 /**
+ * The providers an evidence record speaks for.
+ *
+ * One helper for both shapes, because reading `part.provider` alone silently
+ * loses the identity of a composite — a nested E3 knows its provider in
+ * `providers`, and a caller that only looked at `provider` would see none.
+ */
+export function providerSetOf(record) {
+  if (!record || typeof record !== 'object') return Object.freeze([])
+  if (Array.isArray(record.providers) && record.providers.length > 0) {
+    return Object.freeze([...new Set(record.providers)].sort())
+  }
+  return Object.freeze(record.provider ? [record.provider] : [])
+}
+
+function providersAcross(parts) {
+  const all = new Set()
+  for (const part of parts) for (const provider of providerSetOf(part)) all.add(provider)
+  return [...all].sort()
+}
+
+/**
  * Requirements for each composite class, expressed as what must be PRESENT.
  *
  * `requires` names the component classes that must appear; `distinctProviders`
@@ -239,16 +292,24 @@ const COMPOSITION_RULES = Object.freeze({
   [EVIDENCE_CLASS.E3_SCHEMA_PLUS_DOC]: Object.freeze({
     requires: Object.freeze([EVIDENCE_CLASS.E1_SCHEMA_CONFIRMED, EVIDENCE_CLASS.E2_DOC_CONFIRMED]),
     distinctProviders: 0,
+    // E3 means one provider's machine contract and its own documentation
+    // agree. QuickBooks' schema and Xero's docs "agreeing" is not a fact
+    // about anything: neither system makes claims about the other.
+    requiresSingleProvider: true,
   }),
   [EVIDENCE_CLASS.E6_DOC_PLUS_SANDBOX]: Object.freeze({
     // Either strength of sandbox evidence satisfies the empirical half.
     requires: Object.freeze([EVIDENCE_CLASS.E2_DOC_CONFIRMED]),
     requiresOneOf: Object.freeze([EVIDENCE_CLASS.E4_SANDBOX_OBSERVED, EVIDENCE_CLASS.E5_SANDBOX_REPRODUCED]),
     distinctProviders: 0,
+    // Same reasoning: documentation and behaviour agree FOR ONE PROVIDER.
+    requiresSingleProvider: true,
   }),
   // Every composite requires ONE shared proposition; see agreeOnProposition.
   [EVIDENCE_CLASS.E7_MULTI_PROVIDER_SUPPORTED]: Object.freeze({
     requires: Object.freeze([]),
+    // Each provider must actually SUPPORT the proposition, not merely appear.
+    requiresSupportPerProvider: true,
     // The whole meaning of E7. Two records about the SAME provider are one
     // provider, whatever class each of them carries.
     distinctProviders: 2,
@@ -300,10 +361,16 @@ export function composeEvidence({
     // A typed artifact, constructed through its own validating constructor.
     // 'trust me', 'GAAP', true and an object literal are all refused: the
     // previous version accepted any truthy value, so E8 was mintable at will.
-    if (!support || support.kind !== DOMAIN_SUPPORT_KIND) {
+    // Membership, not shape. `kind` is a public string, so checking it only
+    // asked a forger to type it — which is exactly what the previous version
+    // did, and a plain object literal minted E8. The registry cannot be typed
+    // into existence: an object is in it only if this module's constructor put
+    // it there, and a spread copy is a different object.
+    if (!support || !CONSTRUCTED_DOMAIN_ARTIFACTS.has(support)) {
       throw new Error(
-        `${evidenceClass} requires a typed domain support artifact created by ` +
-        'createDomainSupportArtifact; an arbitrary value cannot stand for accounting support')
+        `${evidenceClass} requires a domain support artifact produced by the ` +
+        'createDomainSupportArtifact constructor; an object carrying the right shape ' +
+        'or the right kind is not one')
     }
     if (propositionKey && support.propositionKey !== propositionKey) {
       throw new Error(
@@ -323,12 +390,14 @@ export function composeEvidence({
       `${evidenceClass} requires one of ${rule.requiresOneOf.join(' or ')} among its components`)
   }
 
-  const providers = [...new Set(parts.map((part) => part.provider).filter(Boolean))]
+  // Derived through the shared helper so a nested composite keeps its identity.
+  const providers = providersAcross(parts)
 
   if (rule.requiresSingleProvider && providers.length > 1) {
     throw new Error(
-      `${evidenceClass} requires the same provider: reproducing a behaviour means seeing ` +
-      `it again in the same system, not seeing something similar in another one`)
+      `${evidenceClass} requires the same provider, but the components cover ` +
+      `${providers.join(', ')}: agreement between two different systems is not the ` +
+      'same statement as one system agreeing with itself')
   }
   if (rule.requiresIndependentCaptures) {
     // Independence is proven by DISTINCT CAPTURE identity. The same object
@@ -353,11 +422,26 @@ export function composeEvidence({
     if (parts.length === 0) {
       throw new Error(`${evidenceClass} requires component evidence records, not provider names`)
     }
-    if (providers.length < rule.distinctProviders) {
-      throw new Error(
-        `${evidenceClass} requires ${rule.distinctProviders} distinct providers; ` +
-        `the components cover ${providers.length}`)
+  if (rule.requiresSupportPerProvider) {
+    // Count providers that have at least one support-bearing record, not
+    // providers that merely occur. Two hypotheses are not corroboration.
+    const supported = new Set()
+    for (const part of parts) {
+      if (!SUPPORT_BEARING_EVIDENCE_CLASSES.includes(part.evidenceClass)) continue
+      for (const provider of providerSetOf(part)) supported.add(provider)
     }
+    if (supported.size < (rule.distinctProviders || 1)) {
+      throw new Error(
+        `${evidenceClass} requires support-bearing evidence for ${rule.distinctProviders} ` +
+        `distinct providers; only ${supported.size} provider(s) are actually supported ` +
+        '(a hypothesis is not support)')
+    }
+  }
+
+    // Note what is NOT also checked: providers.length. Support is counted per
+    // provider and supported ⊆ providers, so a separate count on the wider set
+    // could never fail when the support check passed — a second condition no
+    // test could distinguish from the first. One gate, and it is the strict one.
   }
 
   return Object.freeze({
@@ -365,15 +449,23 @@ export function composeEvidence({
     evidenceClass,
     composite: true,
     // Provenance, retained: which records earned this, and for whom.
+    // Provenance actually retained, not asserted: enough to identify each
+    // component exactly, including a nested composite's provider set.
     components: Object.freeze(parts.map((part) => Object.freeze({
+      evidenceId: part.evidenceId,
       evidenceClass: part.evidenceClass,
-      provider: part.provider,
-      environment: part.environment,
-      refs: part.refs,
+      propositionKey: part.propositionKey,
+      provider: part.provider ?? null,
+      providers: providerSetOf(part),
+      captureId: part.captureId ?? null,
+      captureIds: Object.freeze([...(part.captureIds ?? (part.captureId ? [part.captureId] : []))]),
+      environment: part.environment ?? null,
+      refs: Object.freeze([...(part.refs ?? [])]),
     }))),
     providers: Object.freeze(providers.sort()),
     propositionKey,
-    captureIds: Object.freeze([...new Set(parts.map((part) => part.captureId).filter(Boolean))].sort()),
+    captureIds: Object.freeze([...new Set(parts.flatMap(
+      (part) => part.captureIds ?? (part.captureId ? [part.captureId] : [])))].sort()),
     domainSupport: domainSupport ?? parts.find((part) => part.domainSupport)?.domainSupport ?? null,
     refs: Object.freeze(parts.flatMap((part) => [...part.refs])),
     evidenceId: canonicalHash({
@@ -387,6 +479,23 @@ export function composeEvidence({
 }
 
 export const DOMAIN_SUPPORT_KIND = 'M2H_DOMAIN_SUPPORT_ARTIFACT_V0'
+
+/**
+ * Objects this module's constructor actually produced.
+ *
+ * Deliberately module-private and never exported: a caller cannot add to a
+ * WeakSet it cannot reach, and cannot copy membership the way it could copy a
+ * `trusted: true` field.
+ *
+ * WHAT THIS PROVES, precisely: this JavaScript object passed through our local
+ * validating constructor, in this process. Nothing more. It does NOT prove the
+ * citation is real, that an accounting standard says what the artifact claims,
+ * or that anything came from outside this runtime. That is the same honest
+ * limit stated for provider records and for G8 receipts, and establishing
+ * external provenance remains CP2+/CP6 work. No cryptography is invented to
+ * blur the difference.
+ */
+const CONSTRUCTED_DOMAIN_ARTIFACTS = new WeakSet()
 
 /**
  * A typed accounting/domain-support artifact.
@@ -415,7 +524,7 @@ export function createDomainSupportArtifact(input = {}) {
   if (!PROPOSITION_KEY.test(propositionKey)) {
     throw new Error('domain support artifact requires a valid proposition key')
   }
-  return Object.freeze({
+  const artifact = Object.freeze({
     kind: DOMAIN_SUPPORT_KIND,
     artifactId: need('artifactId'),
     propositionKey,
@@ -425,4 +534,6 @@ export function createDomainSupportArtifact(input = {}) {
     // Same honesty as everywhere else in this module.
     grantsAuthority: false,
   })
+  CONSTRUCTED_DOMAIN_ARTIFACTS.add(artifact)
+  return artifact
 }

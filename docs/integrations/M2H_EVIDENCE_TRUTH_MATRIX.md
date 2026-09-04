@@ -39,6 +39,12 @@ Every record carries an explicit `propositionKey`: a deterministic, provider-neu
     provider        WHERE it was observed
     captureId       WHICH observation saw it
 
+### Provider requirements
+
+`E1`, `E2` and `E4` are statements *about a provider* and cannot exist without naming one.
+`E0` may stay provider-neutral — a hypothesis may be about the world. `E3`, `E5` and `E6`
+resolve to **exactly one** provider; `E7` to **at least two**.
+
 **Every composite requires its components to share one proposition, by exact equality.**
 No similarity, no embeddings, no fuzzy matching, no model judgement. Without this,
 composition checked class and provider count while ignoring subject matter — so a schema
@@ -49,14 +55,30 @@ A key naming its own provider is refused (compared by token, not substring, so a
 called `p` does not collide with the word `proposition`): the key says *what* is proved,
 the provider field says *where* it was seen.
 
-- **E3** requires an E1 *and* an E2 component — not one arbitrary citation labelled E3.
-- **E6** requires an E2 component *and* a real sandbox component (E4 or E5).
-- **E7** requires components covering **two materially distinct providers**. Two records
-  about the same provider are one provider, whatever class each carries, and a list of
-  provider *names* with no evidence records behind it earns nothing.
-- **E8** requires a **typed** artifact from `createDomainSupportArtifact()`, which
-  validates `artifactId`, `propositionKey`, `domainCategory`, `citation` and `recordedAt`
-  — and whose proposition must match the components'. An earlier version accepted any
+- **E3** requires an E1 *and* an E2 component **for the SAME provider**. One provider's
+  machine contract agreeing with another's documentation is not a fact about anything —
+  neither system makes claims about the other.
+- **E6** requires an E2 component *and* a real sandbox component (E4 or E5), again **for
+  the same provider**: documentation and behaviour agree *for one provider*.
+- **E7** requires **two materially distinct providers that each actually SUPPORT the
+  proposition**. Support-bearing classes are an explicit closed set — E1, E2, E3, E4, E5,
+  E6 — and **E0 is not among them**: two people guessing the same thing about two systems
+  is the same guess twice, not corroboration. A list of provider *names* with no evidence
+  records behind it earns nothing.
+
+Provider identity is read through one helper, `providerSetOf()`, which returns
+`{provider}` for a primitive and the full `providers` set for a composite — so a **nested**
+provider-scoped composite keeps its identity and cannot be silently flattened away.
+- **E8** requires an artifact that actually **passed** `createDomainSupportArtifact()`,
+  checked by membership of a module-private `WeakSet` — not by its `kind`, which is a
+  public string a forger can simply type, as the previous version allowed. A spread copy
+  of a genuine artifact is a different object and is refused. The constructor validates
+  `artifactId`, `propositionKey`, `domainCategory`, `citation` and `recordedAt`, and the
+  artifact's proposition must match the components'.
+
+  *What the WeakSet proves:* this JavaScript object passed our local validating
+  constructor, in this process. **Not** that the citation is real, that a standard says
+  what the artifact claims, or that anything came from outside this runtime. An earlier version accepted any
   truthy `domainSupport`, so `'trust me'` minted E8; the previous report calling E8
   unissuable was **wrong**. The contract now exists and **CP1 ships no instance**, so E8
   is genuinely unissuable here — asserted by a test rather than claimed in prose.

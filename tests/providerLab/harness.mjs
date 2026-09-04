@@ -146,7 +146,10 @@ export function observeThrough(adapter, {
     observation,
     interpretation,
     admitted: admitProviderClaim({
-      tenantId, providerAccountId, observation, interpretation, evidence,
+      // The expected provider comes from the adapter whose connection this is,
+      // never from the observation being checked.
+      tenantId, provider: adapter.provider, providerAccountId,
+      observation, interpretation, evidence,
       freshness: freshness ?? resolveFreshness({
         observation, now: observedAt, maxAgeMs: 86_400_000,
       }),

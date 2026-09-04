@@ -40,6 +40,28 @@ passed to `describeProviderCapability` throws.
     Stripe permits refunds       ≠  DueWatch may refund
     QuickBooks token can edit    ≠  DueWatch may edit the books
 
+## The admission tuple
+
+A provider claim is admitted only on the **full connection tuple**:
+
+    expected tenant + expected provider + expected provider account
+              matched against
+    observation tenant + observation provider + observation provider account
+
+Two of three is not enough: **provider account ids are not globally unique across
+providers**, so `acct-4815` at one provider is a different thing entirely from `acct-4815`
+at another. Mismatches produce distinct typed outcomes — `REJECTED_TENANT`,
+`REJECTED_PROVIDER`, `REJECTED_PROVIDER_ACCOUNT` — and a missing expected provider fails
+closed with its own diagnosis rather than skipping the check.
+
+The expected provider comes from the **connection context the caller holds**. It is never
+inferred from the observation's object type, external id, payload, source owner or
+proposition — inferring it from the thing being checked would make the check circular.
+
+*Connection identity, honestly:* CP1 has no persistence, so the tuple is passed in rather
+than looked up. Binding it to a durable `connectionId` with an OAuth lifecycle is **CP6**
+work, and nothing here pretends that record exists.
+
 ## Observation ≠ interpretation
 
 Raw observations are immutable **structured JSON snapshots** — not exact HTTP wire bytes

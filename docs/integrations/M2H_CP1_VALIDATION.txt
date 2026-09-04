@@ -5,7 +5,7 @@ Branch: m2h/company-brain-integrations-cp1
 REPAIR (evidence closure + semantic equality) applied on top of 3d44efe.
 
 TESTS
-  Provider Lab (5 suites)                  124 pass / 0 fail / 0 skipped
+  Provider Lab (6 suites)                  149 pass / 0 fail / 0 skipped
   G8 (5 suites incl. CP4 freeze matrix)    139 pass / 0 fail
   CP1/CP2 proactive                         66 pass / 0 fail
   Ask DW incl. G7                          386 pass / 0 fail
@@ -13,11 +13,11 @@ TESTS
   DW Intelligence / Phase2B                214 pass / 0 fail
   M2D locks + replay                        24 pass / 0 fail
   PostgreSQL RPC/RLS                        14 pass / 0 fail (real server)
-  FULL SUITE                              2033 pass / 0 fail / 0 skipped
+  FULL SUITE                              2058 pass / 0 fail / 0 skipped
 
 MUTATIONS
-  70 applied, 70 killed, 0 survivors, none committed (40 original + 16 evidence
-  closure + 14 proposition identity / reproduction / domain artifact).
+  85 applied, 85 killed, 0 survivors, none committed (40 original + 16 evidence
+  closure + 14 proposition identity + 15 provider-identity closure).
   Two initial survivors were real signals, not noise:
     P12 "stale accepted as fresh" — a genuine coverage gap in the age path of
         resolveFreshness; a test was added.
@@ -39,6 +39,12 @@ REPAIRED
   distinct captureId. Every record carries a provider-neutral propositionKey
   and every composite requires one shared proposition by exact equality.
   E8 requires a typed domain artifact; CP1 ships none, so E8 is unissuable.
+  E3/E5/E6 resolve to exactly one provider; E7 to two that each actually
+  support the proposition (E0 excluded). Provider identity is read through one
+  helper so nested composites keep it. E8 artifacts are checked by private
+  WeakSet membership, not by a public kind string. Claim admission binds the
+  full tenant + provider + providerAccountId tuple, fail-closed, with the
+  expected provider taken from connection context and never inferred.
 
 BUILD    npm run build — green
 DIFF     git diff --check — clean

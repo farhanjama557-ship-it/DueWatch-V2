@@ -218,7 +218,8 @@ test('H16 a wrong-tenant provider object fails closed', () => {
     payload: MOCK_LEDGER_ADAPTER.emit({ invoiceId: 'inv-1', balance: 100 }), tenantId: LAB_TENANT_B,
   })
   assert.equal(admitProviderClaim({
-    tenantId: LAB_TENANT, providerAccountId: LAB_ACCOUNT, observation, interpretation,
+    tenantId: LAB_TENANT, provider: MOCK_LEDGER_ADAPTER.provider,
+    providerAccountId: LAB_ACCOUNT, observation, interpretation,
   }).admission, PROVIDER_CLAIM_ADMISSION.REJECTED_TENANT)
 })
 
@@ -230,7 +231,8 @@ test('H17 a wrong provider-account identity fails closed', () => {
     providerAccountId: LAB_ACCOUNT_B,
   })
   assert.equal(admitProviderClaim({
-    tenantId: LAB_TENANT, providerAccountId: LAB_ACCOUNT, observation, interpretation,
+    tenantId: LAB_TENANT, provider: MOCK_LEDGER_ADAPTER.provider,
+    providerAccountId: LAB_ACCOUNT, observation, interpretation,
   }).admission, PROVIDER_CLAIM_ADMISSION.REJECTED_PROVIDER_ACCOUNT)
 })
 

@@ -16,10 +16,22 @@
  *   normalisation path that owns those facts, and this contract has no route
  *   to the ledger.
  *
- *   Tenant AND provider-account identity must match, or the claim is refused.
- *   One founder may connect two QuickBooks companies; an object from the wrong
- *   company is as dangerous as one from the wrong tenant, and neither is
- *   recoverable by being "mostly right".
+ *   The admission key is the FULL connection tuple — tenant AND provider AND
+ *   provider account — or the claim is refused. Two of the three is not
+ *   enough: provider account ids are not globally unique across providers, so
+ *   "acct-4815" at one provider is a different thing entirely from "acct-4815"
+ *   at another, and matching only tenant and account would let one stand in
+ *   for the other.
+ *
+ *   The expected provider comes from the CONNECTION CONTEXT the caller holds.
+ *   It is never inferred from the observation, its object type, its external
+ *   id, its payload, its source owner or its proposition — inferring it from
+ *   the thing being checked would make the check circular.
+ *
+ * CONNECTION IDENTITY, honestly: CP1 has no persistence, so this tuple is
+ * passed in rather than looked up. Binding (tenant, provider, providerAccountId)
+ * to a durable connectionId with an OAuth lifecycle is CP6 work; nothing here
+ * pretends that record exists yet.
  */
 
 import { ownerMaySpeakTo, CLAIM_SOURCE_OWNER } from './providerTruthModel.js'
@@ -28,6 +40,7 @@ import { FRESHNESS_STATE, freshnessMayGovern } from './providerFreshness.js'
 export const PROVIDER_CLAIM_ADMISSION = Object.freeze({
   ADMITTED: 'ADMITTED',
   REJECTED_TENANT: 'REJECTED_TENANT',
+  REJECTED_PROVIDER: 'REJECTED_PROVIDER',
   REJECTED_PROVIDER_ACCOUNT: 'REJECTED_PROVIDER_ACCOUNT',
   REJECTED_OWNER_CANNOT_SPEAK: 'REJECTED_OWNER_CANNOT_SPEAK',
   REJECTED_MALFORMED: 'REJECTED_MALFORMED',
@@ -45,7 +58,7 @@ function frozen(value) {
  * arriving is an expected event in a multi-connection world, not a crash.
  */
 export function admitProviderClaim({
-  tenantId = null, providerAccountId = null, observation = null,
+  tenantId = null, provider = null, providerAccountId = null, observation = null,
   interpretation = null, evidence = null, freshness = null,
 } = {}) {
   const reject = (admission, reason) => frozen({
@@ -64,6 +77,16 @@ export function admitProviderClaim({
   if (String(tenantId ?? '') !== String(observation.tenantId ?? '')) {
     return reject(PROVIDER_CLAIM_ADMISSION.REJECTED_TENANT,
       "Refusing an observation belonging to another tenant.")
+  }
+  // Fail closed on a missing expectation: an absent expected provider is an
+  // unanswered question, never a reason to skip the comparison.
+  if (typeof provider !== 'string' || !provider.trim()) {
+    return reject(PROVIDER_CLAIM_ADMISSION.REJECTED_PROVIDER,
+      'Refusing a claim with no expected provider: the connection context must name it.')
+  }
+  if (String(provider) !== String(observation.provider ?? '')) {
+    return reject(PROVIDER_CLAIM_ADMISSION.REJECTED_PROVIDER,
+      `Refusing an observation from ${observation.provider}: this connection is ${provider}.`)
   }
   if (String(providerAccountId ?? '') !== String(observation.providerAccountId ?? '')) {
     return reject(PROVIDER_CLAIM_ADMISSION.REJECTED_PROVIDER_ACCOUNT,

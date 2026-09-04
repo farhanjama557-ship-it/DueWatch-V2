@@ -144,7 +144,8 @@ test('S019 a wrong-tenant object fails closed', () => {
     payload: MOCK_LEDGER_ADAPTER.emit({ invoiceId: 'inv-1', balance: 100 }), tenantId: LAB_TENANT_B,
   })
   const result = admitProviderClaim({
-    tenantId: LAB_TENANT, providerAccountId: LAB_ACCOUNT, observation, interpretation,
+    tenantId: LAB_TENANT, provider: MOCK_LEDGER_ADAPTER.provider,
+    providerAccountId: LAB_ACCOUNT, observation, interpretation,
   })
   assert.equal(result.admitted, false)
   assert.equal(result.admission, PROVIDER_CLAIM_ADMISSION.REJECTED_TENANT)
