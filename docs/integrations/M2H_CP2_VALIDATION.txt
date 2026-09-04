@@ -1,0 +1,91 @@
+M2H-CP2 — QuickBooks Online and Xero accounting connectors
+Accepted CP1 base: 52f2bbf099eacb015971a6ca756c105328d0434a
+Direct CP1 parent: cb7cdffea0a340588b8e57f806f20545b8443d5a
+Frozen G8 ancestor: 236a9dee0c5a4a6bb417db466e562ae3e3c4f950
+Branch: m2h/company-brain-integrations-cp2
+Validation date: 2026-09-04 UTC
+
+SCOPE
+  Pure provider adapters and Provider Lab fixtures for QuickBooks Online
+  Accounting and Xero Accounting. No OAuth control plane, persistence, schema,
+  migration, live provider client, provider write, execution path or UI.
+
+TESTS
+  Frozen CP1 Provider Lab                    217 pass / 0 fail / 0 skipped
+  New QuickBooks suites                       25 pass / 0 fail / 0 skipped
+  New Xero suites                             28 pass / 0 fail / 0 skipped
+  New cross-provider suites                   11 pass / 0 fail / 0 skipped
+  New CP2 mutation suites                     19 pass / 0 fail / 0 skipped
+  New CP2 static suites                        4 pass / 0 fail / 0 skipped
+  Provider Lab total                         304 pass / 0 fail / 0 skipped
+  G8 freeze suites                           139 pass / 0 fail / 0 skipped
+  Ask DW                                     386 pass / 0 fail / 0 skipped
+  G5 authority/delegation                    362 pass / 0 fail / 0 skipped
+  Company Brain through G6                   490 pass / 0 fail / 14 skipped
+  DW Intelligence / Phase2B                  214 pass / 0 fail / 0 skipped
+  M2D / System Brain                          32 pass / 0 fail / 0 skipped
+  PostgreSQL RPC/RLS                           0 pass / 0 fail / 14 skipped
+    No PostgreSQL server was available. G6-RT0 reports that runtime
+    verification was NOT performed; the skip is not represented as a pass.
+  FULL SUITE                                2200 pass / 0 fail / 14 skipped
+    2214 total
+
+MUTATIONS
+  18 targeted CP2 semantic mutants attempted, 18 killed, 0 survivors.
+  They cover Payment-to-T3 collapse, T3/T4 collapse, provider-account bypass,
+  QBO realm bypass, Xero tenant and connection/tenant confusion, payload tenant
+  inference, unavailable-as-empty, incomplete paging, event-as-truth, dropped
+  refetch, lost unapplied credit, credit-note-as-cash, unsupported prepayment and
+  overpayment allocation, stale governance, unjustified IsReconciled-to-T6, and
+  provider-capability-to-authority.
+
+TRUTH / IDENTITY
+  QBO Invoice maps only to T1. QBO Payment and CreditMemo invoice allocations
+  map only to T4. providerAccountId is the connection-scoped QBO realm/company.
+  Xero ACCREC Invoice maps only to T1. Payment, CreditNote, Prepayment and
+  Overpayment allocations map only to T4. providerAccountId is the Xero
+  tenant/organisation, never the OAuth connection ID.
+  No accounting Payment establishes T3. No adapter establishes T2, T5 or T6.
+  Xero IsReconciled is preserved as provider context and remains insufficient
+  to establish DueWatch T6.
+
+CHANGE DETECTION / SYNC
+  Current QBO CloudEvents and explicit legacy replay envelopes, and Xero event
+  envelopes, are scoped before they produce pure authoritative-refetch
+  obligations. Events never write financial truth. Page replay is provider-
+  account scoped, duplicate-idempotent, newest-version preserving, explicitly
+  terminal, and fail-closed on failed/incomplete pages.
+
+EVIDENCE / SANDBOX
+  Current official Intuit and Xero sources were inspected. Provider-specific
+  propositions use E1/E2/E3 only where their source supports the same provider
+  and proposition; E7 uses support-bearing evidence from both providers.
+  No sandbox credentials or calls were available. E4/E5/E6 remain unclaimed;
+  fixture replay is never represented as sandbox evidence.
+
+BUILD / DIFF
+  npm run build — PASS (Vite production build; existing chunk-size warning)
+  git diff --check — PASS
+
+SCANS
+  Credentials, secrets and production tokens — none
+  OAuth implementation / provider SDK or network calls — none
+  DB writes, schema or migrations — none
+  Canonical financial writes — none
+  Provider capability -> G5 authority — none
+  Provider evidence -> execution — none
+  Local G5 evaluator — none
+  Tenant inference from payload / provider-account bypass — none
+  Raw ledger -> ELIGIBLE / handwritten FRESH bypass — none
+  Payment -> T3 / provider-global-truth shortcuts — none
+  M2I or UI changes — none
+  Stripe, Gmail, CRM, Drive, Dropbox, CP3 or CP6 implementation — none
+
+HISTORICAL LOCKS
+  supabase/functions/_shared/askDwOpenAiContract.js
+    e3870f6ffc62fea71118a9202d79af00cdf70477
+  supabase/functions/ask-dw-model/index.ts
+    b687f54b07ac7f9f31596a7cdf42a472d4ab8855
+
+RESULT
+  Implementation is green on the validated candidate tree. CP3 was not started.
