@@ -24,8 +24,9 @@
  * The worked example that motivates it: a QuickBooks Payment with TotalAmt 0
  * linked to a CreditMemo and an Invoice. Interpreted as "cash received" it
  * marks an invoice paid that nobody paid. Interpreted as "provider-generated
- * credit allocation" it is correct. Same bytes, different meaning — and when
- * we learn the difference, the bytes must still be there.
+ * credit allocation" it is correct. One structured observation snapshot, two
+ * different meanings — and when we learn the difference, the snapshot must
+ * still be there, unchanged.
  */
 
 import { canonicalHash as contentHash } from './canonicalValue.js'
@@ -119,7 +120,7 @@ export function interpretObservation({
  *
  * This is the operation the observation/interpretation split exists for: we
  * learn a provider quirk, we reinterpret, and every historical observation is
- * still exactly what the provider sent.
+ * still the same structured observation snapshot that was recorded.
  */
 export function reinterpret(previous, changes = {}) {
   if (previous?.kind !== 'M2H_PROVIDER_INTERPRETATION_V0') {

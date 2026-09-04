@@ -123,6 +123,10 @@ export function observeThrough(adapter, {
   observedAt = LAB_NOW, eventId = null, deliveryId = null,
   objectType = 'object', externalObjectId = 'obj-1',
   freshness = null, evidenceClass = EVIDENCE_CLASS.E0_HYPOTHESIS,
+  // What this observation is offered as evidence FOR. Provider-neutral by
+  // construction: the lab's adapters are mocks, so the default names the
+  // scenario role rather than any provider.
+  propositionKey = 'lab_observation_under_test',
 } = {}) {
   const observation = createProviderObservation({
     tenantId, provider: adapter.provider, providerAccountId,
@@ -132,6 +136,7 @@ export function observeThrough(adapter, {
   })
   const evidence = recordEvidence({
     evidenceClass, environment: OBSERVATION_ENVIRONMENT.MOCK,
+    provider: adapter.provider, propositionKey,
     refs: [], note: 'Provider Lab mock adapter',
   })
   const interpretation = interpretObservation({

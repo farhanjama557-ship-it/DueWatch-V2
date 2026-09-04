@@ -260,25 +260,32 @@ test('H20 a provider quirk cannot silently become a universal DueWatch rule', ()
 })
 
 // 21-23 — evidence is not power
-test('H21 a mock provider cannot claim E4/E5, and cannot claim E6 at all', () => {
-  for (const cls of [EVIDENCE_CLASS.E4_SANDBOX_OBSERVED, EVIDENCE_CLASS.E5_SANDBOX_REPRODUCED]) {
-    assert.throws(() => recordEvidence({
-      evidenceClass: cls, environment: OBSERVATION_ENVIRONMENT.MOCK, refs: ['x'],
-    }), /mock cannot be the evidence/, cls)
-  }
-  // E6 is composite: it cannot be recorded directly from any environment.
+test('H21 a mock cannot claim a live observation, and cannot claim E5/E6 at all', () => {
   assert.throws(() => recordEvidence({
-    evidenceClass: EVIDENCE_CLASS.E6_DOC_PLUS_SANDBOX,
-    environment: OBSERVATION_ENVIRONMENT.PROVIDER_SANDBOX, refs: ['x'],
-  }), /composite/i)
+    evidenceClass: EVIDENCE_CLASS.E4_SANDBOX_OBSERVED, propositionKey: 'lab_proposition',
+    provider: 'p', captureId: 'capture-a',
+    environment: OBSERVATION_ENVIRONMENT.MOCK, refs: ['x'],
+  }), /mock cannot be the evidence/)
+  // E5 and E6 are composite: neither is recordable directly from ANY
+  // environment, however live — the label is not the proof.
+  for (const cls of [EVIDENCE_CLASS.E5_SANDBOX_REPRODUCED, EVIDENCE_CLASS.E6_DOC_PLUS_SANDBOX]) {
+    assert.throws(() => recordEvidence({
+      evidenceClass: cls, propositionKey: 'lab_proposition', provider: 'p',
+      captureId: 'capture-a',
+      environment: OBSERVATION_ENVIRONMENT.PROVIDER_SANDBOX, refs: ['x'],
+    }), /composite/i, cls)
+  }
 })
 
 test('H22 an evidence class does not act as authority — primitive or composed', () => {
   assert.equal(evidenceGrantsAuthority(), false)
   for (const cls of PRIMITIVE_EVIDENCE_CLASSES) {
     const record = recordEvidence({
-      evidenceClass: cls, provider: 'mock_ledger',
-      environment: cls.startsWith('E4') || cls.startsWith('E5')
+      evidenceClass: cls, provider: 'mock_ledger', propositionKey: 'lab_proposition',
+      // A sandbox observation must name its capture, or nothing can later be
+      // shown to be an independent reproduction of it.
+      captureId: 'capture-a',
+      environment: cls.startsWith('E4')
         ? OBSERVATION_ENVIRONMENT.PROVIDER_SANDBOX : OBSERVATION_ENVIRONMENT.MOCK,
       refs: ['ref'],
     })
@@ -288,8 +295,8 @@ test('H22 an evidence class does not act as authority — primitive or composed'
   const composed = composeEvidence({
     evidenceClass: EVIDENCE_CLASS.E3_SCHEMA_PLUS_DOC,
     components: [
-      recordEvidence({ evidenceClass: EVIDENCE_CLASS.E1_SCHEMA_CONFIRMED, provider: 'p', environment: OBSERVATION_ENVIRONMENT.MOCK, refs: ['s'] }),
-      recordEvidence({ evidenceClass: EVIDENCE_CLASS.E2_DOC_CONFIRMED, provider: 'p', environment: OBSERVATION_ENVIRONMENT.MOCK, refs: ['d'] }),
+      recordEvidence({ propositionKey: 'lab_proposition', evidenceClass: EVIDENCE_CLASS.E1_SCHEMA_CONFIRMED, provider: 'p', environment: OBSERVATION_ENVIRONMENT.MOCK, refs: ['s'] }),
+      recordEvidence({ propositionKey: 'lab_proposition', evidenceClass: EVIDENCE_CLASS.E2_DOC_CONFIRMED, provider: 'p', environment: OBSERVATION_ENVIRONMENT.MOCK, refs: ['d'] }),
     ],
   })
   assert.equal(composed.grantsAuthority, false)

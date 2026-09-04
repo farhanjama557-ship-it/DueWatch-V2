@@ -121,19 +121,21 @@ test('a mock environment cannot claim a live-observation evidence class', () => 
   // E6 is no longer listed here because it is no longer directly recordable at
   // all: it is composite, and providerLabEvidenceClosure proves it must be
   // composed from a doc component plus a real sandbox component.
-  for (const cls of [EVIDENCE_CLASS.E4_SANDBOX_OBSERVED, EVIDENCE_CLASS.E5_SANDBOX_REPRODUCED]) {
-    assert.throws(() => recordEvidence({ evidenceClass: cls, environment: OBSERVATION_ENVIRONMENT.MOCK }),
-      /mock cannot be the evidence/, cls)
-    assert.throws(() => recordEvidence({ evidenceClass: cls, environment: OBSERVATION_ENVIRONMENT.FIXTURE_REPLAY }),
-      /mock cannot be the evidence/, cls)
+  // E4 is now the only primitive live-observation class: E5 became composite
+  // in the proposition-identity repair, and is covered by its own suite.
+  for (const environment of [OBSERVATION_ENVIRONMENT.MOCK, OBSERVATION_ENVIRONMENT.FIXTURE_REPLAY]) {
+    assert.throws(() => recordEvidence({
+      evidenceClass: EVIDENCE_CLASS.E4_SANDBOX_OBSERVED, propositionKey: 'lab_proposition',
+      provider: 'p', captureId: 'capture-a', environment,
+    }), /mock cannot be the evidence/, environment)
   }
 })
 
 test('documentation classes require a citation', () => {
-  assert.throws(() => recordEvidence({
+  assert.throws(() => recordEvidence({ propositionKey: 'lab_proposition',
     evidenceClass: EVIDENCE_CLASS.E2_DOC_CONFIRMED, environment: OBSERVATION_ENVIRONMENT.MOCK,
   }), /requires a citation/)
-  const cited = recordEvidence({
+  const cited = recordEvidence({ propositionKey: 'lab_proposition',
     evidenceClass: EVIDENCE_CLASS.E2_DOC_CONFIRMED,
     environment: OBSERVATION_ENVIRONMENT.MOCK, refs: ['https://provider.example/docs/x'],
   })
@@ -144,7 +146,7 @@ test('evidence classes are not a ranking and never grant authority', () => {
   assert.equal(EVIDENCE_CLASS_IS_RANKED, false)
   assert.equal(evidenceGrantsAuthority(), false)
   // A primitive class, since E8 can no longer be conjured by naming it.
-  const record = recordEvidence({
+  const record = recordEvidence({ propositionKey: 'lab_proposition',
     evidenceClass: EVIDENCE_CLASS.E0_HYPOTHESIS, environment: OBSERVATION_ENVIRONMENT.MOCK,
   })
   assert.equal(record.grantsAuthority, false)

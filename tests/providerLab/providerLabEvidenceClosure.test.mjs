@@ -85,14 +85,14 @@ test('CP1 exposes no code path at all that can produce G5', () => {
 // ── Defect 2 — composite evidence must be earned ─────────────────────────────
 
 test('E7 cannot be self-declared', () => {
-  assert.throws(() => recordEvidence({
+  assert.throws(() => recordEvidence({ propositionKey: 'lab_proposition',
     evidenceClass: EVIDENCE_CLASS.E7_MULTI_PROVIDER_SUPPORTED,
     environment: OBSERVATION_ENVIRONMENT.MOCK, refs: ['looks-official'],
   }), /composed|component/i)
 })
 
 test('E8 cannot be self-declared', () => {
-  assert.throws(() => recordEvidence({
+  assert.throws(() => recordEvidence({ propositionKey: 'lab_proposition',
     evidenceClass: EVIDENCE_CLASS.E8_ACCOUNTING_DOMAIN_SUPPORTED,
     environment: OBSERVATION_ENVIRONMENT.MOCK, refs: ['trust-me'],
   }), /composed|component/i)
@@ -100,7 +100,7 @@ test('E8 cannot be self-declared', () => {
 
 test('E3 and E6 cannot be minted from one arbitrary citation', () => {
   for (const cls of [EVIDENCE_CLASS.E3_SCHEMA_PLUS_DOC, EVIDENCE_CLASS.E6_DOC_PLUS_SANDBOX]) {
-    assert.throws(() => recordEvidence({
+    assert.throws(() => recordEvidence({ propositionKey: 'lab_proposition',
       evidenceClass: cls, environment: OBSERVATION_ENVIRONMENT.PROVIDER_SANDBOX,
       refs: ['one-citation'],
     }), /composed|component/i, cls)
@@ -108,23 +108,25 @@ test('E3 and E6 cannot be minted from one arbitrary citation', () => {
 })
 
 test('the primitive/composite split is explicit', () => {
+  // E5 moved to composite in the proposition-identity repair: "independently
+  // reproduced" is a statement about two observations, not a label.
   assert.deepEqual([...PRIMITIVE_EVIDENCE_CLASSES].sort(), [
     EVIDENCE_CLASS.E0_HYPOTHESIS, EVIDENCE_CLASS.E1_SCHEMA_CONFIRMED,
     EVIDENCE_CLASS.E2_DOC_CONFIRMED, EVIDENCE_CLASS.E4_SANDBOX_OBSERVED,
-    EVIDENCE_CLASS.E5_SANDBOX_REPRODUCED,
   ].sort())
   assert.deepEqual([...COMPOSITE_EVIDENCE_CLASSES].sort(), [
-    EVIDENCE_CLASS.E3_SCHEMA_PLUS_DOC, EVIDENCE_CLASS.E6_DOC_PLUS_SANDBOX,
+    EVIDENCE_CLASS.E3_SCHEMA_PLUS_DOC, EVIDENCE_CLASS.E5_SANDBOX_REPRODUCED,
+    EVIDENCE_CLASS.E6_DOC_PLUS_SANDBOX,
     EVIDENCE_CLASS.E7_MULTI_PROVIDER_SUPPORTED, EVIDENCE_CLASS.E8_ACCOUNTING_DOMAIN_SUPPORTED,
   ].sort())
 })
 
 test('E3 is earned by compatible schema AND doc components, and keeps them', () => {
-  const schema = recordEvidence({
+  const schema = recordEvidence({ propositionKey: 'lab_proposition',
     evidenceClass: EVIDENCE_CLASS.E1_SCHEMA_CONFIRMED, provider: 'mock_ledger',
     environment: OBSERVATION_ENVIRONMENT.MOCK, refs: ['schema://mock_ledger/invoice'],
   })
-  const doc = recordEvidence({
+  const doc = recordEvidence({ propositionKey: 'lab_proposition',
     evidenceClass: EVIDENCE_CLASS.E2_DOC_CONFIRMED, provider: 'mock_ledger',
     environment: OBSERVATION_ENVIRONMENT.MOCK, refs: ['docs://mock_ledger/invoice'],
   })
@@ -145,13 +147,14 @@ test('E3 is earned by compatible schema AND doc components, and keeps them', () 
 })
 
 test('E6 is earned by doc AND a real sandbox observation', () => {
-  const doc = recordEvidence({
+  const doc = recordEvidence({ propositionKey: 'lab_proposition',
     evidenceClass: EVIDENCE_CLASS.E2_DOC_CONFIRMED, provider: 'mock_ledger',
     environment: OBSERVATION_ENVIRONMENT.MOCK, refs: ['docs://x'],
   })
-  const sandbox = recordEvidence({
+  const sandbox = recordEvidence({ propositionKey: 'lab_proposition',
     evidenceClass: EVIDENCE_CLASS.E4_SANDBOX_OBSERVED, provider: 'mock_ledger',
     environment: OBSERVATION_ENVIRONMENT.PROVIDER_SANDBOX, refs: ['capture-1'],
+    captureId: 'capture-1',
   })
   assert.equal(composeEvidence({
     evidenceClass: EVIDENCE_CLASS.E6_DOC_PLUS_SANDBOX, components: [doc, sandbox],
@@ -162,15 +165,15 @@ test('E6 is earned by doc AND a real sandbox observation', () => {
 })
 
 test('E7 requires TWO materially distinct providers, not one provider twice', () => {
-  const one = recordEvidence({
+  const one = recordEvidence({ propositionKey: 'lab_proposition',
     evidenceClass: EVIDENCE_CLASS.E2_DOC_CONFIRMED, provider: 'mock_ledger',
     environment: OBSERVATION_ENVIRONMENT.MOCK, refs: ['docs://a'],
   })
-  const alsoOne = recordEvidence({
+  const alsoOne = recordEvidence({ propositionKey: 'lab_proposition',
     evidenceClass: EVIDENCE_CLASS.E1_SCHEMA_CONFIRMED, provider: 'mock_ledger',
     environment: OBSERVATION_ENVIRONMENT.MOCK, refs: ['schema://a'],
   })
-  const other = recordEvidence({
+  const other = recordEvidence({ propositionKey: 'lab_proposition',
     evidenceClass: EVIDENCE_CLASS.E2_DOC_CONFIRMED, provider: 'mock_processor',
     environment: OBSERVATION_ENVIRONMENT.MOCK, refs: ['docs://b'],
   })
@@ -198,20 +201,20 @@ test('E8 stays UNISSUABLE without a real domain-support artifact', () => {
   // accounting-domain artifact, so there is nothing to compose from.
   assert.throws(() => composeEvidence({
     evidenceClass: EVIDENCE_CLASS.E8_ACCOUNTING_DOMAIN_SUPPORTED, components: [],
-  }), /domain support/i)
-  const notDomain = recordEvidence({
+  }), /domain support artifact/i)
+  const notDomain = recordEvidence({ propositionKey: 'lab_proposition',
     evidenceClass: EVIDENCE_CLASS.E2_DOC_CONFIRMED, provider: 'mock_ledger',
     environment: OBSERVATION_ENVIRONMENT.MOCK, refs: ['docs://a'],
   })
   assert.throws(() => composeEvidence({
     evidenceClass: EVIDENCE_CLASS.E8_ACCOUNTING_DOMAIN_SUPPORTED, components: [notDomain],
-  }), /domain support/i)
+  }), /domain support artifact/i)
 })
 
 test('composition introduces no ranking and never grants authority', () => {
   const source = [EVIDENCE_CLASS.E1_SCHEMA_CONFIRMED, EVIDENCE_CLASS.E2_DOC_CONFIRMED]
     .map((cls, index) => recordEvidence({
-      evidenceClass: cls, provider: 'mock_ledger',
+      evidenceClass: cls, provider: 'mock_ledger', propositionKey: 'lab_proposition',
       environment: OBSERVATION_ENVIRONMENT.MOCK, refs: [`ref-${index}`],
     }))
   const composed = composeEvidence({
