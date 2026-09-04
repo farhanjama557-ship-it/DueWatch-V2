@@ -87,6 +87,29 @@ export const EVIDENCE_CLASS = Object.freeze({
 export const EVIDENCE_CLASS_IS_RANKED = false
 
 /**
+ * Evidence records this module's constructors actually produced.
+ *
+ * The previous version admitted a component if `part.kind` read
+ * 'M2H_EVIDENCE_V0' — a public string, so a plain object literal could pose as
+ * a schema confirmation and two of them could pose as multi-provider support.
+ * That is the same shape-trusting mistake already corrected for domain
+ * artifacts, so the same doctrine is applied here rather than a third
+ * mechanism being invented.
+ *
+ * Module-private and never exported: a caller cannot add to a WeakSet it
+ * cannot reach, and cannot copy membership the way it could copy a boolean
+ * field. A spread copy is a different object and is therefore not a record.
+ *
+ * WHAT MEMBERSHIP PROVES, exactly: this JavaScript object passed our local
+ * validating constructor, in this process. It does NOT prove the provider
+ * really emitted anything, that the documentation says what the record claims,
+ * that the citation is authentic, or that a sandbox capture ever happened.
+ * External provenance remains CP2+ / CP6 work, and no cryptography is invented
+ * here to blur that line.
+ */
+const CONSTRUCTED_EVIDENCE_RECORDS = new WeakSet()
+
+/**
  * Classes that assert someone actually watched a real provider do something.
  * A simulated or mock environment can never produce them, however faithful the
  * mock is: a fixture reproduces what we already believed, which is why it
@@ -219,7 +242,7 @@ export function recordEvidence({
       `${evidenceClass} requires a captureId identifying the observation, so an ` +
       'independent reproduction can be told apart from the same observation twice')
   }
-  return Object.freeze({
+  const record = Object.freeze({
     kind: 'M2H_EVIDENCE_V0',
     evidenceClass,
     environment,
@@ -241,6 +264,8 @@ export function recordEvidence({
     grantsAuthority: false,
     isRanked: EVIDENCE_CLASS_IS_RANKED,
   })
+  CONSTRUCTED_EVIDENCE_RECORDS.add(record)
+  return record
 }
 
 /**
@@ -340,9 +365,14 @@ export function composeEvidence({
   if (!rule) {
     throw new Error(`${evidenceClass} is not a composite evidence class`)
   }
-  const parts = components.filter((part) => part?.kind === 'M2H_EVIDENCE_V0')
+  // Membership, not shape. `kind` is public data a forger can type; a record
+  // is one only if a constructor in this module produced that exact object.
+  const parts = components.filter((part) => CONSTRUCTED_EVIDENCE_RECORDS.has(part))
   if (parts.length !== components.length) {
-    throw new Error(`${evidenceClass} requires real component evidence records`)
+    throw new Error(
+      `${evidenceClass} requires component evidence produced by the recordEvidence or ` +
+      'composeEvidence constructor; an object carrying the right shape, the right kind ' +
+      'or a copied evidenceId is not one')
   }
 
   // ONE proposition, by exact identity. This is the check whose absence let a
@@ -354,8 +384,9 @@ export function composeEvidence({
       `${evidenceClass} requires every component to support the same proposition; ` +
       `the components cover ${propositions.length === 0 ? 'none' : propositions.join(', ')}`)
   }
-  const propositionKey = propositions[0] ?? null
+  let propositionKey = propositions[0] ?? null
 
+  let domainArtifactIdentity = null
   if (rule.requiresDomainSupport) {
     const support = domainSupport ?? parts.find((part) => part.domainSupport)?.domainSupport ?? null
     // A typed artifact, constructed through its own validating constructor.
@@ -377,6 +408,20 @@ export function composeEvidence({
         `${evidenceClass} requires the domain artifact to support the same proposition: ` +
         `artifact proves ${support.propositionKey}, components prove ${propositionKey}`)
     }
+    // With no components the artifact IS the evidence, so it is also the
+    // source of the proposition. Leaving this null let an E8 exist without
+    // stating what it proved — the one thing every record must do.
+    propositionKey = propositionKey ?? support.propositionKey
+    // The artifact's OWN provenance. propositionKey is deliberately not
+    // repeated here: it is already a top-level field of the identity below, so
+    // including it twice would be a condition no test could distinguish from
+    // the one that already exists.
+    domainArtifactIdentity = canonicalHash({
+      artifactId: support.artifactId,
+      domainCategory: support.domainCategory,
+      citation: support.citation,
+      recordedAt: support.recordedAt,
+    })
   }
 
   const present = new Set(parts.map((part) => part.evidenceClass))
@@ -444,7 +489,7 @@ export function composeEvidence({
     // test could distinguish from the first. One gate, and it is the strict one.
   }
 
-  return Object.freeze({
+  const composed = Object.freeze({
     kind: 'M2H_EVIDENCE_V0',
     evidenceClass,
     composite: true,
@@ -468,14 +513,23 @@ export function composeEvidence({
       (part) => part.captureIds ?? (part.captureId ? [part.captureId] : [])))].sort()),
     domainSupport: domainSupport ?? parts.find((part) => part.domainSupport)?.domainSupport ?? null,
     refs: Object.freeze(parts.flatMap((part) => [...part.refs])),
+    // The artifact is what earns E8, so it belongs in E8's identity: without
+    // it two different accounting sources collapsed to one evidenceId. Derived
+    // from the artifact's canonical FIELDS, not its object reference, so the
+    // identity stays deterministic across constructions.
     evidenceId: canonicalHash({
       evidenceClass, propositionKey, providers,
       components: parts.map((part) => part.evidenceId).sort(),
+      domainArtifact: domainArtifactIdentity,
     }),
     note,
     grantsAuthority: false,
     isRanked: EVIDENCE_CLASS_IS_RANKED,
   })
+  // Registered like a primitive, so a genuine E3 can later join an E7 and a
+  // genuine E5 can join an E6 — without the component check being relaxed.
+  CONSTRUCTED_EVIDENCE_RECORDS.add(composed)
+  return composed
 }
 
 export const DOMAIN_SUPPORT_KIND = 'M2H_DOMAIN_SUPPORT_ARTIFACT_V0'

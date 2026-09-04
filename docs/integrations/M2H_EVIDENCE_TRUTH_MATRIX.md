@@ -78,10 +78,33 @@ provider-scoped composite keeps its identity and cannot be silently flattened aw
 
   *What the WeakSet proves:* this JavaScript object passed our local validating
   constructor, in this process. **Not** that the citation is real, that a standard says
-  what the artifact claims, or that anything came from outside this runtime. An earlier version accepted any
+  what the artifact claims, or that anything came from outside this runtime.
+
+  An E8 **always states what it proves**: with no components the artifact is the evidence,
+  so the artifact's `propositionKey` becomes the record's — it can never be `null`. And
+  the artifact is part of E8's `evidenceId`, derived from its canonical fields
+  (`artifactId`, `domainCategory`, `citation`, `recordedAt`) rather than its object
+  reference, so two different accounting sources cannot collapse to one identity while
+  the identity stays deterministic across constructions. An earlier version accepted any
   truthy `domainSupport`, so `'trust me'` minted E8; the previous report calling E8
   unissuable was **wrong**. The contract now exists and **CP1 ships no instance**, so E8
   is genuinely unissuable here — asserted by a test rather than claimed in prose.
+
+### Constructor provenance — records, not shapes
+
+`kind: 'M2H_EVIDENCE_V0'` is public data anyone can type, so it proves nothing. Every
+record returned by `recordEvidence()` **and** `composeEvidence()` is registered in a
+module-private `WeakSet`, and composition requires **every component to be a registered
+object**. A plain literal wearing the right shape is refused; so is a spread copy of a
+genuine record, because a copy is a different object.
+
+Composed records are registered too, so a genuine E3 can later join an E7 and a genuine
+E5 can join an E6 — without the component check being relaxed for nesting.
+
+*What membership proves:* this JavaScript object passed our local validating constructor,
+in this process. **Not** that the provider emitted anything, that the documentation says
+what the record claims, that the citation is authentic, or that a sandbox capture ever
+happened. Two registries, one doctrine — the same one used for domain artifacts.
 
 Composed records **retain their components**, their `propositionKey`, their `providers`
 and their `captureIds`, so "which two providers?" and "which two captures?" have answers
