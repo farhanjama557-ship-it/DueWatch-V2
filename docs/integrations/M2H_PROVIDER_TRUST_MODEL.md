@@ -125,7 +125,38 @@ the reading and leaves the bytes alone.
 
 ## Collection eligibility is derived
 
-Never `balance > 0 → chase`. Truth **and** context **and** policy **and** freshness
-**and** conflict state produce `ELIGIBLE | LIMITED | HOLD | BLOCKED | REVIEW_REQUIRED |
-UNKNOWN` — and then G5 authority is a separate question, evaluated fresh at use.
+Never `balance > 0 → chase`. The public provider-driven path is closed:
+
+    constructed observation → constructed interpretation → resolved freshness
+      → admitted claim → governing T1 selection → collection decision
+
+`deriveCollectionEligibility` accepts only a locally registered `governingClaims()`
+selection for canonical AR balance. A plain `{ value: { balance } }`, a handwritten
+`{ state: 'FRESH' }`, or a selection-shaped object cannot substitute for that path.
+`preferFresher` applies the same rule: both the observation and the freshness result must
+be constructed locally, and the freshness result must be bound to that exact observation.
+
+Decision-sensitive context is explicit tri-state data. `true` and `false` are known facts;
+`null` is unknown. Credit and unapplied value likewise use a non-negative number when
+known and `null` when unknown. Missing dispute, payment-in-flight, credit, unapplied value,
+conflict or attribution knowledge never becomes its favourable value. Source health is
+not a parallel caller boolean: only an explicitly available, resolved freshness result in
+the governing selection can produce a fresh ledger. Omitted source availability resolves
+to `UNKNOWN`.
+
+Operating policy is a provider-neutral input with `ALLOWED | BLOCKED | UNKNOWN`. CP1
+validates that this input is explicit; it does not invent Company Brain policy evaluation.
+`UNKNOWN` fails closed. Only a positive fresh T1 balance, complete known-safe context and
+`ALLOWED` policy produce `ELIGIBLE`; every other combination produces a conservative
+existing outcome.
+
+G5 authority is still a separate question, evaluated fresh at use.
 `deriveCollectionEligibility` reports `authorityEvaluated: false` on every result.
+Repository-wide inspection found no consumer treating the eligibility object itself as an
+authenticated decision token, so CP1 does not add a decorative output registry. If a
+future runtime trusts a rehydrated decision token, that runtime must establish provenance
+at its own boundary rather than trusting the public `outcome` field.
+
+All WeakSet/WeakMap guarantees here are local and process-bound. They prove constructor
+and exact-object relationships, not that a provider was reachable or that the inputs came
+from an external system. Durable rehydration and external-origin verification remain CP6.

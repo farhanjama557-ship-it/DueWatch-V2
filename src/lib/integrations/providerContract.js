@@ -59,6 +59,12 @@ import {
  * external is true. CP6 owns rehydration.
  */
 const CONSTRUCTED_PROVIDER_CLAIM_RESULTS = new WeakSet()
+/** Results produced by governingClaims, not caller-shaped selection objects. */
+const CONSTRUCTED_GOVERNING_CLAIM_SELECTIONS = new WeakSet()
+
+export function isGoverningClaimSelection(candidate) {
+  return CONSTRUCTED_GOVERNING_CLAIM_SELECTIONS.has(candidate)
+}
 
 export const PROVIDER_CLAIM_ADMISSION = Object.freeze({
   ADMITTED: 'ADMITTED',
@@ -195,7 +201,7 @@ export function governingClaims(claims = [], truthDimension = null) {
     claim?.admitted && claim.claim.truthDimension === truthDimension)
   const governing = relevant.filter((claim) => freshnessMayGovern(claim.claim.freshness?.state))
   const withheld = relevant.filter((claim) => !freshnessMayGovern(claim.claim.freshness?.state))
-  return frozen({
+  const selection = frozen({
     truthDimension,
     governing: governing.map((claim) => claim.claim),
     withheld: withheld.map((claim) => ({
@@ -207,6 +213,8 @@ export function governingClaims(claims = [], truthDimension = null) {
     untrustedInputs,
     complete: withheld.length === 0 && untrustedInputs === 0,
   })
+  CONSTRUCTED_GOVERNING_CLAIM_SELECTIONS.add(selection)
+  return selection
 }
 
 export { CLAIM_SOURCE_OWNER }

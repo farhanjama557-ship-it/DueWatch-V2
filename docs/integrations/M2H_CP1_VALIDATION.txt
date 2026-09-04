@@ -2,23 +2,33 @@ M2H-CP1 — provider lab and integration trust kernel
 Base: 236a9dee0c5a4a6bb417db466e562ae3e3c4f950 (G8 freeze candidate)
 Branch: m2h/company-brain-integrations-cp1
 
-REPAIR (evidence closure + semantic equality) applied on top of 3d44efe.
+FINAL DECISION-BOUNDARY REPAIR applied directly on top of
+cb7cdffea0a340588b8e57f806f20545b8443d5a.
 
 TESTS
-  Provider Lab (8 suites)                  194 pass / 0 fail / 0 skipped
+  Provider Lab (9 suites)                  217 pass / 0 fail / 0 skipped
   G8 (5 suites incl. CP4 freeze matrix)    139 pass / 0 fail
   CP1/CP2 proactive                         66 pass / 0 fail
   Ask DW incl. G7                          386 pass / 0 fail
-  Company Brain G0-G7 + G5                 503 pass / 0 fail
+  G5 authority/delegation                   362 pass / 0 fail
+  Company Brain through G6                  490 pass / 0 fail / 14 skipped
   DW Intelligence / Phase2B                214 pass / 0 fail
-  M2D locks + replay                        24 pass / 0 fail
-  PostgreSQL RPC/RLS                        14 pass / 0 fail (real server)
-  FULL SUITE                              2103 pass / 0 fail / 0 skipped
+  M2D / System Brain                        32 pass / 0 fail
+  PostgreSQL RPC/RLS                         0 pass / 0 fail / 14 skipped
+    no PostgreSQL server available; skip reported explicitly by G6-RT0
+  FULL SUITE                              2113 pass / 0 fail / 14 skipped
+    2127 total
 
 MUTATIONS
-  116 applied, 116 killed, 0 survivors, none committed (40 original + 16
+  131 applied, 131 killed, 0 survivors, none committed (40 original + 16
   evidence closure + 14 proposition identity + 15 provider identity + 9
-  evidence constructor + 22 local trust boundary / replay).
+  evidence constructor + 22 local trust boundary / replay + 15 collection
+  decision-boundary mutations).
+  The 15 new mutations independently restored: public mayGovern trust; raw
+  ledger acceptance; handwritten FRESH acceptance; favourable defaults for
+  dispute, payment-in-flight, credit, unapplied value, conflict, attribution
+  and source availability; stale/unavailable eligibility; missing policy;
+  forged balance admission; and local authority evaluation. All were killed.
   Two initial survivors were real signals, not noise:
     P12 "stale accepted as fresh" — a genuine coverage gap in the age path of
         resolveFreshness; a test was added.
@@ -56,6 +66,15 @@ REPAIRED
   by a public field; governingClaims reports untrustedInputs. The replay engine
   is connection-scoped with no identity fallback, and a refetch obligation
   clears only on a successful authoritative read.
+  preferFresher now requires a constructed observation plus the exact bound
+  resolveFreshness result. Source availability must be explicit for FRESH.
+  governingClaims selections have private local provenance. Collection
+  eligibility accepts only a genuine governing T1 selection and one explicit
+  tri-state context envelope; missing facts remain unknown. Operating policy
+  is explicit ALLOWED/BLOCKED/UNKNOWN and is not G5 authority. G5 is still
+  unevaluated and required fresh at use. No current production consumer trusts
+  an eligibility result as an authenticated token, so no output registry was
+  added mechanically.
 
 BUILD    npm run build — green
 DIFF     git diff --check — clean
@@ -71,5 +90,5 @@ SCANS    credentials/tokens/OAuth secrets — clean
          M2I / UI changes — none
 
 PERSISTENCE  No migration, no schema, no table. Kernel is pure and local.
-NETWORK      No outbound access in this environment; all provider research
-             recorded as PENDING at evidence class E0. No E1/E2/E3 claimed.
+NETWORK      No provider network call was made; all provider research remains
+             PENDING at evidence class E0. No E1/E2/E3 claimed.

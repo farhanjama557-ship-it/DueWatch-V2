@@ -13,7 +13,7 @@ import {
   PROVIDER_TRUTH_DIMENSION as T, CLAIM_SOURCE_OWNER as OWNER, classifyDisagreement,
   CONTRADICTION_MARKER,
 } from '../../src/lib/integrations/providerTruthModel.js'
-import { FRESHNESS_STATE, invalidationScope } from '../../src/lib/integrations/providerFreshness.js'
+import { invalidationScope } from '../../src/lib/integrations/providerFreshness.js'
 import { PROVIDER_CLAIM_ADMISSION, admitProviderClaim } from '../../src/lib/integrations/providerContract.js'
 import {
   COLLECTION_ELIGIBILITY, deriveCollectionEligibility,
@@ -24,7 +24,7 @@ import {
   SCENARIOS, PROVIDER_LAB_SEED, LAB_TENANT, LAB_TENANT_B, LAB_ACCOUNT, LAB_ACCOUNT_B, LAB_NOW,
   MOCK_LEDGER_ADAPTER, MOCK_PROCESSOR_ADAPTER, MOCK_COMMS_ADAPTER, MOCK_ADAPTERS,
   observeThrough, createReplayEngine, generateAdversarialCompany, runDifferential,
-  uglyScenario, providerFixture,
+  uglyScenario, providerFixture, governingLedgerSelection, knownSafeCollectionContext,
 } from './harness.mjs'
 
 console.log(`# providerLab seed=${PROVIDER_LAB_SEED}`)
@@ -34,8 +34,10 @@ const LAB_CONNECTION = Object.freeze({
   tenantId: LAB_TENANT, provider: MOCK_LEDGER_ADAPTER.provider, providerAccountId: LAB_ACCOUNT,
 })
 
-const FRESH = { state: FRESHNESS_STATE.FRESH, mayGovern: true }
-const ledgerClaim = (balance) => ({ value: { balance } })
+const eligibility = (balance, context = {}, ledger = {}) => deriveCollectionEligibility({
+  governingLedger: governingLedgerSelection({ balance, ...ledger }),
+  context: knownSafeCollectionContext(context),
+})
 
 // ── Corpus shape ─────────────────────────────────────────────────────────────
 
@@ -62,11 +64,11 @@ test('every scenario expects NO authority effect', () => {
 // ── Individual scenarios ─────────────────────────────────────────────────────
 
 test('S001-S003 open, fully paid and partially paid invoices', () => {
-  assert.equal(deriveCollectionEligibility({ ledger: ledgerClaim(1000), ledgerFreshness: FRESH }).outcome,
+  assert.equal(eligibility(1000).outcome,
     COLLECTION_ELIGIBILITY.ELIGIBLE)
-  assert.equal(deriveCollectionEligibility({ ledger: ledgerClaim(0), ledgerFreshness: FRESH }).outcome,
+  assert.equal(eligibility(0).outcome,
     COLLECTION_ELIGIBILITY.BLOCKED)
-  assert.equal(deriveCollectionEligibility({ ledger: ledgerClaim(400), ledgerFreshness: FRESH }).outcome,
+  assert.equal(eligibility(400).outcome,
     COLLECTION_ELIGIBILITY.ELIGIBLE)
 })
 
@@ -76,7 +78,8 @@ test('S004 a payment ATTEMPT is not a receipt and holds collection', () => {
   })
   assert.equal(interpretation.truthDimension, T.T2_PAYMENT_ATTEMPT_STATE)
   assert.equal(deriveCollectionEligibility({
-    ledger: ledgerClaim(1000), ledgerFreshness: FRESH, paymentInFlight: true,
+    governingLedger: governingLedgerSelection({ balance: 1000 }),
+    context: knownSafeCollectionContext({ paymentInFlight: true }),
   }).outcome, COLLECTION_ELIGIBILITY.HOLD)
 })
 
@@ -88,13 +91,15 @@ test('S005 a receipt does not imply the invoice has been allocated', () => {
   assert.notEqual(interpretation.truthDimension, T.T4_PAYMENT_CREDIT_ALLOCATION_STATE)
   // Ledger still open while the receipt exists: unapplied value, not a lie.
   assert.equal(deriveCollectionEligibility({
-    ledger: ledgerClaim(1000), ledgerFreshness: FRESH, unappliedValue: 1000,
+    governingLedger: governingLedgerSelection({ balance: 1000 }),
+    context: knownSafeCollectionContext({ unappliedValue: 1000 }),
   }).outcome, COLLECTION_ELIGIBILITY.REVIEW_REQUIRED)
 })
 
 test('S006/S007 credit and unapplied value require review, never a silent chase', () => {
   assert.equal(deriveCollectionEligibility({
-    ledger: ledgerClaim(1000), ledgerFreshness: FRESH, availableCredit: 1000,
+    governingLedger: governingLedgerSelection({ balance: 1000 }),
+    context: knownSafeCollectionContext({ availableCredit: 1000 }),
   }).outcome, COLLECTION_ELIGIBILITY.REVIEW_REQUIRED)
 })
 
@@ -106,13 +111,18 @@ test('S008 a processor receipt and an open AR balance are NOT a contradiction', 
 })
 
 test('S009/S010/S011 stale, unavailable and revoked are three different answers', () => {
-  assert.equal(deriveCollectionEligibility({
-    ledger: ledgerClaim(1000), ledgerFreshness: { state: FRESHNESS_STATE.STALE },
+  assert.equal(eligibility(1000, {}, {
+    observedAt: '2020-01-01T00:00:00Z',
+    freshnessContext: { now: LAB_NOW, maxAgeMs: 1000 },
   }).outcome, COLLECTION_ELIGIBILITY.HOLD)
-  assert.equal(deriveCollectionEligibility({ sourceAvailable: false }).outcome,
+  assert.equal(eligibility(1000, {}, {
+    freshnessContext: { sourceAvailable: false },
+  }).outcome,
     COLLECTION_ELIGIBILITY.UNKNOWN)
   // Revoked reaches the same place by the same route: no readable source.
-  assert.equal(deriveCollectionEligibility({ sourceAvailable: false, ledger: null }).outcome,
+  assert.equal(eligibility(1000, {}, {
+    freshnessContext: { sourceAvailable: false },
+  }).outcome,
     COLLECTION_ELIGIBILITY.UNKNOWN)
 })
 
@@ -134,13 +144,14 @@ test('S017 a customer email claiming payment leaves the ledger untouched', () =>
   assert.equal(interpretation.sourceOwner, OWNER.COMMUNICATION_SOURCE)
   assert.equal(admitted.admitted, true)
   // The ledger still governs, and it still says money is owed.
-  assert.equal(deriveCollectionEligibility({ ledger: ledgerClaim(1000), ledgerFreshness: FRESH }).outcome,
+  assert.equal(eligibility(1000).outcome,
     COLLECTION_ELIGIBILITY.ELIGIBLE)
 })
 
 test('S018 an active dispute blocks', () => {
   assert.equal(deriveCollectionEligibility({
-    ledger: ledgerClaim(1000), ledgerFreshness: FRESH, disputeActive: true,
+    governingLedger: governingLedgerSelection({ balance: 1000 }),
+    context: knownSafeCollectionContext({ disputeActive: true }),
   }).outcome, COLLECTION_ELIGIBILITY.BLOCKED)
 })
 
@@ -158,7 +169,8 @@ test('S019 a wrong-tenant object fails closed', () => {
 
 test('S020 a same-name client collision leaves attribution unknown', () => {
   assert.equal(deriveCollectionEligibility({
-    ledger: ledgerClaim(1000), ledgerFreshness: FRESH, attributionKnown: false,
+    governingLedger: governingLedgerSelection({ balance: 1000 }),
+    context: knownSafeCollectionContext({ attributionKnown: false }),
   }).outcome, COLLECTION_ELIGIBILITY.REVIEW_REQUIRED)
 })
 
@@ -275,12 +287,18 @@ test('every generated company yields a defensible eligibility for every invoice'
     const company = generateAdversarialCompany(seed)
     for (const invoice of company.invoices) {
       const result = deriveCollectionEligibility({
-        ledger: ledgerClaim(invoice.balance),
-        ledgerFreshness: invoice.ledgerStale ? { state: FRESHNESS_STATE.STALE } : FRESH,
-        paymentInFlight: invoice.paymentInFlight,
-        disputeActive: invoice.disputeActive,
-        availableCredit: invoice.availableCredit,
-        sourceAvailable: invoice.sourceAvailable,
+        governingLedger: governingLedgerSelection({
+          balance: invoice.balance,
+          observedAt: invoice.ledgerStale ? '2020-01-01T00:00:00Z' : LAB_NOW,
+          freshnessContext: invoice.sourceAvailable
+            ? { now: LAB_NOW, maxAgeMs: 86_400_000 }
+            : { sourceAvailable: false },
+        }),
+        context: knownSafeCollectionContext({
+          paymentInFlight: invoice.paymentInFlight,
+          disputeActive: invoice.disputeActive,
+          availableCredit: invoice.availableCredit,
+        }),
       })
       assert.ok(known.has(result.outcome), `seed ${seed} invoice ${invoice.id}`)
       assert.equal(result.authorityEvaluated, false)

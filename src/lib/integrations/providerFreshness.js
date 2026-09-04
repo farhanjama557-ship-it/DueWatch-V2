@@ -43,6 +43,8 @@
  * PROCESS-BOUND: this membership does not survive serialisation, so CP6 will
  * need its own verification boundary when rehydrating stored freshness.
  */
+import { isConstructedProviderObservation } from './providerObservation.js'
+
 const CONSTRUCTED_FRESHNESS_RESULTS = new WeakSet()
 /** freshness result -> the exact observation it was resolved for. */
 const FRESHNESS_TO_OBSERVATION = new WeakMap()
@@ -166,7 +168,7 @@ export function invalidationScope(mutationType) {
  */
 export function resolveFreshness({
   observation = null, now = null, maxAgeMs = null,
-  sourceAvailable = true, invalidatedAt = null, refetchRequired = false,
+  sourceAvailable = null, invalidatedAt = null, refetchRequired = false,
 } = {}) {
   const mark = (state, reason) => {
     const result = Object.freeze({ state, reason, mayGovern: freshnessMayGovern(state) })
@@ -189,6 +191,10 @@ export function resolveFreshness({
     return mark(FRESHNESS_STATE.REFETCH_REQUIRED,
       'Something changed. The authoritative source must be re-read before this is used.')
   }
+  if (sourceAvailable !== true) {
+    return mark(FRESHNESS_STATE.UNKNOWN,
+      'Source availability was not established; freshness cannot be inferred.')
+  }
   const observedAt = Date.parse(observation.observedAt ?? '')
   const at = Date.parse(now ?? '')
   if (!Number.isFinite(observedAt) || !Number.isFinite(at) || maxAgeMs == null) {
@@ -208,7 +214,17 @@ export function resolveFreshness({
  * which source owns the dimension, not a licence for last month's copy of it.
  */
 export function preferFresher(a, b) {
-  const governs = (candidate) => candidate?.freshness?.mayGovern === true
+  // This selector participates in deciding which reading governs, so its
+  // inputs must carry the same local provenance as claim admission. A public
+  // `mayGovern: true` field is not freshness proof, and a resolver result for
+  // another (or caller-authored) observation is not transferable.
+  const governs = (candidate) => {
+    const observation = candidate?.observation
+    const freshness = candidate?.freshness
+    return isConstructedProviderObservation(observation) &&
+      freshnessBelongsToObservation(freshness, observation) &&
+      freshnessMayGovern(freshness.state)
+  }
   if (governs(a) && !governs(b)) return a
   if (governs(b) && !governs(a)) return b
   if (!governs(a) && !governs(b)) return null

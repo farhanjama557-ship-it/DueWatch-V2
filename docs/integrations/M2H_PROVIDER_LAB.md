@@ -9,6 +9,10 @@ Deterministic, local, no credentials. CP1 builds the harness so CP2–CP5 become
 
 CP1 implements everything above the "interactive E2E" line, locally.
 
+The current lab contains nine suites and 217 deterministic tests. The decision-boundary
+suite includes a 21,870-case cross-product over balance, freshness, context and policy;
+`ELIGIBLE` is reachable only in the single explicitly complete safe subset.
+
 ## Canonical scenario corpus (S001–S020)
 
 Provider-neutral by construction — a test asserts no provider field name appears in the

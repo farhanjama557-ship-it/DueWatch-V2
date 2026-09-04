@@ -58,7 +58,7 @@ const genuineInterpretation = (observation) => interpretObservation({
   subject: 'inv-1', value: { balance: 1000 },
 })
 const freshFor = (observation) => resolveFreshness({
-  observation, now: LAB_NOW, maxAgeMs: 86_400_000,
+  observation, now: LAB_NOW, maxAgeMs: 86_400_000, sourceAvailable: true,
 })
 /** A plain object wearing the full public observation shape. */
 const forgedObservation = () => ({
@@ -244,7 +244,9 @@ test('10 a genuinely resolved FRESH result is accepted and governs', () => {
 test('11 a genuinely resolved STALE result is admitted but never governs', () => {
   const observation = genuineObservation({ observedAt: '2020-01-01T00:00:00Z' })
   const interpretation = genuineInterpretation(observation)
-  const freshness = resolveFreshness({ observation, now: LAB_NOW, maxAgeMs: 1000 })
+  const freshness = resolveFreshness({
+    observation, now: LAB_NOW, maxAgeMs: 1000, sourceAvailable: true,
+  })
   assert.equal(freshness.state, FRESHNESS_STATE.STALE)
   const result = admitProviderClaim({
     tenantId: LAB_TENANT, provider: PROVIDER, providerAccountId: LAB_ACCOUNT,

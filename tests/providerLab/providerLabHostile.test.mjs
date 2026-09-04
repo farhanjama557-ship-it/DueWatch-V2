@@ -44,7 +44,7 @@ import { buildDwExecutionStatement } from '../../src/lib/dwIntelligence/dwExecut
 import {
   LAB_TENANT, LAB_TENANT_B, LAB_ACCOUNT, LAB_ACCOUNT_B, LAB_NOW,
   MOCK_LEDGER_ADAPTER, MOCK_PROCESSOR_ADAPTER, MOCK_COMMS_ADAPTER,
-  observeThrough, createReplayEngine,
+  observeThrough, createReplayEngine, governingLedgerSelection, knownSafeCollectionContext,
 } from './harness.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
@@ -53,8 +53,6 @@ const read = (relative) => readFileSync(path.join(root, relative), 'utf8')
 const LAB_CONNECTION = Object.freeze({
   tenantId: LAB_TENANT, provider: MOCK_LEDGER_ADAPTER.provider, providerAccountId: LAB_ACCOUNT,
 })
-
-const FRESH = { state: FRESHNESS_STATE.FRESH, mayGovern: true }
 
 const INTEGRATION_MODULES = [
   'src/lib/integrations/providerTruthModel.js',
@@ -161,15 +159,20 @@ test('H9 two observations in different dimensions are not automatically a confli
 
 // 10-12 — freshness beats authority-of-source, and unknown is not empty
 test('H10 a stale observation cannot beat a fresh one by looking authoritative', () => {
-  const staleLedger = {
-    observation: { observedAt: '2020-01-01T00:00:00Z' },
-    freshness: { state: FRESHNESS_STATE.STALE, mayGovern: false },
-    sourceOwner: OWNER.LEDGER_SOURCE,
-  }
-  const freshProcessor = {
-    observation: { observedAt: LAB_NOW },
-    freshness: FRESH, sourceOwner: OWNER.PAYMENT_PROCESSOR,
-  }
+  const staleObservation = observeThrough(MOCK_LEDGER_ADAPTER, {
+    payload: MOCK_LEDGER_ADAPTER.emit({ invoiceId: 'old', balance: 1 }),
+    observedAt: '2020-01-01T00:00:00Z', externalObjectId: 'old',
+  }).observation
+  const freshObservation = observeThrough(MOCK_PROCESSOR_ADAPTER, {
+    payload: MOCK_PROCESSOR_ADAPTER.emit({ invoiceId: 'new', amountMinor: 100 }),
+    externalObjectId: 'new',
+  }).observation
+  const staleLedger = { observation: staleObservation, freshness: resolveFreshness({
+    observation: staleObservation, now: LAB_NOW, maxAgeMs: 1000, sourceAvailable: true,
+  }), sourceOwner: OWNER.LEDGER_SOURCE }
+  const freshProcessor = { observation: freshObservation, freshness: resolveFreshness({
+    observation: freshObservation, now: LAB_NOW, maxAgeMs: 1000, sourceAvailable: true,
+  }), sourceOwner: OWNER.PAYMENT_PROCESSOR }
   assert.equal(preferFresher(staleLedger, freshProcessor), freshProcessor)
 })
 
@@ -187,7 +190,10 @@ test('H12 SOURCE_UNAVAILABLE is not empty, zero or "no issue"', () => {
   const health = describeProviderHealth({ connectionState: PROVIDER_CONNECTION_STATE.ERROR })
   assert.equal(health.sourceAvailable, false)
   assert.equal(health.absenceOfDataMeansUnknown, true)
-  const eligibility = deriveCollectionEligibility({ sourceAvailable: false })
+  const eligibility = deriveCollectionEligibility({
+    governingLedger: governingLedgerSelection({ freshnessContext: { sourceAvailable: false } }),
+    context: knownSafeCollectionContext(),
+  })
   assert.equal(eligibility.outcome, COLLECTION_ELIGIBILITY.UNKNOWN)
   assert.notEqual(eligibility.outcome, COLLECTION_ELIGIBILITY.BLOCKED)
   assert.notEqual(eligibility.outcome, COLLECTION_ELIGIBILITY.ELIGIBLE)
@@ -248,7 +254,8 @@ test('H17 a wrong provider-account identity fails closed', () => {
 
 test('H18 a same-name client collision stays unresolved', () => {
   const result = deriveCollectionEligibility({
-    ledger: { value: { balance: 1000 } }, ledgerFreshness: FRESH, attributionKnown: false,
+    governingLedger: governingLedgerSelection({ balance: 1000 }),
+    context: knownSafeCollectionContext({ attributionKnown: false }),
   })
   assert.equal(result.outcome, COLLECTION_ELIGIBILITY.REVIEW_REQUIRED)
   assert.ok(result.reasons.includes('ATTRIBUTION_UNKNOWN'))

@@ -37,7 +37,10 @@ import {
 } from '../../src/lib/integrations/collectionEligibility.js'
 import { createClaim } from '../../src/lib/companyBrain/index.js'
 
-import { LAB_TENANT, LAB_ACCOUNT, LAB_NOW, MOCK_LEDGER_ADAPTER, observeThrough } from './harness.mjs'
+import {
+  LAB_TENANT, LAB_ACCOUNT, LAB_NOW, MOCK_LEDGER_ADAPTER, observeThrough,
+  governingLedgerSelection, knownSafeCollectionContext,
+} from './harness.mjs'
 
 // ── Truth dimensions: reused, not redeclared ─────────────────────────────────
 
@@ -208,12 +211,12 @@ test('an observation older than its window is STALE, and a recent one is FRESH',
   const hour = 3_600_000
   const old = { observedAt: '2026-09-01T00:00:00Z' }
   const recent = { observedAt: '2026-09-01T11:30:00Z' }
-  assert.equal(resolveFreshness({ observation: old, now: LAB_NOW, maxAgeMs: hour }).state,
+  assert.equal(resolveFreshness({ observation: old, now: LAB_NOW, maxAgeMs: hour, sourceAvailable: true }).state,
     FRESHNESS_STATE.STALE)
-  assert.equal(resolveFreshness({ observation: old, now: LAB_NOW, maxAgeMs: hour }).mayGovern, false)
-  assert.equal(resolveFreshness({ observation: recent, now: LAB_NOW, maxAgeMs: hour }).state,
+  assert.equal(resolveFreshness({ observation: old, now: LAB_NOW, maxAgeMs: hour, sourceAvailable: true }).mayGovern, false)
+  assert.equal(resolveFreshness({ observation: recent, now: LAB_NOW, maxAgeMs: hour, sourceAvailable: true }).state,
     FRESHNESS_STATE.FRESH)
-  assert.equal(resolveFreshness({ observation: recent, now: LAB_NOW, maxAgeMs: hour }).mayGovern, true)
+  assert.equal(resolveFreshness({ observation: recent, now: LAB_NOW, maxAgeMs: hour, sourceAvailable: true }).mayGovern, true)
   // No window and no comparable timestamps means UNKNOWN, never FRESH.
   assert.equal(resolveFreshness({ observation: recent, now: LAB_NOW }).state, FRESHNESS_STATE.UNKNOWN)
 })
@@ -243,10 +246,22 @@ test('an unrecognised mutation is treated as maximally invalidating, not harmles
 })
 
 test('a stale observation never beats a fresh one, however authoritative its source', () => {
-  const stale = { observation: { observedAt: '2020-01-01T00:00:00Z' },
-    freshness: { state: FRESHNESS_STATE.STALE, mayGovern: false } }
-  const fresh = { observation: { observedAt: LAB_NOW },
-    freshness: { state: FRESHNESS_STATE.FRESH, mayGovern: true } }
+  const staleObservation = createProviderObservation({
+    tenantId: LAB_TENANT, provider: 'mock_ledger', providerAccountId: LAB_ACCOUNT,
+    objectType: 'Invoice', externalObjectId: 'stale', observedAt: '2020-01-01T00:00:00Z',
+    rawPayload: { Id: 'stale', Balance: 1 },
+  })
+  const freshObservation = createProviderObservation({
+    tenantId: LAB_TENANT, provider: 'mock_ledger', providerAccountId: LAB_ACCOUNT,
+    objectType: 'Invoice', externalObjectId: 'fresh', observedAt: LAB_NOW,
+    rawPayload: { Id: 'fresh', Balance: 1 },
+  })
+  const stale = { observation: staleObservation, freshness: resolveFreshness({
+    observation: staleObservation, now: LAB_NOW, maxAgeMs: 1000, sourceAvailable: true,
+  }) }
+  const fresh = { observation: freshObservation, freshness: resolveFreshness({
+    observation: freshObservation, now: LAB_NOW, maxAgeMs: 1000, sourceAvailable: true,
+  }) }
   assert.equal(preferFresher(stale, fresh), fresh)
   assert.equal(preferFresher(fresh, stale), fresh)
   assert.equal(preferFresher(stale, stale), null)
@@ -348,23 +363,34 @@ test('governing claims exclude and REPORT everything non-fresh', () => {
 // ── Collection eligibility ───────────────────────────────────────────────────
 
 test('eligibility is never derived from balance alone', () => {
-  const ledger = { value: { balance: 1000 } }
-  const fresh = { state: FRESHNESS_STATE.FRESH, mayGovern: true }
-  const base = { ledger, ledgerFreshness: fresh }
+  const base = {
+    governingLedger: governingLedgerSelection({ balance: 1000 }),
+    context: knownSafeCollectionContext(),
+  }
   assert.equal(deriveCollectionEligibility(base).outcome, COLLECTION_ELIGIBILITY.ELIGIBLE)
-  assert.equal(deriveCollectionEligibility({ ...base, disputeActive: true }).outcome, COLLECTION_ELIGIBILITY.BLOCKED)
-  assert.equal(deriveCollectionEligibility({ ...base, paymentInFlight: true }).outcome, COLLECTION_ELIGIBILITY.HOLD)
-  assert.equal(deriveCollectionEligibility({ ...base, availableCredit: 50 }).outcome, COLLECTION_ELIGIBILITY.REVIEW_REQUIRED)
-  assert.equal(deriveCollectionEligibility({ ...base, sourceConflict: true }).outcome, COLLECTION_ELIGIBILITY.REVIEW_REQUIRED)
-  assert.equal(deriveCollectionEligibility({ ...base, attributionKnown: false }).outcome, COLLECTION_ELIGIBILITY.REVIEW_REQUIRED)
-  assert.equal(deriveCollectionEligibility({ ...base, sourceAvailable: false }).outcome, COLLECTION_ELIGIBILITY.UNKNOWN)
-  assert.equal(deriveCollectionEligibility({ ledger, ledgerFreshness: { state: FRESHNESS_STATE.STALE } }).outcome,
+  assert.equal(deriveCollectionEligibility({ ...base, context: knownSafeCollectionContext({ disputeActive: true }) }).outcome, COLLECTION_ELIGIBILITY.BLOCKED)
+  assert.equal(deriveCollectionEligibility({ ...base, context: knownSafeCollectionContext({ paymentInFlight: true }) }).outcome, COLLECTION_ELIGIBILITY.HOLD)
+  assert.equal(deriveCollectionEligibility({ ...base, context: knownSafeCollectionContext({ availableCredit: 50 }) }).outcome, COLLECTION_ELIGIBILITY.REVIEW_REQUIRED)
+  assert.equal(deriveCollectionEligibility({ ...base, context: knownSafeCollectionContext({ sourceConflict: true }) }).outcome, COLLECTION_ELIGIBILITY.REVIEW_REQUIRED)
+  assert.equal(deriveCollectionEligibility({ ...base, context: knownSafeCollectionContext({ attributionKnown: false }) }).outcome, COLLECTION_ELIGIBILITY.REVIEW_REQUIRED)
+  assert.equal(deriveCollectionEligibility({
+    ...base,
+    governingLedger: governingLedgerSelection({ freshnessContext: { sourceAvailable: false } }),
+  }).outcome, COLLECTION_ELIGIBILITY.UNKNOWN)
+  assert.equal(deriveCollectionEligibility({
+    ...base,
+    governingLedger: governingLedgerSelection({
+      observedAt: '2020-01-01T00:00:00Z',
+      freshnessContext: { now: LAB_NOW, maxAgeMs: 1000 },
+    }),
+  }).outcome,
     COLLECTION_ELIGIBILITY.HOLD)
 })
 
 test('eligibility never evaluates authority and says so', () => {
   const result = deriveCollectionEligibility({
-    ledger: { value: { balance: 1000 } }, ledgerFreshness: { state: FRESHNESS_STATE.FRESH, mayGovern: true },
+    governingLedger: governingLedgerSelection({ balance: 1000 }),
+    context: knownSafeCollectionContext(),
   })
   assert.equal(result.authorityEvaluated, false)
   assert.equal(result.authorityOwner, 'G5')
@@ -373,7 +399,10 @@ test('eligibility never evaluates authority and says so', () => {
 })
 
 test('an unreadable ledger yields UNKNOWN, never "nothing outstanding"', () => {
-  const result = deriveCollectionEligibility({ sourceAvailable: false })
+  const result = deriveCollectionEligibility({
+    governingLedger: governingLedgerSelection({ freshnessContext: { sourceAvailable: false } }),
+    context: knownSafeCollectionContext(),
+  })
   assert.equal(result.outcome, COLLECTION_ELIGIBILITY.UNKNOWN)
   assert.ok(result.reasons.includes(ELIGIBILITY_REASON.LEDGER_UNAVAILABLE))
   assert.equal(result.reasons.includes(ELIGIBILITY_REASON.NOTHING_OUTSTANDING), false)

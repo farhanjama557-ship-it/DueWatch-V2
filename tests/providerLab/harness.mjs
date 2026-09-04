@@ -24,7 +24,12 @@ import {
 import {
   FRESHNESS_STATE, invalidationScope, resolveFreshness,
 } from '../../src/lib/integrations/providerFreshness.js'
-import { admitProviderClaim } from '../../src/lib/integrations/providerContract.js'
+import {
+  admitProviderClaim, governingClaims,
+} from '../../src/lib/integrations/providerContract.js'
+import {
+  COLLECTION_POLICY_DECISION, createCollectionDecisionContext,
+} from '../../src/lib/integrations/collectionEligibility.js'
 
 /** The documented CP1 seed, carried forward from prior adversarial work. */
 export const PROVIDER_LAB_SEED = 829144
@@ -154,10 +159,38 @@ export function observeThrough(adapter, {
       tenantId, provider: adapter.provider, providerAccountId,
       observation, interpretation, evidence,
       freshness: resolveFreshness({
-        observation, now: observedAt, maxAgeMs: 86_400_000, ...(freshnessContext ?? {}),
+        observation, now: observedAt, maxAgeMs: 86_400_000,
+        sourceAvailable: true, ...(freshnessContext ?? {}),
       }),
     }),
   }
+}
+
+/** Genuine T1 selection through the full local provider trust chain. */
+export function governingLedgerSelection({
+  balance = 1000, subject = 'inv-1', observedAt = LAB_NOW,
+  freshnessContext = null, providerAccountId = LAB_ACCOUNT,
+} = {}) {
+  const { admitted } = observeThrough(MOCK_LEDGER_ADAPTER, {
+    payload: MOCK_LEDGER_ADAPTER.emit({ invoiceId: subject, balance }),
+    providerAccountId, observedAt, externalObjectId: subject,
+    freshnessContext,
+  })
+  return governingClaims([admitted], T.T1_INVOICE_AR_STATE)
+}
+
+/** Every decision-sensitive context fact is explicitly known and favourable. */
+export function knownSafeCollectionContext(overrides = {}) {
+  return createCollectionDecisionContext({
+    disputeActive: false,
+    paymentInFlight: false,
+    availableCredit: 0,
+    unappliedValue: 0,
+    sourceConflict: false,
+    attributionKnown: true,
+    policyDecision: COLLECTION_POLICY_DECISION.ALLOWED,
+    ...overrides,
+  })
 }
 
 // ── Canonical scenario corpus (provider-neutral) ─────────────────────────────
