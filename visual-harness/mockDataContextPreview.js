@@ -1,1 +1,5 @@
-export * from './mockDataContext.js'\n\nexport function DataProvider({ children }) {\n  return children\n}\n
+export * from './mockDataContext.js'
+
+export function DataProvider({ children }) {
+  return children
+}
