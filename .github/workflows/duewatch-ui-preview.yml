@@ -1,0 +1,51 @@
+name: DueWatch UI Preview
+
+on:
+  push:
+    branches:
+      - preview/ui-v1-product-integration
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-preview:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out preview source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Materialize exact frozen UI overlay
+        shell: bash
+        run: |
+          cat preview-overlay/part_* | base64 -d > /tmp/ui-overlay.tgz
+          tar -xzf /tmp/ui-overlay.tgz -C .
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Build inert DueWatch UI preview
+        run: npx vite build --config visual-harness/vite.config.js --base ./ --outDir ../dist-preview
+
+      - name: Publish static preview branch
+        shell: bash
+        run: |
+          cp -R dist-preview /tmp/duewatch-preview
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout --orphan preview-ui-build
+          git rm -rf . || true
+          cp -R /tmp/duewatch-preview/. .
+          touch .nojekyll
+          git add -A
+          git commit -m "Build DueWatch V1 UI preview"
+          git push --force origin HEAD:preview/ui-v1-pages
