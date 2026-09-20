@@ -333,8 +333,17 @@ grant select, insert, update, delete on public.reminders to authenticated;
 grant select, insert, update, delete on public.events to authenticated;
 grant select, insert, update, delete on public.awaiting_signature to authenticated;
 grant select, insert, update, delete on public.autopilot_runs to authenticated;
-grant select, insert, update, delete on public.autopilot_settings to authenticated;
-grant select, insert, update, delete on public.autopilot_rules to authenticated;
+
+do $optional_browser_grants$
+begin
+  if to_regclass('public.autopilot_settings') is not null then
+    execute 'grant select, insert, update, delete on public.autopilot_settings to authenticated';
+  end if;
+  if to_regclass('public.autopilot_rules') is not null then
+    execute 'grant select, insert, update, delete on public.autopilot_rules to authenticated';
+  end if;
+end
+$optional_browser_grants$;
 
 -- ---------------------------------------------------------------------
 -- Remove duplicate legacy RLS policies and recreate core policies with
