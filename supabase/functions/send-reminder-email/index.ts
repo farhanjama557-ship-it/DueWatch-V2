@@ -25,6 +25,40 @@ const MAX_SUBJECT_CHARS = 180
 const MANUAL_ACTION_TYPE = 'manual_reminder_email'
 const MANUAL_DEDUPE_WINDOW_MS = 5 * 60 * 1000
 
+type AnyRecord = Record<string, any>
+
+type ApprovalSendArgs = {
+  admin: any
+  userId: string
+  awaitingSignatureId: string
+  editedBody: string | null
+  req: Request
+}
+
+type ApprovalIoArgs = {
+  admin: any
+  userId: string
+  row: AnyRecord
+}
+
+function statusFromError(error: unknown) {
+  if (error && typeof error === 'object' && 'status' in error) {
+    return Number((error as { status?: unknown }).status) || 400
+  }
+  return 400
+}
+
+function messageFromError(error: unknown, fallback: string) {
+  return error instanceof Error && error.message ? error.message : fallback
+}
+
+function codeFromError(error: unknown) {
+  if (error && typeof error === 'object' && 'code' in error) {
+    return String((error as { code?: unknown }).code || 'unknown')
+  }
+  return error instanceof Error ? error.name : 'unknown'
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return handleCorsPreflight(req)
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405, req)
@@ -66,15 +100,15 @@ Deno.serve(async (req) => {
       )
     }
 
-    let requestBody
+    let requestBody: AnyRecord
     try {
       requestBody = await readBoundedJson(req, MAX_REQUEST_BYTES)
     } catch (error) {
-      const status = Number(error?.status) || 400
+      const status = statusFromError(error)
       return json(
         {
           error: status === 413 ? 'Request is too large.' : 'Request body must be valid JSON.',
-          code: error?.message || 'INVALID_REQUEST',
+          code: messageFromError(error, 'INVALID_REQUEST'),
         },
         status,
         req
@@ -128,10 +162,11 @@ Deno.serve(async (req) => {
       return json({ error: 'Not authorized for this invoice' }, 403, req)
     }
 
-    const to = invoice.clients?.email
+    const client = Array.isArray(invoice.clients) ? invoice.clients[0] : invoice.clients
+    const to = client?.email
     if (!to) {
       return json(
-        { error: `${invoice.clients?.name || 'This client'} has no email on file.` },
+        { error: `${client?.name || 'This client'} has no email on file.` },
         422,
         req
       )
@@ -182,6 +217,7 @@ Deno.serve(async (req) => {
       subject,
       text: body,
       idempotencyKey,
+      from: undefined,
     })
 
     if (sendResult.error) {
@@ -281,12 +317,12 @@ Deno.serve(async (req) => {
       req
     )
   } catch (error) {
-    console.error('send-reminder-email failed', error?.code || error?.name || 'unknown')
+    console.error('send-reminder-email failed', codeFromError(error))
     return json({ error: 'Unexpected reminder delivery error.' }, 500, req)
   }
 })
 
-function manualClaimMessage(status) {
+function manualClaimMessage(status: unknown) {
   if (status === 'sent') return 'This reminder was already sent.'
   if (status === 'uncertain') {
     return 'A prior attempt has an uncertain provider outcome. DueWatch will not risk sending a duplicate.'
@@ -298,7 +334,7 @@ function manualClaimMessage(status) {
   return 'This reminder action is already being handled.'
 }
 
-async function handleApprovalSend({ admin, userId, awaitingSignatureId, editedBody, req }) {
+async function handleApprovalSend({ admin, userId, awaitingSignatureId, editedBody, req }: ApprovalSendArgs) {
   const { data: row, error: rowErr } = await admin
     .from('awaiting_signature')
     .select('id, user_id, invoice_id, status, draft_content, ai_reason, ai_context')
@@ -351,7 +387,7 @@ async function handleApprovalSend({ admin, userId, awaitingSignatureId, editedBo
       io,
     })
   } catch (error) {
-    console.error('approval send failed', error?.code || error?.name || 'unknown')
+    console.error('approval send failed', codeFromError(error))
     return json(
       {
         error:
@@ -384,19 +420,19 @@ async function handleApprovalSend({ admin, userId, awaitingSignatureId, editedBo
   }
 }
 
-function buildApprovalIo({ admin, userId, row }) {
+function buildApprovalIo({ admin, userId, row }: ApprovalIoArgs) {
   const nowIso = () => new Date().toISOString()
 
   return {
-    async fetchAuthorityInputs({ invoiceId }) {
-      return fetchAuthorityInputs(admin, {
+    async fetchAuthorityInputs({ invoiceId }: { invoiceId: string }) {
+      return (fetchAuthorityInputs as any)(admin, {
         userId,
         invoiceId,
         excludeAwaitingSignatureId: row.id,
       })
     },
     isProviderConfigured,
-    async acquireClaim({ userId: uid, invoiceId, ruleId, actionType, idempotencyKey, receipt }) {
+    async acquireClaim({ userId: uid, invoiceId, ruleId, actionType, idempotencyKey, receipt }: AnyRecord) {
       const { data, error } = await admin.rpc('acquire_autopilot_execution_claim', {
         p_user_id: uid,
         p_invoice_id: invoiceId,
@@ -423,7 +459,7 @@ function buildApprovalIo({ admin, userId, row }) {
       }
       return { claimId: claimRow?.claim_id, acquired: false, existingStatus }
     },
-    async resolveClaim({ claimId, status, providerMessageId, evidence }) {
+    async resolveClaim({ claimId, status, providerMessageId, evidence }: AnyRecord) {
       const { error } = await admin.rpc('resolve_autopilot_execution_claim', {
         p_claim_id: claimId,
         p_status: status,
@@ -436,7 +472,7 @@ function buildApprovalIo({ admin, userId, row }) {
     async queueForReview() {
       throw new Error('This client has no email on file.')
     },
-    async recordSentEvidence({ claimId, sendResult, authority, reason, text, ruleSnapshot }) {
+    async recordSentEvidence({ claimId, sendResult, authority, reason, text, ruleSnapshot }: AnyRecord) {
       const { error: remErr } = await admin.from('reminders').insert({
         invoice_id: row.invoice_id,
         user_id: userId,
@@ -481,7 +517,7 @@ function buildApprovalIo({ admin, userId, row }) {
       })
       if (evErr) throw evErr
     },
-    async recordFailureEvidence({ claimId, error, authority, reason, ruleSnapshot }) {
+    async recordFailureEvidence({ claimId, error, authority, reason, ruleSnapshot }: AnyRecord) {
       const { error: evErr } = await admin.from('events').insert({
         user_id: userId,
         event_type: 'reminder_send_failed',
@@ -503,7 +539,7 @@ function buildApprovalIo({ admin, userId, row }) {
       })
       if (evErr) throw evErr
     },
-    async recordUncertainEvidence({ claimId, error, authority, reason, ruleSnapshot }) {
+    async recordUncertainEvidence({ claimId, error, authority, reason, ruleSnapshot }: AnyRecord) {
       const { error: evErr } = await admin.from('events').insert({
         user_id: userId,
         event_type: 'reminder_send_uncertain',
@@ -530,7 +566,12 @@ function buildApprovalIo({ admin, userId, row }) {
   }
 }
 
-function json(payload, status, req, extraHeaders = {}) {
+function json(
+  payload: Record<string, unknown>,
+  status: number,
+  req: Request,
+  extraHeaders: Record<string, string> = {},
+) {
   return new Response(JSON.stringify(payload), {
     status,
     headers: {
