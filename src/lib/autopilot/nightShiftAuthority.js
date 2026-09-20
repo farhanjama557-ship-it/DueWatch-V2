@@ -104,7 +104,7 @@ export function evaluateNightShiftAuthority({
     return result(NIGHT_SHIFT_AUTHORITY.BLOCKED, 'base_permission_not_automatic', { action, channel })
   }
 
-  if (protectedClient?.outbound_requires_approval !== false) {
+  if (protectedClient && protectedClient.outbound_requires_approval !== false) {
     return result(NIGHT_SHIFT_AUTHORITY.APPROVAL_REQUIRED, 'protected_client_requires_approval', {
       action,
       channel,
