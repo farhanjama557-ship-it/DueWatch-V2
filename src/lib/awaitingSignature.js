@@ -22,13 +22,9 @@ export async function approveSignature({ id }) {
 }
 
 export async function skipSignature({ id, reason }) {
-  const { error } = await supabase
-    .from('awaiting_signature')
-    .update({
-      status: 'skipped',
-      founder_note: reason || null,
-      resolved_at: new Date().toISOString(),
-    })
-    .eq('id', id)
+  const { error } = await supabase.rpc('skip_awaiting_signature', {
+    p_id: id,
+    p_reason: reason || null,
+  })
   return { error }
 }
