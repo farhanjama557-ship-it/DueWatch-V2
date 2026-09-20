@@ -95,7 +95,7 @@ Deno.serve(async (req) => {
     if (serializedInput.length > MAX_REQUEST_CHARS) {
       return json({
         error: 'Ask DW model input is too large for the controlled activation profile.',
-        code: 'INPUT_LIMIT',
+        code: 'FREE_TIER_INPUT_LIMIT',
       }, 413, req)
     }
 
