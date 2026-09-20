@@ -1,0 +1,100 @@
+name: "Reports R7 Verification"
+
+on:
+  push:
+    branches:
+      - reports/r7-scheduling-export
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: reports-r7-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: "Verify Reports R7"
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout exact pushed SHA
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run Reports R1-R7 targeted tests
+        run: >
+          node --test
+          tests/reportMetrics.test.mjs
+          tests/reportPaymentMetrics.test.mjs
+          tests/reportPromiseMetrics.test.mjs
+          tests/reportOperationsMetrics.test.mjs
+          tests/reportReadModel.test.mjs
+          tests/reportDataSource.test.mjs
+          tests/reportExport.test.mjs
+          tests/reportExportCurrency.test.mjs
+          tests/reportsUiContract.test.mjs
+          tests/reportPreferences.test.mjs
+          tests/reportPreferencesMigration.test.mjs
+          tests/reportsR6UiContract.test.mjs
+          tests/reportSchedule.test.mjs
+          tests/reportDeliveryCore.test.mjs
+          tests/reportScheduleSecurity.test.mjs
+          tests/reportsR7UiContract.test.mjs
+
+      - name: Set up Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Type-check report delivery Edge Function
+        run: deno check supabase/functions/process-report-schedules/index.ts
+
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: 2.111.0
+
+      - name: Start disposable Supabase
+        run: supabase start
+
+      - name: Resolve disposable database URL
+        run: |
+          supabase status -o env > /tmp/reports_r7_supabase.env
+          DB_URL=$(grep '^DB_URL=' /tmp/reports_r7_supabase.env | cut -d '=' -f2- | tr -d '"')
+          if [ -z "$DB_URL" ]; then
+            echo "Failed to resolve local DB_URL" >&2
+            exit 1
+          fi
+          echo "DB_URL=$DB_URL" >> "$GITHUB_ENV"
+          rm -f /tmp/reports_r7_supabase.env
+
+      - name: Apply repository baseline and Reports migrations
+        run: |
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/schema.sql
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/20260920195000_reports_saved_views_targets.sql
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/20260920201000_report_schedules.sql
+
+      - name: Prove R6 saved-view and target RLS remains intact
+        run: psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/tests/reports_r6_saved_views_targets_test.sql
+
+      - name: Prove R7 schedule leases, tenant binding, and RLS
+        run: psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/tests/reports_r7_scheduling_test.sql
+
+      - name: Run complete JavaScript suite
+        run: npm test
+
+      - name: Build production application
+        run: npm run build
+
+      - name: Stop disposable Supabase
+        if: always()
+        run: supabase stop --no-backup || true
