@@ -21,7 +21,7 @@ test('Ask DW remains fail-closed before any provider credential is read', () => 
   const keyIndex = source.indexOf("Deno.env.get('GROQ_API_KEY')")
   assert.ok(gateIndex >= 0)
   assert.ok(keyIndex > gateIndex)
-  assert.match(source, /ASK_DW_MODEL_ALLOW_ALL_AUTHENTICATED/)
+  assert.doesNotMatch(source, /ASK_DW_MODEL_ALLOW_ALL_AUTHENTICATED/)
   assert.match(source, /ASK_DW_MODEL_ALLOWED_USER_IDS/)
 })
 
