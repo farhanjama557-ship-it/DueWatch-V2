@@ -1,37 +1,27 @@
 import { NavLink } from 'react-router-dom'
-import { CircleHelp, LogOut, CalendarCheck2, Workflow, ChevronDown } from 'lucide-react'
+import { ChevronDown, LogOut } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import { useData } from '../context/DataContext'
 import { initials } from '../lib/format'
-import {
-  PulseIcon,
-  InvoicesIcon,
-  ClientsIcon,
-  CashFlowIcon,
-  SparkleIcon,
-  ActivityIcon,
-  ReportsIcon,
-  SettingsIcon,
-  LogoMark,
-} from './icons'
+import { DueWatchIcon, DueWatchLogoMark } from './DueWatchIconSystem'
 
 const mainNav = [
-  { to: '/', label: 'Pulse', Icon: PulseIcon, end: true },
-  { to: '/invoices', label: 'Invoices', Icon: InvoicesIcon, badge: true },
-  { to: '/clients', label: 'Clients', Icon: ClientsIcon },
-  { to: '/promise-to-pay', label: 'Promise-to-Pay', Icon: CalendarCheck2 },
-  { to: '/cash-flow', label: 'Cash Flow', Icon: CashFlowIcon },
-  { to: '/autopilot', label: 'Autopilot', Icon: SparkleIcon },
-  { to: '/activity', label: 'Activity', Icon: ActivityIcon },
-  { to: '/reports', label: 'Reports', Icon: ReportsIcon },
-  { to: '/integrations', label: 'Integrations', Icon: Workflow },
-  { to: '/settings', label: 'Settings', Icon: SettingsIcon },
+  { to: '/', label: 'Pulse', icon: 'pulse', end: true },
+  { to: '/invoices', label: 'Invoices', icon: 'invoices', badge: true },
+  { to: '/clients', label: 'Clients', icon: 'clients' },
+  { to: '/promise-to-pay', label: 'Promise-to-Pay', icon: 'promise' },
+  { to: '/cash-flow', label: 'Cash Flow', icon: 'cashFlow' },
+  { to: '/autopilot', label: 'Autopilot', icon: 'autopilot' },
+  { to: '/activity', label: 'Activity', icon: 'activity' },
+  { to: '/reports', label: 'Reports', icon: 'reports' },
+  { to: '/integrations', label: 'Integrations', icon: 'integrations' },
+  { to: '/settings', label: 'Settings', icon: 'settings' },
 ]
 
-function NavItem({ to, label, Icon, end, badge, overdueCount }) {
+function NavItem({ to, label, icon, end, badge, overdueCount }) {
   return (
     <NavLink to={to} end={end} className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
-      <Icon className="nav-icon" />
+      <DueWatchIcon name={icon} size={17} className="nav-icon" tone="navy" />
       <span className="nav-label">{label}</span>
       {badge && overdueCount > 0 && <span className="nav-badge">{overdueCount}</span>}
     </NavLink>
@@ -54,7 +44,7 @@ export default function Sidebar() {
   return (
     <aside className="sidebar canonical-sidebar">
       <div className="sidebar-brand">
-        <LogoMark className="canonical-logo-mark" />
+        <DueWatchLogoMark size={30} className="canonical-logo-mark" />
         <div className="sidebar-brand-text">
           <span className="sidebar-brand-name">DueWatch</span>
           <span className="sidebar-brand-subtitle">{organization}</span>
@@ -83,12 +73,12 @@ export default function Sidebar() {
           target="_blank"
           rel="noreferrer"
         >
-          <CircleHelp size={17} />
+          <DueWatchIcon name="help" size={17} tone="navy" />
           <span>Help Center</span>
         </a>
 
         <button type="button" className="canonical-sidebar-link" onClick={signOut}>
-          <LogOut size={17} />
+          <LogOut size={17} aria-hidden="true" />
           <span>Log out</span>
         </button>
       </div>
