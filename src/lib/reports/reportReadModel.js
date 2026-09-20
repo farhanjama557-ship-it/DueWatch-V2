@@ -168,10 +168,10 @@ export function buildClientCollectionComparison(payments = [], allocations = [],
   return rows
 }
 
-function deterministicInsights({ collections, aging, promises, operations, promisesAvailable }) {
+function deterministicInsights({ collections, aging, promises, operations, promisesAvailable, paymentsAvailable, operationsAvailable }) {
   const insights = []
 
-  for (const [currency, comparison] of Object.entries(collections.comparisonByCurrency || {})) {
+  if (paymentsAvailable) for (const [currency, comparison] of Object.entries(collections.comparisonByCurrency || {})) {
     if (comparison.previousAmount <= 0) continue
     const pct = comparison.relativeChange
     if (pct === null) continue
@@ -221,7 +221,7 @@ function deterministicInsights({ collections, aging, promises, operations, promi
 
   const uncertainty = operations.execution.byStatus.uncertain
   const failures = operations.execution.byStatus.send_failed
-  if (uncertainty + failures > 0) {
+  if (operationsAvailable && uncertainty + failures > 0) {
     insights.push({
       id: 'execution-exceptions',
       kind: 'attention',
@@ -240,8 +240,12 @@ export function buildReportsReadModel({
   allocations = [],
   promises = [],
   promisesAvailable = false,
+  paymentsAvailable = true,
+  allocationsAvailable = true,
   executionClaims = [],
+  executionClaimsAvailable = true,
   approvals = [],
+  approvalsAvailable = true,
   events = [],
   asOf = new Date(),
   startDate = null,
@@ -276,6 +280,8 @@ export function buildReportsReadModel({
     promises: promisesSummary,
     operations,
     promisesAvailable,
+    paymentsAvailable,
+    operationsAvailable: executionClaimsAvailable || approvalsAvailable,
   })
 
   return Object.freeze({
@@ -292,10 +298,14 @@ export function buildReportsReadModel({
     monthlyCollections,
     insights,
     availability: {
-      collections: true,
+      collections: paymentsAvailable,
+      collectedInvoices: paymentsAvailable && allocationsAvailable,
+      clientCollections: paymentsAvailable && allocationsAvailable,
       aging: true,
       clientExposure: true,
       promiseCurrentState: promisesAvailable,
+      operationalExecution: executionClaimsAvailable,
+      operationalApprovals: approvalsAvailable,
       promiseFulfillment: false,
       collectionTarget: false,
       collectionRate: false,
