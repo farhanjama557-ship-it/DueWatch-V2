@@ -35,6 +35,7 @@ import { evaluateNextActionAuthority, buildRuleSnapshot } from '../_shared/nextA
 import { executeAutoSend, SEND_OUTCOME, deriveFactualBasis } from '../_shared/autopilotExecutionCore.js'
 import { fetchHandledState, fetchAuthorityInputs } from '../_shared/autopilotAuthorityInputs.js'
 import { resolveExistingClaimStatus } from '../_shared/executionClaim.js'
+import { verifiedJwtRole } from '../_shared/requestSecurity.js'
 
 const MAX_PER_RUN = 10 // safety rail: Resend rate limits + no surprise batches
 
@@ -66,7 +67,18 @@ function buildReminder(invoice, rule, factualBasis, today) {
   return { draft, reason }
 }
 
-Deno.serve(async (_req) => {
+Deno.serve(async (req) => {
+  // This endpoint has project-wide service-role effects. A normal signed-in
+  // founder JWT must never be enough to invoke it. Supabase's Edge gateway
+  // verifies the JWT signature (verify_jwt=true); this second gate requires
+  // the verified token's role claim to be exactly service_role.
+  if (req.method !== 'POST') {
+    return json({ error: 'Method not allowed' }, 405)
+  }
+  if (verifiedJwtRole(req) !== 'service_role') {
+    return json({ error: 'Not authorized' }, 403)
+  }
+
   const today = startOfToday()
 
   const { data: enabledSettings, error: settingsErr } = await admin
@@ -75,16 +87,25 @@ Deno.serve(async (_req) => {
     .eq('enabled', true)
 
   if (settingsErr) {
-    return json({ error: settingsErr.message }, 500)
+    console.error('autopilot-scheduler settings load failed', settingsErr.code || 'unknown')
+    return json({ error: 'Scheduler could not load its work queue.' }, 500)
   }
 
   const summaries = []
-
   for (const settings of enabledSettings || []) {
     summaries.push(await runForUser(settings, today))
   }
 
-  return json({ usersProcessed: summaries.length, summaries })
+  // Do not return tenant identifiers or per-invoice operational detail from
+  // a scheduler endpoint. The durable per-user run rows remain the source of
+  // truth for founder-facing status.
+  return json({
+    usersProcessed: summaries.length,
+    invoicesChecked: summaries.reduce((sum, item) => sum + (item.invoicesChecked || 0), 0),
+    actionsCompleted: summaries.reduce((sum, item) => sum + (item.remindersDrafted || 0), 0),
+    actionsDeferred: summaries.reduce((sum, item) => sum + (item.remindersSkipped || 0), 0),
+    errors: summaries.reduce((sum, item) => sum + (item.errors || (item.error ? 1 : 0)), 0),
+  })
 })
 
 async function runForUser(settings, today) {
