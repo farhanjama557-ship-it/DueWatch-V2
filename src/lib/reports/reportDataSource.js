@@ -47,6 +47,14 @@ export async function loadReportsSourceData({ database, userId }) {
   const requests = await Promise.allSettled([
     loadPaged({
       database,
+      table: 'invoices',
+      select:
+        'id,user_id,client_id,inv_num,amount,amount_paid,due_date,paid,currency,clients(id,name)',
+      userId,
+      orderColumn: 'created_at',
+    }),
+    loadPaged({
+      database,
       table: 'payments',
       select:
         'id,user_id,payment_date,total_amount,currency,origin,source_event_id,recorded_at,reversed_at',
@@ -83,17 +91,26 @@ export async function loadReportsSourceData({ database, userId }) {
       userId,
       orderColumn: 'created_at',
     }),
+    loadPaged({
+      database,
+      table: 'events',
+      select: 'id,user_id,event_type,invoice_id,created_at,lifecycle_state,evidence',
+      userId,
+      orderColumn: 'created_at',
+    }),
   ])
 
-  const [payments, allocations, promises, executionClaims, approvals] = requests.map((value) =>
+  const [invoices, payments, allocations, promises, executionClaims, approvals, events] = requests.map((value) =>
     safeResult(value)
   )
 
   return {
+    invoices,
     payments,
     allocations,
     promises,
     executionClaims,
     approvals,
+    events,
   }
 }
