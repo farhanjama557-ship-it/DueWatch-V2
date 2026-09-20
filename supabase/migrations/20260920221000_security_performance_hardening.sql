@@ -4,8 +4,13 @@
 
 create index if not exists sec_fk_autopilot_execution_claims_invoice
   on public.autopilot_execution_claims(invoice_id);
-create index if not exists sec_fk_autopilot_rules_user
-  on public.autopilot_rules(user_id);
+do $optional_autopilot_rules_index$
+begin
+  if to_regclass('public.autopilot_rules') is not null then
+    execute 'create index if not exists sec_fk_autopilot_rules_user on public.autopilot_rules(user_id)';
+  end if;
+end
+$optional_autopilot_rules_index$;
 create index if not exists sec_fk_awaiting_signature_invoice
   on public.awaiting_signature(invoice_id);
 create index if not exists sec_fk_client_source_identities_user_client
