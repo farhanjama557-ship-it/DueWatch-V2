@@ -1,0 +1,77 @@
+name: "Autopilot Night Shift AP1-AP7 Verification"
+
+on:
+  push:
+    branches:
+      - autopilot/night-shift-ap1-ap7
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: autopilot-night-shift-ap1-ap7-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: "Verify Night Shift contracts, full suite, build, and disposable DB"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run targeted AP1-AP7 tests
+        run: node --test tests/autopilotNightShift*.test.mjs
+
+      - name: Run complete JavaScript suite
+        run: npm test
+
+      - name: Build production bundle
+        run: npm run build
+
+      - name: Verify existing Autopilot scheduler still resolves
+        run: npx --yes deno info supabase/functions/autopilot-scheduler/index.ts
+
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: 2.111.0
+
+      - name: Start disposable local Supabase
+        run: supabase start
+
+      - name: Resolve disposable database URL
+        run: |
+          supabase status -o env > /tmp/night_shift_supabase.env
+          DB_URL=$(grep '^DB_URL=' /tmp/night_shift_supabase.env | cut -d '=' -f2- | tr -d '"')
+          test -n "$DB_URL"
+          echo "DB_URL=$DB_URL" >> "$GITHUB_ENV"
+          rm -f /tmp/night_shift_supabase.env
+
+      - name: Apply baseline schema and Night Shift migration
+        run: |
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/schema.sql
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/checkpoints/autopilot_night_shift_foundation.sql
+
+      - name: Re-apply Night Shift migration for idempotency
+        run: psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/checkpoints/autopilot_night_shift_foundation.sql
+
+      - name: Run Night Shift database safety proof
+        run: psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/tests/autopilot_night_shift_foundation_test.sql
+
+      - name: Stop disposable Supabase
+        if: always()
+        run: supabase stop --no-backup || true
