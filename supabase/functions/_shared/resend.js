@@ -101,15 +101,29 @@ export async function sendEmail({
     payload.attachments = attachmentValidation.value
   }
 
-  const res = await fetch(RESEND_API_URL, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(payload),
-  })
+  let res
+  try {
+    res = await fetch(RESEND_API_URL, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload),
+    })
+  } catch (error) {
+    return {
+      error: error instanceof Error ? error.message : 'Email provider network failure.',
+      ambiguous: true,
+    }
+  }
 
   const data = await res.json().catch(() => ({}))
   if (!res.ok) {
-    return { error: data?.message || `Resend request failed (HTTP ${res.status})` }
+    return {
+      error: data?.message || `Resend request failed (HTTP ${res.status})`,
+      // A 5xx means the provider-side outcome cannot be proven from the
+      // response alone. 4xx/429 responses are treated as definite rejects.
+      ambiguous: res.status >= 500,
+      statusCode: res.status,
+    }
   }
-  return { id: data.id, status: 'sent' }
+  return { id: data.id, status: 'sent', ambiguous: false }
 }
