@@ -1175,3 +1175,256 @@
     width: 100%;
   }
 }
+
+
+.reports-schedule-editor {
+  display: grid;
+  grid-template-columns: minmax(190px, 1.2fr) repeat(5, minmax(110px, .72fr)) auto;
+  gap: 8px;
+  align-items: end;
+  margin: -8px 0 13px;
+  padding: 12px;
+  border: 1px solid #e6e2db;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 8px 22px rgba(28, 37, 50, 0.04);
+}
+
+.reports-schedule-editor-copy strong,
+.reports-schedule-editor-copy span,
+.reports-schedule-editor label > span {
+  display: block;
+}
+
+.reports-schedule-editor-copy strong {
+  color: #46515f;
+  font-size: 9.5px;
+}
+
+.reports-schedule-editor-copy span {
+  margin-top: 3px;
+  color: #979b9f;
+  font-size: 7.5px;
+  line-height: 1.45;
+}
+
+.reports-schedule-editor label > span {
+  margin-bottom: 4px;
+  color: #979b9f;
+  font-size: 7px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.reports-schedule-editor input,
+.reports-schedule-editor select {
+  width: 100%;
+  height: 32px;
+  border: 1px solid #e4e1db;
+  border-radius: 7px;
+  background: #fcfbf9;
+  color: #59626d;
+  padding: 0 8px;
+  font-size: 8.5px;
+  outline: 0;
+}
+
+.reports-schedule-editor input:focus,
+.reports-schedule-editor select:focus {
+  border-color: #d9a187;
+  box-shadow: 0 0 0 3px rgba(218, 119, 86, 0.07);
+}
+
+.reports-schedule-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.reports-schedule-actions button {
+  height: 32px;
+  border: 1px solid #e1ddd7;
+  border-radius: 7px;
+  padding: 0 10px;
+  background: #e76f42;
+  color: #fff;
+  font-size: 8px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.reports-schedule-actions button.quiet {
+  background: #fff;
+  color: #727a85;
+}
+
+.reports-schedule-actions button:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
+
+.reports-schedule-list {
+  margin: 0 0 10px;
+  border: 1px solid #e8e5df;
+  border-radius: 9px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.reports-schedule-list-title {
+  min-height: 34px;
+  padding: 0 11px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #efede8;
+}
+
+.reports-schedule-list-title strong {
+  color: #56606d;
+  font-size: 8.5px;
+}
+
+.reports-schedule-list-title span {
+  color: #a0a3a7;
+  font-size: 7.5px;
+}
+
+.reports-schedule-row {
+  min-height: 43px;
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) 58px minmax(180px, .8fr) auto auto;
+  gap: 9px;
+  align-items: center;
+  padding: 7px 10px;
+  border-bottom: 1px solid #f2f0ec;
+  color: #838994;
+  font-size: 7.5px;
+}
+
+.reports-schedule-row:last-child {
+  border-bottom: 0;
+}
+
+.reports-schedule-row > div strong,
+.reports-schedule-row > div span {
+  display: block;
+}
+
+.reports-schedule-row > div strong {
+  color: #4f5967;
+  font-size: 8.5px;
+}
+
+.reports-schedule-row > div span {
+  margin-top: 2px;
+  color: #a0a2a6;
+  font-size: 7px;
+}
+
+.reports-schedule-row button {
+  min-height: 25px;
+  border: 1px solid #e5e1db;
+  border-radius: 6px;
+  background: #fff;
+  color: #707985;
+  padding: 0 8px;
+  font-size: 7.5px;
+}
+
+.reports-schedule-row button.delete {
+  color: #b75e57;
+}
+
+.reports-schedule-status {
+  display: inline-grid;
+  place-items: center;
+  min-height: 21px;
+  border-radius: 999px;
+  padding: 0 7px;
+  font-size: 7px;
+  font-weight: 700;
+}
+
+.reports-schedule-status.enabled {
+  background: #edf7f1;
+  color: #438765;
+}
+
+.reports-schedule-status.disabled {
+  background: #f2f0ec;
+  color: #898b90;
+}
+
+@media (max-width: 1280px) {
+  .reports-schedule-editor {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .reports-schedule-editor-copy,
+  .reports-schedule-actions {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 780px) {
+  .reports-schedule-editor {
+    grid-template-columns: 1fr;
+  }
+
+  .reports-schedule-editor-copy,
+  .reports-schedule-actions {
+    grid-column: auto;
+  }
+
+  .reports-schedule-actions {
+    flex-direction: column;
+  }
+
+  .reports-schedule-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media print {
+  body {
+    background: #fff !important;
+  }
+
+  .sidebar,
+  .reports-header-actions,
+  .reports-tabs,
+  .reports-saved-views,
+  .reports-schedule-editor,
+  .reports-schedule-list,
+  .reports-source-notice,
+  .reports-preference-error,
+  .reports-card-action {
+    display: none !important;
+  }
+
+  .content {
+    margin-left: 0 !important;
+    width: 100% !important;
+  }
+
+  .reports-page {
+    padding: 0 !important;
+    background: #fff !important;
+  }
+
+  .reports-layout {
+    grid-template-columns: 1fr !important;
+  }
+
+  .reports-insights {
+    position: static !important;
+    page-break-before: auto;
+  }
+
+  .reports-panel,
+  .reports-insights,
+  .reports-metric-card {
+    box-shadow: none !important;
+    break-inside: avoid;
+  }
+}
