@@ -7,6 +7,7 @@ const RESEND_API_URL = 'https://api.resend.com/emails'
 // end-to-end testing. Swap to a verified domain (e.g. reminders@duewatch.app)
 // before going live; see DEPLOY.md §4.
 const DEFAULT_FROM = 'Duewatch <onboarding@resend.dev>'
+const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024
 
 // HIGH 1 (post-2A.1 execution safety review-fix): a missing API key is a
 // provable pre-send failure — checkable without making an external
@@ -17,7 +18,54 @@ export function isProviderConfigured() {
   return Boolean(Deno.env.get('RESEND_API_KEY'))
 }
 
-export async function sendEmail({ to, subject, text, from, idempotencyKey }) {
+function validateAttachments(attachments) {
+  if (attachments == null) return { ok: true, value: undefined }
+  if (!Array.isArray(attachments)) return { ok: false, error: 'Attachments must be an array.' }
+  if (attachments.length > 5) return { ok: false, error: 'Too many email attachments.' }
+
+  const normalized = []
+  let estimatedBytes = 0
+
+  for (const attachment of attachments) {
+    const filename = String(attachment?.filename ?? '').trim()
+    const content = String(attachment?.content ?? '').trim()
+    const contentType = attachment?.contentType
+      ? String(attachment.contentType).trim()
+      : undefined
+
+    if (!filename || filename.length > 180) {
+      return { ok: false, error: 'Each attachment requires a valid filename.' }
+    }
+    if (!content) {
+      return { ok: false, error: 'Each attachment requires base64 content.' }
+    }
+
+    // Base64 expands raw bytes by about 4/3. This bound is intentionally
+    // conservative and protects the Edge Function from oversized report
+    // payloads before an external send is attempted.
+    estimatedBytes += Math.ceil((content.length * 3) / 4)
+    if (estimatedBytes > MAX_ATTACHMENT_BYTES) {
+      return { ok: false, error: 'Email attachments exceed the supported size.' }
+    }
+
+    normalized.push({
+      filename,
+      content,
+      ...(contentType ? { content_type: contentType } : {}),
+    })
+  }
+
+  return { ok: true, value: normalized }
+}
+
+export async function sendEmail({
+  to,
+  subject,
+  text,
+  from,
+  idempotencyKey,
+  attachments = undefined,
+}) {
   const apiKey = Deno.env.get('RESEND_API_KEY')
   if (!apiKey) {
     return { error: 'RESEND_API_KEY is not configured as an Edge Function secret.' }
@@ -26,28 +74,37 @@ export async function sendEmail({ to, subject, text, from, idempotencyKey }) {
     return { error: 'No recipient email address was provided.' }
   }
 
+  const attachmentValidation = validateAttachments(attachments)
+  if (!attachmentValidation.ok) {
+    return { error: attachmentValidation.error }
+  }
+
   const headers = {
     Authorization: `Bearer ${apiKey}`,
     'Content-Type': 'application/json',
   }
   // Provider idempotency is secondary protection only — Duewatch's durable
-  // execution claim (autopilot_execution_claims) is authoritative, since
-  // Resend's own idempotency-key retention window is bounded. Callers that
-  // don't pass one (e.g. manual sends outside the Autopilot execution-claim
-  // path) get Resend's normal at-least-once behavior, unchanged.
+  // execution claims remain authoritative. Report deliveries use the stable
+  // schedule occurrence as the provider idempotency key as a second guard
+  // against a retry after an ambiguous network result.
   if (idempotencyKey) {
     headers['Idempotency-Key'] = idempotencyKey
+  }
+
+  const payload = {
+    from: from || DEFAULT_FROM,
+    to: [to],
+    subject,
+    text,
+  }
+  if (attachmentValidation.value?.length) {
+    payload.attachments = attachmentValidation.value
   }
 
   const res = await fetch(RESEND_API_URL, {
     method: 'POST',
     headers,
-    body: JSON.stringify({
-      from: from || DEFAULT_FROM,
-      to: [to],
-      subject,
-      text,
-    }),
+    body: JSON.stringify(payload),
   })
 
   const data = await res.json().catch(() => ({}))
