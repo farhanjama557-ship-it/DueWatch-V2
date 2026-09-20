@@ -1,5 +1,17 @@
 function csvEscape(value) {
-  const text = String(value ?? '')
+  let text = String(value ?? '')
+
+  // Spreadsheet programs may evaluate CSV cells beginning with formula
+  // metacharacters. Any string-like exported value is data, never a
+  // spreadsheet instruction, so neutralize dangerous leading characters.
+  // Numeric JS values remain numeric and are not rewritten.
+  if (
+    typeof value === 'string' &&
+    /^[\s]*[=+\-@\t\r]/.test(text)
+  ) {
+    text = "'" + text
+  }
+
   if (/[",\n\r]/.test(text)) return '"' + text.replace(/"/g, '""') + '"'
   return text
 }
