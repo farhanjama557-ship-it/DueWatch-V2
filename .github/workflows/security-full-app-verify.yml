@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: duewatch-security-${{ github.ref }}
+  group: duewatch-security-v2-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
