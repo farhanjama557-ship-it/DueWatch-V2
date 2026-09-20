@@ -30,6 +30,12 @@ function localDateString(date) {
   return new Date(d.getTime() - offset * 60000).toISOString().slice(0, 10)
 }
 
+function addOneDay(day) {
+  const d = new Date(day + 'T12:00:00')
+  d.setDate(d.getDate() + 1)
+  return localDateString(d)
+}
+
 function defaultPeriod(kind, now = new Date()) {
   const year = now.getFullYear()
   const month = now.getMonth()
@@ -563,8 +569,17 @@ export default function Reports() {
           <p>Analyze collections performance, cash trends, operational output, and portfolio risk.</p>
         </div>
         <div className="reports-header-actions">
-          <label className="reports-date-control"><span>From</span><input type="date" value={startDate} max={endDate} onChange={(e) => { setCadence('Custom'); setStartDate(e.target.value) }} /></label>
-          <label className="reports-date-control"><span>To</span><input type="date" value={endDate} min={startDate} onChange={(e) => { setCadence('Custom'); setEndDate(e.target.value) }} /></label>
+          <label className="reports-date-control"><span>From</span><input type="date" value={startDate} max={endDate} onChange={(e) => {
+            const nextStart = e.target.value
+            setCadence('Custom')
+            setStartDate(nextStart)
+            if (nextStart >= endDate) setEndDate(addOneDay(nextStart))
+          }} /></label>
+          <label className="reports-date-control"><span>To</span><input type="date" value={endDate} min={addOneDay(startDate)} onChange={(e) => {
+            const nextEnd = e.target.value
+            setCadence('Custom')
+            setEndDate(nextEnd <= startDate ? addOneDay(startDate) : nextEnd)
+          }} /></label>
           <label className="reports-cadence">
             <span className="sr-only">Report cadence</span>
             <select value={cadence} onChange={(e) => changeCadence(e.target.value)}>
