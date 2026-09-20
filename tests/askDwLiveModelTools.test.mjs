@@ -356,7 +356,7 @@ test('client code never contains OPENAI_API_KEY and edge function is paid-call g
   const edge = fs.readFileSync(new URL('../supabase/functions/ask-dw-model/index.ts', import.meta.url), 'utf8')
   assert.match(edge, /ASK_DW_MODEL_ENABLED/)
   assert.match(edge, /ASK_DW_MODEL_ALLOWED_USER_IDS/)
-  assert.match(edge, /ASK_DW_MODEL_ALLOW_ALL_AUTHENTICATED/)
+  assert.doesNotMatch(edge, /ASK_DW_MODEL_ALLOW_ALL_AUTHENTICATED/)
   assert.match(edge, /store:\s*false/)
   assert.match(edge, /json_schema/)
   assert.match(edge, /admin\.auth\.getUser\(jwt\)/)
