@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - autopilot/night-shift-ap1-ap7
+      - security/full-app-hardening
   workflow_dispatch: {}
 
 permissions:
