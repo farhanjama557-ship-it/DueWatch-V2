@@ -10,6 +10,7 @@ import Invoices from './pages/Invoices'
 import Clients from './pages/Clients'
 import CashFlow from './pages/CashFlow'
 import Activity from './pages/Activity'
+import Reports from './pages/Reports'
 import Autopilot from './pages/Autopilot'
 import Settings from './pages/Settings'
 import LandingPage from './landing'
@@ -98,6 +99,7 @@ export default function App() {
         <Route path="/clients" element={<Clients />} />
         <Route path="/cash-flow" element={<CashFlow />} />
         <Route path="/activity" element={<Activity />} />
+        <Route path="/reports" element={<Reports />} />
         <Route path="/autopilot" element={<Autopilot />} />
         <Route path="/settings" element={<Settings />} />
       </Route>
