@@ -154,14 +154,17 @@ $tenant_rls$;
 reset role;
 
 insert into public.awaiting_signature(
-  id, user_id, invoice_id, action_type, status, draft_content
+  id, user_id, invoice_id, action_type, recommended_tone,
+  draft_content, ai_reason, status
 ) values (
   'a9300000-0000-4000-8000-000000000001',
   'a9000000-0000-4000-8000-000000000001',
   'a9200000-0000-4000-8000-000000000001',
   'send_reminder',
-  'pending',
-  'draft'
+  'friendly',
+  'draft',
+  'security proof',
+  'pending'
 );
 
 set local role authenticated;
