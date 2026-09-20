@@ -1027,3 +1027,151 @@
     transition: none;
   }
 }
+
+
+.reports-btn:disabled,
+.reports-config-panel button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.reports-card-action {
+  margin-top: 8px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: #ca643a;
+  font-size: 8px;
+  font-weight: 700;
+  text-align: left;
+}
+
+.reports-config-panel {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(160px, 260px) auto auto;
+  gap: 8px;
+  align-items: center;
+  margin: -8px 0 13px;
+  padding: 10px 12px;
+  background: #fff;
+  border: 1px solid #e7e3dd;
+  border-radius: 9px;
+  box-shadow: 0 7px 18px rgba(28, 37, 50, 0.035);
+}
+
+.reports-config-panel strong,
+.reports-config-panel span {
+  display: block;
+}
+
+.reports-config-panel strong {
+  color: #4d5663;
+  font-size: 9px;
+}
+
+.reports-config-panel span {
+  margin-top: 2px;
+  color: #989b9f;
+  font-size: 7.5px;
+}
+
+.reports-config-panel input {
+  width: 100%;
+  height: 31px;
+  border: 1px solid #e6e3dd;
+  border-radius: 7px;
+  background: #fcfbf9;
+  color: #525b67;
+  padding: 0 9px;
+  outline: 0;
+  font-size: 9px;
+}
+
+.reports-config-panel input:focus {
+  border-color: #dba58c;
+  box-shadow: 0 0 0 3px rgba(218, 119, 86, 0.08);
+}
+
+.reports-config-panel button {
+  min-height: 31px;
+  border: 1px solid #dfdcd6;
+  border-radius: 7px;
+  background: #e76f42;
+  color: #fff;
+  padding: 0 11px;
+  font-size: 8px;
+  font-weight: 700;
+}
+
+.reports-config-panel button.quiet {
+  background: #fff;
+  color: #777f89;
+}
+
+.reports-preference-error {
+  margin: -7px 0 12px;
+  padding: 9px 11px;
+  border: 1px solid #f0d9d5;
+  border-radius: 8px;
+  background: #fff6f4;
+  color: #b85b52;
+  font-size: 8.5px;
+}
+
+.reports-saved-views {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 9px;
+  color: #93979d;
+  font-size: 8px;
+}
+
+.reports-saved-views > span {
+  margin-right: 2px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.reports-saved-view {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid #e8e4de;
+  border-radius: 999px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.reports-saved-view button {
+  min-height: 25px;
+  border: 0;
+  background: transparent;
+  color: #68717d;
+  padding: 0 9px;
+  font-size: 8px;
+}
+
+.reports-saved-view button:hover {
+  color: #c25f36;
+  background: #fff7f1;
+}
+
+.reports-saved-view button.delete {
+  width: 24px;
+  padding: 0;
+  border-left: 1px solid #eeeae4;
+  color: #aaa7a2;
+}
+
+@media (max-width: 780px) {
+  .reports-config-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .reports-config-panel button {
+    width: 100%;
+  }
+}
