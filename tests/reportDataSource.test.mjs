@@ -1,0 +1,87 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import { collectPagedRows, loadReportsSourceData } from '../src/lib/reports/reportDataSource.js'
+
+test('collectPagedRows reads until a short page and preserves order', async () => {
+  const pages = [
+    [{ id: 1 }, { id: 2 }],
+    [{ id: 3 }],
+  ]
+  const calls = []
+
+  const result = await collectPagedRows(
+    async ({ from, to }) => {
+      calls.push({ from, to })
+      return { data: pages[calls.length - 1] || [], error: null }
+    },
+    { pageSize: 2, maxPages: 10 }
+  )
+
+  assert.deepEqual(result.rows.map((row) => row.id), [1, 2, 3])
+  assert.equal(result.truncated, false)
+  assert.deepEqual(calls, [
+    { from: 0, to: 1 },
+    { from: 2, to: 3 },
+  ])
+})
+
+test('collectPagedRows marks a max-page cutoff as truncated', async () => {
+  const result = await collectPagedRows(
+    async () => ({ data: [{ id: 1 }, { id: 2 }], error: null }),
+    { pageSize: 2, maxPages: 2 }
+  )
+  assert.equal(result.rows.length, 4)
+  assert.equal(result.truncated, true)
+})
+
+test('collectPagedRows surfaces query errors rather than turning them into empty truth', async () => {
+  await assert.rejects(
+    collectPagedRows(async () => ({ data: null, error: { message: 'boom' } })),
+    /boom/
+  )
+})
+
+function fakeDatabase(config = {}) {
+  return {
+    from(table) {
+      const state = { table }
+      const chain = {
+        select() {
+          return chain
+        },
+        eq() {
+          return chain
+        },
+        order() {
+          return chain
+        },
+        async range() {
+          const entry = config[state.table]
+          if (entry instanceof Error) return { data: null, error: { message: entry.message } }
+          return { data: entry || [], error: null }
+        },
+      }
+      return chain
+    },
+  }
+}
+
+test('loadReportsSourceData reports per-source availability independently', async () => {
+  const result = await loadReportsSourceData({
+    database: fakeDatabase({
+      payments: [{ id: 'p1' }],
+      payment_allocations: [{ id: 'a1' }],
+      promises: new Error('relation promises does not exist'),
+      autopilot_execution_claims: [{ id: 'c1' }],
+      awaiting_signature: [{ id: 's1' }],
+    }),
+    userId: 'u1',
+  })
+
+  assert.equal(result.payments.available, true)
+  assert.equal(result.allocations.available, true)
+  assert.equal(result.promises.available, false)
+  assert.match(result.promises.error, /promises/)
+  assert.equal(result.executionClaims.available, true)
+  assert.equal(result.approvals.available, true)
+})
