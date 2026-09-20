@@ -53,9 +53,6 @@ jobs:
       - name: Start disposable Supabase
         run: supabase start
 
-      - name: Reset disposable database through exact migration chain
-        run: supabase db reset --local
-
       - name: Resolve disposable database URL
         run: |
           supabase status -o env > /tmp/reports_r6_supabase.env
@@ -66,6 +63,11 @@ jobs:
           fi
           echo "DB_URL=$DB_URL" >> "$GITHUB_ENV"
           rm -f /tmp/reports_r6_supabase.env
+
+      - name: Apply repository baseline and Reports R6 migration
+        run: |
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/schema.sql
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/20260920195000_reports_saved_views_targets.sql
 
       - name: Prove saved-view and target RLS
         run: psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/tests/reports_r6_saved_views_targets_test.sql
