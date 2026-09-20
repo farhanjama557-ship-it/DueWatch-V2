@@ -88,6 +88,9 @@ Deno.serve(async (req) => {
   if (verifiedJwtRole(req) !== 'service_role') {
     return json({ error: 'Not authorized' }, 403)
   }
+  if (Deno.env.get('DUEWATCH_AUTOPILOT_DISABLED') === 'true') {
+    return json({ error: 'Autopilot execution is disabled by the DueWatch incident-control switch.' }, 503)
+  }
 
   const today = startOfToday()
 
