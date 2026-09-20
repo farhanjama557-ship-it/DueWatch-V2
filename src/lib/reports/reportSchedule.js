@@ -242,8 +242,9 @@ export async function loadReportSchedules({ database, userId }) {
   const [schedules, runs] = await Promise.all([
     database
       .from('report_schedules')
-      .select('id,user_id,name,recipient_email,cadence,weekday,day_of_month,local_hour,timezone,currency,active_tab,filters,delivery_format,period_mode,next_run_at,enabled,last_run_at,created_at,updated_at')
+      .select('id,user_id,name,recipient_email,cadence,weekday,day_of_month,local_hour,timezone,currency,active_tab,filters,delivery_format,period_mode,next_run_at,enabled,last_run_at,deleted_at,created_at,updated_at')
       .eq('user_id', userId)
+      .is('deleted_at', null)
       .order('next_run_at', { ascending: true }),
     database
       .from('report_delivery_runs')
@@ -278,8 +279,16 @@ export async function saveReportSchedule({ database, input }) {
 export async function deleteReportSchedule({ database, userId, id }) {
   if (!database) throw new Error('A database client is required.')
   if (!userId || !id) throw new Error('User and schedule are required.')
-  const { error } = await database.from('report_schedules').delete().eq('id', id).eq('user_id', userId)
-  if (error) throw new Error(error.message || 'Could not delete report schedule.')
+  const { error } = await database
+    .from('report_schedules')
+    .update({
+      enabled: false,
+      deleted_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', id)
+    .eq('user_id', userId)
+  if (error) throw new Error(error.message || 'Could not remove report schedule.')
 }
 
 export async function setReportScheduleEnabled({ database, userId, id, enabled, now = new Date() }) {
