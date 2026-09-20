@@ -9,7 +9,7 @@ test('R6 Reports exposes functional saved-view controls', () => {
   assert.match(reports, /saveReportView/)
   assert.match(reports, /deleteReportView/)
   assert.match(reports, /applySavedView/)
-  assert.match(reports, />Save view</)
+  assert.match(reports, /Save view/)
 })
 
 test('R6 collection target is founder configured instead of fabricated', () => {
