@@ -1,4 +1,4 @@
-import { NavLink } from 'react-router-dom'
+import { NavLink, Outlet } from 'react-router-dom'
 import { ChevronDown, LogOut } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import { DataProvider, useData } from '../context/DataContext'
@@ -11,12 +11,12 @@ const primaryNav = [
   { label: 'Pulse', to: '/', icon: 'pulse' },
   { label: 'Invoices', to: '/invoices', icon: 'invoices', badge: true },
   { label: 'Clients', to: '/clients', icon: 'clients' },
-  { label: 'Promise-to-Pay', disabled: true, icon: 'promise' },
+  { label: 'Promise-to-Pay', to: '/promise-to-pay', icon: 'promise' },
   { label: 'Cash Flow', to: '/cash-flow', icon: 'cash' },
   { label: 'Autopilot', to: '/autopilot', icon: 'autopilot' },
   { label: 'Activity', to: '/activity', icon: 'activity' },
   { label: 'Reports', to: '/reports', icon: 'reports' },
-  { label: 'Integrations', disabled: true, icon: 'integrations' },
+  { label: 'Integrations', to: '/integrations', icon: 'integrations' },
   { label: 'Settings', to: '/settings', icon: 'settings' },
 ]
 
@@ -118,7 +118,7 @@ export default function OverhaulShell({ children }) {
   return (
     <DataProvider>
       <PresenceProvider>
-        <ShellInner>{children}</ShellInner>
+        <ShellInner>{children ?? <Outlet />}</ShellInner>
       </PresenceProvider>
     </DataProvider>
   )
