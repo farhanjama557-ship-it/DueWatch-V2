@@ -1,16 +1,13 @@
 name: "Security Dependency Refresh"
 
 on:
-  push:
-    branches:
-      - security/full-app-hardening
+  workflow_dispatch: {}
 
 permissions:
   contents: write
 
 jobs:
   refresh:
-    if: ${{ !contains(github.event.head_commit.message, '[deps-refresh]') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
