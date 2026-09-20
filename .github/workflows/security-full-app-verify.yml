@@ -89,11 +89,38 @@ jobs:
       - name: Prove full-app security migration
         run: psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/tests/security_hardening_test.sql
 
-      - name: Re-run critical database regression proofs
+      - name: Re-run Reports database regression proofs
         run: |
-          psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/tests/payments_foundation_test.sql
           psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/tests/reports_r6_saved_views_targets_test.sql
           psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/tests/reports_r7_scheduling_test.sql
+
+      - name: Restart clean disposable Supabase for Payments proofs
+        run: |
+          supabase stop --no-backup
+          supabase start
+          supabase status -o env > /tmp/duewatch_security_payments.env
+          DB_URL=$(grep '^DB_URL=' /tmp/duewatch_security_payments.env | cut -d '=' -f2- | tr -d '"')
+          test -n "$DB_URL"
+          echo "DB_URL=$DB_URL" >> "$GITHUB_ENV"
+          rm -f /tmp/duewatch_security_payments.env
+
+      - name: Run targeted Payments legacy-reconciliation proof
+        run: |
+          mkdir -p /tmp/security-payments
+          ARTIFACT_DIR=/tmp/security-payments bash scripts/ci/verify-payments-foundation.sh
+
+      - name: Run Payments current-schema compatibility proof
+        run: |
+          ARTIFACT_DIR=/tmp/security-payments bash scripts/ci/verify-payments-foundation-current-schema.sh
+
+      - name: Run Payments real-concurrency proof
+        run: |
+          export PGHOST=$(echo "$DB_URL" | sed -E 's|postgresql://[^@]+@([^:/]+):.*|\1|')
+          export PGPORT=$(echo "$DB_URL" | sed -E 's|postgresql://[^@]+@[^:]+:([0-9]+)/.*|\1|')
+          export PGUSER=$(echo "$DB_URL" | sed -E 's|postgresql://([^:]+):.*|\1|')
+          export PGPASSWORD=$(echo "$DB_URL" | sed -E 's|postgresql://[^:]+:([^@]+)@.*|\1|')
+          DB_NAME=$(echo "$DB_URL" | sed -E 's|.*/([^/?]+).*|\1|')
+          bash supabase/tests/payments_foundation_concurrency_proof.sh "$DB_NAME"
 
       - name: Run complete JavaScript suite
         run: npm test
