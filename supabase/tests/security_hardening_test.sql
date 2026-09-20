@@ -114,8 +114,86 @@ begin
     raise exception 'authenticated acquired server-only external claim';
   exception when insufficient_privilege then null;
   end;
+
+  begin
+    insert into public.reminders(invoice_id, user_id, title, detail)
+    values (
+      'a9200000-0000-4000-8000-000000000001',
+      'a9000000-0000-4000-8000-000000000001',
+      'forged',
+      'forged'
+    );
+    raise exception 'authenticated forged a reminder receipt';
+  exception when insufficient_privilege then null;
+  end;
+
+  begin
+    insert into public.events(user_id, event_type, invoice_id, evidence)
+    values (
+      'a9000000-0000-4000-8000-000000000001',
+      'reminder_sent',
+      'a9200000-0000-4000-8000-000000000001',
+      '{"forged":true}'::jsonb
+    );
+    raise exception 'authenticated forged a server-authored event';
+  exception
+    when insufficient_privilege then null;
+    when check_violation then null;
+  end;
+
+  insert into public.events(user_id, event_type, invoice_id, evidence)
+  values (
+    'a9000000-0000-4000-8000-000000000001',
+    'invoice_created',
+    'a9200000-0000-4000-8000-000000000001',
+    '{}'::jsonb
+  );
 end
 $tenant_rls$;
+
+reset role;
+
+insert into public.awaiting_signature(
+  id, user_id, invoice_id, action_type, status, draft_content
+) values (
+  'a9300000-0000-4000-8000-000000000001',
+  'a9000000-0000-4000-8000-000000000001',
+  'a9200000-0000-4000-8000-000000000001',
+  'send_reminder',
+  'pending',
+  'draft'
+);
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub', 'a9000000-0000-4000-8000-000000000001', true);
+select set_config('request.jwt.claim.role', 'authenticated', true);
+
+select public.skip_awaiting_signature(
+  'a9300000-0000-4000-8000-000000000001',
+  'Founder chose to handle manually'
+);
+
+do $skip_proof$
+declare
+  v_status text;
+begin
+  select status into v_status
+  from public.awaiting_signature
+  where id = 'a9300000-0000-4000-8000-000000000001';
+
+  if v_status <> 'skipped' then
+    raise exception 'constrained signature skip did not resolve pending row';
+  end if;
+
+  begin
+    update public.awaiting_signature
+    set status = 'approved'
+    where id = 'a9300000-0000-4000-8000-000000000001';
+    raise exception 'authenticated directly mutated approval evidence';
+  exception when insufficient_privilege then null;
+  end;
+end
+$skip_proof$;
 
 reset role;
 
