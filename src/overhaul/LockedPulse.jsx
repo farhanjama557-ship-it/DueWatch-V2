@@ -1,96 +1,142 @@
-const focusRows = [
-  { client: 'Atlas Freight', invoice: '#1049', amount: '$12,480', due: '14 days overdue', state: 'Needs review', tone: 'orange' },
-  { client: 'Northstar Labs', invoice: '#1056', amount: '$8,250', due: '8 days overdue', state: 'DW handling', tone: 'green' },
-  { client: 'Luma Studio', invoice: '#1062', amount: '$4,900', due: 'Due in 2 days', state: 'Scheduled', tone: 'blue' },
-]
+import { useMemo } from 'react'
+import { ChevronDown, Mic, MoreHorizontal } from 'lucide-react'
+import { useAuth } from '../context/AuthContext'
+import { balanceOf, isOutstanding, useData } from '../context/DataContext'
+import { daysOverdue, formatLongDate, formatMoney, timeAgo } from '../lib/format'
+import { OverhaulIcon } from './OverhaulIconSystem'
 
-const actionRows = [
-  { when: 'Today · 3:30 PM', client: 'Northstar Labs', action: 'Friendly reminder', mode: 'Autopilot' },
-  { when: 'Tomorrow · 9:00 AM', client: 'Luma Studio', action: 'Promise follow-up', mode: 'Scheduled' },
-  { when: 'Sep 23 · 10:00 AM', client: 'Atlas Freight', action: 'Policy review', mode: 'Needs approval' },
-]
-
-const noticed = [
-  {
-    title: 'Atlas — Late fee policy conflict',
-    body: 'Conflicting instructions found. DW is investigating.',
-    meta: 'Waiting 4m · 3 sources',
-    signature: true,
-  },
-  {
-    title: 'Payment received',
-    body: 'Northstar Labs payment evidence matched the invoice.',
-    meta: 'Verified · 2 sources',
-  },
-  {
-    title: 'Promises need review',
-    body: 'Two promises are approaching their follow-up window.',
-    meta: '2 items',
-  },
-]
-
-function TinySpark({ variant = 'up' }) {
-  const d = variant === 'flat' ? 'M1 12 L7 9 L12 11 L18 7 L24 8' : 'M1 13 L6 11 L10 12 L15 6 L20 8 L25 3'
+function TinySpark({ tone = 'green', variant = 'up' }) {
+  const d = variant === 'flat'
+    ? 'M1 12 L6 9 L11 11 L16 7 L21 9 L26 7'
+    : 'M1 13 L6 11 L10 12 L15 6 L20 8 L25 3'
   return (
-    <svg className="ov-spark" viewBox="0 0 26 16" aria-hidden="true">
-      <path d={d} fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    <svg className={`ov-spark ov-spark--${tone}`} viewBox="0 0 27 16" aria-hidden="true">
+      <path d={d} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   )
 }
 
-function OrbitGlyph({ type }) {
-  const shapes = {
-    cash: <><path d="M6 15h12M8 12V8m4 4V5m4 7V9" /><circle cx="17.5" cy="5.5" r="2.3" /></>,
-    payments: <><path d="M5 8h14v9H5z" /><path d="M5 10h14M8 14h3" /></>,
-    evidence: <><path d="M7 4h9l3 3v13H7z" /><path d="M16 4v4h4M10 12h6M10 15h5" /></>,
-    reminders: <><path d="M12 5a5 5 0 0 1 5 5v4l2 2H5l2-2v-4a5 5 0 0 1 5-5Z" /><path d="M10 19h4" /></>,
-    memory: <><circle cx="12" cy="12" r="7" /><path d="M9 10h6M9 13h6M10 16h4" /></>,
-    activity: <><path d="M4 13h4l2-5 4 9 2-4h4" /></>,
-  }
-  return (
-    <span className={`ov-orbit-icon ov-orbit-icon--${type}`}>
-      <svg viewBox="0 0 24 24" aria-hidden="true">{shapes[type]}</svg>
-    </span>
-  )
+function StatusChip({ children, tone = 'neutral' }) {
+  return <span className={`ov-chip ov-chip--${tone}`}>{children}</span>
 }
 
-function OrbitCard({ title, value, note, type, className = '' }) {
+function clientNameOf(invoice) {
+  return invoice?.clients?.name || 'Client'
+}
+
+function eventClientName(event) {
+  return event?.invoices?.clients?.name || 'DueWatch'
+}
+
+function eventTitle(event) {
+  const raw = String(event?.event_type || 'Activity recorded')
+  return raw
+    .split('_')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ')
+}
+
+function isPaymentEvent(event) {
+  return /payment/i.test(String(event?.event_type || ''))
+}
+
+function isDwAction(event) {
+  return /(reminder|follow|autopilot|escalat|signature|outreach|email)/i.test(String(event?.event_type || ''))
+}
+
+function OrbitCard({ title, value, note, icon, tone, className }) {
   return (
     <div className={`ov-orbit-card ${className}`}>
-      <OrbitGlyph type={type} />
-      <div>
+      <span className={`ov-orbit-icon ov-orbit-icon--${tone}`}>
+        <OverhaulIcon name={icon} size={20} />
+      </span>
+      <div className="ov-orbit-copy-block">
         <span className="ov-orbit-label">{title}</span>
         <strong>{value}</strong>
         <small>{note}</small>
       </div>
+      <span className={`ov-orbit-dot ov-orbit-dot--${tone}`} />
+      <TinySpark tone={tone === 'blue' ? 'blue' : tone === 'orange' ? 'orange' : 'green'} />
     </div>
   )
 }
 
-function PulseCore() {
+function PulseCore({
+  outstanding,
+  paymentCount,
+  totalEventsCount,
+  reminderCount,
+  clientsCount,
+  recentEventsCount,
+}) {
   return (
     <div className="ov-pulse-stage">
-      <svg className="ov-pulse-lines" viewBox="0 0 760 400" preserveAspectRatio="none" aria-hidden="true">
-        <path d="M380 198 C300 170 238 120 176 76" />
-        <path d="M380 198 C300 180 233 188 151 195" />
-        <path d="M380 198 C305 220 238 278 166 323" />
-        <path d="M380 198 C455 168 521 115 593 72" />
-        <path d="M380 198 C458 190 526 194 613 195" />
-        <path d="M380 198 C456 224 523 280 598 327" />
+      <svg className="ov-pulse-lines" viewBox="0 0 780 340" preserveAspectRatio="none" aria-hidden="true">
+        <path d="M390 172 C315 142 258 82 186 58" />
+        <path d="M390 172 C315 166 245 168 171 170" />
+        <path d="M390 172 C315 198 253 250 183 281" />
+        <path d="M390 172 C465 142 522 82 594 58" />
+        <path d="M390 172 C465 166 535 168 609 170" />
+        <path d="M390 172 C465 198 527 250 597 281" />
       </svg>
 
-      <OrbitCard className="cash" type="cash" title="Cash awareness" value="$428.5k" note="under management" />
-      <OrbitCard className="payments" type="payments" title="Payments" value="18 tracked" note="this month" />
-      <OrbitCard className="evidence" type="evidence" title="Evidence" value="42 verified" note="sources linked" />
-      <OrbitCard className="reminders" type="reminders" title="Reminders & follow-ups" value="7 queued" note="within authority" />
-      <OrbitCard className="memory" type="memory" title="Client memory" value="12 active" note="patterns retained" />
-      <OrbitCard className="activity" type="activity" title="Activity stream" value="31 events" note="recently recorded" />
+      <OrbitCard
+        className="cash"
+        icon="cashAwareness"
+        tone="green"
+        title="Cash awareness"
+        value={formatMoney(outstanding)}
+        note="open receivables"
+      />
+      <OrbitCard
+        className="payments"
+        icon="payments"
+        tone="orange"
+        title="Payments"
+        value={String(paymentCount)}
+        note="recent payment events"
+      />
+      <OrbitCard
+        className="evidence"
+        icon="evidence"
+        tone="blue"
+        title="Evidence"
+        value={String(totalEventsCount)}
+        note="actions recorded"
+      />
+      <OrbitCard
+        className="reminders"
+        icon="reminders"
+        tone="orange"
+        title="Reminders & follow-ups"
+        value={String(reminderCount)}
+        note="recent DW actions"
+      />
+      <OrbitCard
+        className="memory"
+        icon="memory"
+        tone="green"
+        title="Client memory"
+        value={String(clientsCount)}
+        note="client records"
+      />
+      <OrbitCard
+        className="activity"
+        icon="activityStream"
+        tone="orange"
+        title="Activity stream"
+        value={String(recentEventsCount)}
+        note="recent events"
+      />
 
       <div className="ov-orb-wrap" aria-label="DW Pulse resting">
         <div className="ov-orb-ring ov-orb-ring-one" />
         <div className="ov-orb-ring ov-orb-ring-two" />
+        <div className="ov-orb-ring ov-orb-ring-three" />
         <div className="ov-orb">
-          <div className="ov-orb-core" />
+          <span className="ov-orb-highlight" />
+          <span className="ov-orb-core" />
         </div>
         <div className="ov-orb-copy">
           <strong>DW PULSE</strong>
@@ -101,114 +147,327 @@ function PulseCore() {
   )
 }
 
-function StatusChip({ children, tone = 'neutral' }) {
-  return <span className={`ov-chip ov-chip--${tone}`}>{children}</span>
+function LiveMonitor({ invoicesCount, evidenceCount, paymentCount, actionCount }) {
+  return (
+    <section className="ov-panel ov-live-panel">
+      <div className="ov-rail-title">
+        <div className="ov-live-title">
+          <span className="ov-live-dot" />
+          <strong>Live Monitor</strong>
+          <span className="ov-live-pip" />
+        </div>
+        <StatusChip tone="green"><span className="ov-live-dot" />Live</StatusChip>
+      </div>
+      <div className="ov-monitor-grid">
+        <div>
+          <span>Invoices watched</span>
+          <strong>{invoicesCount}</strong>
+          <TinySpark />
+        </div>
+        <div>
+          <span>Recent evidence</span>
+          <strong>{evidenceCount}</strong>
+          <TinySpark />
+        </div>
+        <div>
+          <span>Recent payments</span>
+          <strong>{paymentCount}</strong>
+          <TinySpark tone="blue" variant="flat" />
+        </div>
+        <div>
+          <span>Recent DW actions</span>
+          <strong>{actionCount}</strong>
+          <TinySpark />
+        </div>
+      </div>
+    </section>
+  )
 }
 
-function RightRail() {
+function NoticeRow({ tone = 'orange', title, body, meta, signature }) {
+  return (
+    <article className="ov-notice">
+      <span className={`ov-notice-icon ov-notice-icon--${tone}`}>
+        <OverhaulIcon name={tone === 'green' ? 'evidence' : 'alert'} size={16} />
+      </span>
+      <div className="ov-notice-copy">
+        <strong>{title}</strong>
+        <p>{body}</p>
+        {signature ? (
+          <button className="ov-signature-trigger" type="button" aria-disabled="true">
+            <span>◉</span> DW Signature <span>→</span>
+          </button>
+        ) : null}
+        {meta ? <small>{meta}</small> : null}
+      </div>
+      <ChevronDown className="ov-notice-chevron" size={15} />
+    </article>
+  )
+}
+
+function RightRail({
+  invoices,
+  events,
+  approvals,
+  autopilotErrorCount,
+  evidenceCount,
+  paymentCount,
+  actionCount,
+}) {
+  const overdue = invoices
+    .filter((invoice) => isOutstanding(invoice) && daysOverdue(invoice.due_date) > 0)
+    .sort((a, b) => daysOverdue(b.due_date) - daysOverdue(a.due_date))[0]
+
+  const firstPayment = events.find(isPaymentEvent)
+
   return (
     <aside className="ov-right-rail">
-      <section className="ov-panel">
-        <div className="ov-panel-head">
-          <div>
-            <span className="ov-eyebrow">Live Monitor</span>
-            <h3>System activity</h3>
-          </div>
-          <StatusChip tone="green">Live</StatusChip>
-        </div>
-        <div className="ov-monitor-grid">
-          <div><span>Invoices watched</span><strong>168</strong><TinySpark /></div>
-          <div><span>Evidence recorded</span><strong>42</strong><TinySpark /></div>
-          <div><span>Payments tracked</span><strong>18</strong><TinySpark variant="flat" /></div>
-          <div><span>Autopilot actions</span><strong>27</strong><TinySpark /></div>
-        </div>
-      </section>
+      <LiveMonitor
+        invoicesCount={invoices.length}
+        evidenceCount={evidenceCount}
+        paymentCount={paymentCount}
+        actionCount={actionCount}
+      />
 
-      <section className="ov-panel">
-        <div className="ov-panel-head compact">
-          <div>
-            <span className="ov-eyebrow">What DW noticed</span>
-            <h3>Needs awareness</h3>
-          </div>
-          <button className="ov-text-button" type="button" aria-disabled="true">View all</button>
+      <section className="ov-panel ov-noticed-panel">
+        <div className="ov-rail-section-head">
+          <h3>What DW noticed <span>{Math.min(3, Number(Boolean(overdue)) + Number(Boolean(firstPayment)) + Number(approvals > 0 || autopilotErrorCount > 0)) || 0}</span></h3>
+          <button type="button" aria-disabled="true">View all</button>
         </div>
+
         <div className="ov-notice-list">
-          {noticed.map((item) => (
-            <article className="ov-notice" key={item.title}>
-              <div className="ov-notice-dot" />
-              <div className="ov-notice-copy">
-                <strong>{item.title}</strong>
-                <p>{item.body}</p>
-                {item.signature && (
-                  <button className="ov-signature-trigger" type="button" aria-disabled="true">
-                    <span>✦</span> DW Signature <span>→</span>
-                  </button>
-                )}
-                <small>{item.meta}</small>
-              </div>
-            </article>
-          ))}
+          {approvals > 0 ? (
+            <NoticeRow
+              title={`${approvals} approval${approvals === 1 ? '' : 's'} need review`}
+              body="DW is waiting for founder judgment before proceeding."
+              meta="Approval boundary preserved"
+              signature
+            />
+          ) : autopilotErrorCount > 0 ? (
+            <NoticeRow
+              title="Autopilot needs attention"
+              body={`${autopilotErrorCount} recent execution error${autopilotErrorCount === 1 ? '' : 's'} recorded.`}
+              meta="Review Activity for evidence"
+            />
+          ) : null}
+
+          {overdue ? (
+            <NoticeRow
+              title={`${clientNameOf(overdue)} — overdue invoice`}
+              body={`${overdue.invoice_number || 'Invoice'} is ${daysOverdue(overdue.due_date)} days overdue with ${formatMoney(balanceOf(overdue))} outstanding.`}
+              meta="Based on current invoice data"
+            />
+          ) : null}
+
+          {firstPayment ? (
+            <NoticeRow
+              tone="green"
+              title="Payment activity recorded"
+              body={`${eventClientName(firstPayment)} has a recent payment event in DueWatch.`}
+              meta={timeAgo(firstPayment.created_at)}
+            />
+          ) : null}
+
+          {!approvals && !autopilotErrorCount && !overdue && !firstPayment ? (
+            <div className="ov-rail-empty">No urgent issues in the current data window.</div>
+          ) : null}
         </div>
       </section>
 
-      <section className="ov-panel">
-        <div className="ov-panel-head compact">
-          <div>
-            <span className="ov-eyebrow">Recent operational events</span>
-            <h3>Latest</h3>
-          </div>
+      <section className="ov-panel ov-events-panel">
+        <div className="ov-rail-section-head">
+          <h3>Recent operational events</h3>
+          <button type="button" aria-disabled="true">View all</button>
         </div>
         <div className="ov-event-list">
-          <div><span className="ov-event-dot green" /><p><strong>Northstar Labs</strong><small>Payment evidence verified · 12m ago</small></p></div>
-          <div><span className="ov-event-dot orange" /><p><strong>Atlas Freight</strong><small>Policy conflict detected · 24m ago</small></p></div>
-          <div><span className="ov-event-dot blue" /><p><strong>Luma Studio</strong><small>Follow-up scheduled · 41m ago</small></p></div>
+          {events.slice(0, 5).map((event) => (
+            <div key={event.id}>
+              <span className={`ov-event-dot ${isPaymentEvent(event) ? 'green' : isDwAction(event) ? 'orange' : 'blue'}`} />
+              <p>
+                <strong>{eventTitle(event)}</strong>
+                <small>{eventClientName(event)} · {timeAgo(event.created_at)}</small>
+              </p>
+            </div>
+          ))}
+          {events.length === 0 ? <div className="ov-rail-empty">No recent operational events.</div> : null}
         </div>
       </section>
     </aside>
   )
 }
 
+function PriorityInvoices({ rows }) {
+  return (
+    <section className="ov-panel ov-table-panel">
+      <div className="ov-compact-head">
+        <h3>Top invoices to focus on <span>{rows.length}</span></h3>
+        <button type="button" aria-disabled="true">View all</button>
+      </div>
+      <div className="ov-focus-table">
+        <div className="ov-focus-row ov-focus-header">
+          <span>Invoice</span><span>Client</span><span>Amount</span><span>Overdue</span><span>Why it needs attention</span><span>Next action</span>
+        </div>
+        {rows.map((invoice) => {
+          const overdueBy = daysOverdue(invoice.due_date)
+          return (
+            <div className="ov-focus-row" key={invoice.id}>
+              <span className="ov-focus-invoice">{invoice.invoice_number || '—'}</span>
+              <span>{clientNameOf(invoice)}</span>
+              <span>{formatMoney(balanceOf(invoice))}</span>
+              <span className={overdueBy > 0 ? 'ov-danger-text' : ''}>{overdueBy > 0 ? overdueBy : '—'}</span>
+              <span>{overdueBy >= 30 ? 'Severely overdue' : overdueBy > 0 ? 'Follow-up overdue' : 'Upcoming balance'}</span>
+              <span><button className="ov-row-action" type="button" aria-disabled="true">{overdueBy >= 30 ? 'Review' : 'Follow up'}</button></span>
+            </div>
+          )
+        })}
+        {rows.length === 0 ? <div className="ov-table-empty">No outstanding invoices need attention.</div> : null}
+      </div>
+    </section>
+  )
+}
+
+function AttentionQueue({ rows }) {
+  return (
+    <section className="ov-panel ov-table-panel">
+      <div className="ov-compact-head">
+        <h3>Due soon & next attention <span>{rows.length}</span></h3>
+        <button type="button" aria-disabled="true">View all</button>
+      </div>
+      <div className="ov-attention-table">
+        <div className="ov-attention-row ov-attention-header">
+          <span>Client</span><span>Invoice</span><span>Due</span><span>Type</span>
+        </div>
+        {rows.map((invoice) => {
+          const overdueBy = daysOverdue(invoice.due_date)
+          return (
+            <div className="ov-attention-row" key={invoice.id}>
+              <span>{clientNameOf(invoice)}</span>
+              <span>{invoice.invoice_number || '—'}</span>
+              <span>{overdueBy > 0 ? `${overdueBy}d overdue` : invoice.due_date || 'No due date'}</span>
+              <span><StatusChip tone={overdueBy > 0 ? 'orange' : 'blue'}>{overdueBy > 0 ? 'Needs attention' : 'Upcoming'}</StatusChip></span>
+            </div>
+          )
+        })}
+        {rows.length === 0 ? <div className="ov-table-empty">No due-soon invoices in the current data.</div> : null}
+      </div>
+    </section>
+  )
+}
+
 export default function LockedPulse() {
+  const { user } = useAuth()
+  const {
+    invoices,
+    clients,
+    events,
+    name,
+    loading,
+    error,
+    autopilotEnabled,
+    awaitingSignature,
+    totalEventsCount,
+    autopilotErrorCount,
+  } = useData()
+
+  const outstandingInvoices = useMemo(
+    () => invoices.filter(isOutstanding),
+    [invoices]
+  )
+  const outstanding = useMemo(
+    () => outstandingInvoices.reduce((sum, invoice) => sum + balanceOf(invoice), 0),
+    [outstandingInvoices]
+  )
+  const priorityRows = useMemo(
+    () => outstandingInvoices
+      .slice()
+      .sort((a, b) => daysOverdue(b.due_date) - daysOverdue(a.due_date) || balanceOf(b) - balanceOf(a))
+      .slice(0, 5),
+    [outstandingInvoices]
+  )
+  const nextAttentionRows = useMemo(
+    () => outstandingInvoices
+      .slice()
+      .sort((a, b) => String(a.due_date || '9999').localeCompare(String(b.due_date || '9999')))
+      .slice(0, 5),
+    [outstandingInvoices]
+  )
+  const paymentEvents = useMemo(() => events.filter(isPaymentEvent), [events])
+  const dwActions = useMemo(() => events.filter(isDwAction), [events])
+  const evidenceCount = useMemo(
+    () => events.filter((event) => event.evidence && Object.keys(event.evidence).length > 0).length,
+    [events]
+  )
+  const reminderCount = dwActions.length
+
+  const fullName = (user?.user_metadata?.full_name || '').trim()
+  const greetingName = fullName ? fullName.split(/\s+/)[0] : name || 'there'
+  const company =
+    user?.user_metadata?.company ||
+    user?.user_metadata?.organization ||
+    user?.user_metadata?.workspace ||
+    'Workspace'
+
+  if (loading) {
+    return <div className="ov-pulse-page"><div className="ov-page-state">Loading DueWatch…</div></div>
+  }
+
+  if (error) {
+    return <div className="ov-pulse-page"><div className="ov-page-state ov-page-state--error">Couldn&apos;t load Pulse: {error}</div></div>
+  }
+
   return (
     <div className="ov-pulse-page">
-      <div className="ov-topbar">
+      <header className="ov-topbar">
         <label className="ov-global-search">
-          <span>⌕</span>
-          <input placeholder="Search invoices, clients, activity…" readOnly />
-          <kbd>⌘K</kbd>
+          <OverhaulIcon name="search" size={16} />
+          <input placeholder="Search invoices, clients, payments..." readOnly />
+          <kbd>⌘ K</kbd>
         </label>
+
         <div className="ov-top-actions">
-          <button type="button" aria-label="Notifications">◌</button>
-          <div className="ov-top-avatar">FJ</div>
+          <button className="ov-notification-button" type="button" aria-label="Notifications">
+            <OverhaulIcon name="notifications" size={18} />
+            {awaitingSignature.length > 0 ? <span>{Math.min(awaitingSignature.length, 9)}</span> : null}
+          </button>
+          <button className="ov-workspace-menu" type="button" aria-disabled="true">
+            {company}<ChevronDown size={14} />
+          </button>
         </div>
-      </div>
+      </header>
 
       <div className="ov-page-inner">
         <section className="ov-welcome">
           <div>
-            <h1>Good morning, <span>Farhan.</span></h1>
+            <h1>Good morning, <span>{greetingName}.</span></h1>
             <div className="ov-inline-status">
-              <StatusChip tone="green"><span className="ov-status-dot" />Autopilot active</StatusChip>
-              <span>Sunday, September 20</span>
-              <span>168 invoices watched</span>
-              <span>27 handled automatically</span>
-              <span>3 need approval</span>
+              <span className={`ov-autopilot-state ${autopilotEnabled ? 'is-on' : ''}`}>
+                <span className="ov-live-dot" />
+                Autopilot {autopilotEnabled ? 'active' : 'off'}
+              </span>
+              <span>{formatLongDate(new Date())}</span>
+              <span>{invoices.length} invoices</span>
+              <span>{dwActions.length} recent DW actions</span>
+              <span>{awaitingSignature.length} need{awaitingSignature.length === 1 ? 's' : ''} approval</span>
             </div>
           </div>
-          <button className="ov-mode-button" type="button" aria-disabled="true">
-            <span className="ov-status-dot" /> Live mode <span>⌄</span>
-          </button>
+
+          <div className="ov-live-mode-wrap">
+            <button className="ov-live-mode-button" type="button" aria-disabled="true">
+              <span className="ov-live-dot" /> Live mode
+            </button>
+            <span className="ov-sun-symbol">☼</span>
+          </div>
         </section>
 
         <section className="ov-ask">
           <div className="ov-ask-row">
-            <span className="ov-ask-mark">✦</span>
-            <input placeholder="Ask DW anything about your receivables…" readOnly />
-            <button type="button" aria-label="Voice input" aria-disabled="true">◉</button>
-            <button className="ov-send" type="button" aria-disabled="true">↑</button>
+            <span className="ov-ask-mark"><OverhaulIcon name="sparkle" size={18} /></span>
+            <input placeholder="Ask DW anything about your receivables..." readOnly />
+            <button type="button" aria-label="Voice input" aria-disabled="true"><Mic size={19} /></button>
+            <button className="ov-send" type="button" aria-disabled="true"><OverhaulIcon name="send" size={17} /></button>
           </div>
           <div className="ov-prompt-row">
-            {['What needs my attention?', 'Why did Atlas pay late?', 'Show overdue by reason', 'Draft a follow-up', 'Cash forecast'].map((prompt) => (
+            {['What needs my attention?', 'Why did this client pay late?', 'Show overdue by reason', 'Draft a follow-up', 'Cash forecast'].map((prompt) => (
               <button type="button" key={prompt} aria-disabled="true">{prompt}</button>
             ))}
           </div>
@@ -216,89 +475,67 @@ export default function LockedPulse() {
 
         <div className="ov-main-grid">
           <section className="ov-command">
-            <PulseCore />
+            <PulseCore
+              outstanding={outstanding}
+              paymentCount={paymentEvents.length}
+              totalEventsCount={totalEventsCount}
+              reminderCount={reminderCount}
+              clientsCount={clients.length}
+              recentEventsCount={events.length}
+            />
 
             <div className="ov-work-grid">
-              <section className="ov-panel ov-table-panel">
-                <div className="ov-panel-head">
-                  <div>
-                    <span className="ov-eyebrow">Top invoices to focus on</span>
-                    <h3>Priority receivables</h3>
-                  </div>
-                  <button className="ov-text-button" type="button" aria-disabled="true">View invoices</button>
-                </div>
-                <div className="ov-table">
-                  <div className="ov-tr ov-th"><span>Client</span><span>Invoice</span><span>Amount</span><span>Timing</span><span>Status</span></div>
-                  {focusRows.map((row) => (
-                    <div className="ov-tr" key={row.client}>
-                      <span><b className="ov-client-avatar">{row.client.slice(0, 2).toUpperCase()}</b><strong>{row.client}</strong></span>
-                      <span>{row.invoice}</span><span>{row.amount}</span><span>{row.due}</span>
-                      <span><StatusChip tone={row.tone}>{row.state}</StatusChip></span>
-                    </div>
-                  ))}
-                </div>
-              </section>
-
-              <section className="ov-panel ov-table-panel">
-                <div className="ov-panel-head">
-                  <div>
-                    <span className="ov-eyebrow">Due soon & scheduled actions</span>
-                    <h3>Upcoming</h3>
-                  </div>
-                  <button className="ov-text-button" type="button" aria-disabled="true">Calendar</button>
-                </div>
-                <div className="ov-table ov-action-table">
-                  <div className="ov-tr ov-th"><span>When</span><span>Client</span><span>Action</span><span>Mode</span></div>
-                  {actionRows.map((row) => (
-                    <div className="ov-tr" key={row.when}>
-                      <span>{row.when}</span><span><strong>{row.client}</strong></span><span>{row.action}</span><span>{row.mode}</span>
-                    </div>
-                  ))}
-                </div>
-              </section>
+              <PriorityInvoices rows={priorityRows} />
+              <AttentionQueue rows={nextAttentionRows} />
             </div>
 
             <div className="ov-bottom-grid">
               <section className="ov-panel ov-impact">
-                <div className="ov-panel-head">
-                  <div>
-                    <span className="ov-eyebrow">Autopilot impact this month</span>
-                    <h3>Work handled quietly</h3>
-                  </div>
+                <div className="ov-compact-head">
+                  <h3>Autopilot impact this month</h3>
+                  <button type="button" aria-disabled="true">View details</button>
                 </div>
                 <div className="ov-impact-metrics">
-                  <div><span>Actions handled</span><strong>27</strong><small>without founder input</small></div>
-                  <div><span>Approvals requested</span><strong>3</strong><small>judgment preserved</small></div>
-                  <div><span>Accounts watched</span><strong>42</strong><small>across 168 invoices</small></div>
+                  <div>
+                    <span className="ov-metric-icon ov-metric-icon--green"><OverhaulIcon name="clients" size={19} /></span>
+                    <p><strong>{dwActions.length}</strong><span>recent DW actions</span><small>visible activity window</small></p>
+                  </div>
+                  <div>
+                    <span className="ov-metric-icon ov-metric-icon--blue"><OverhaulIcon name="clock" size={19} /></span>
+                    <p><strong>{awaitingSignature.length}</strong><span>approvals waiting</span><small>founder judgment preserved</small></p>
+                  </div>
+                  <div>
+                    <span className="ov-metric-icon ov-metric-icon--green"><OverhaulIcon name="cash" size={19} /></span>
+                    <p><strong>{formatMoney(outstanding)}</strong><span>open receivables</span><small>current balance under watch</small></p>
+                  </div>
                 </div>
               </section>
 
               <section className="ov-panel ov-mode-panel">
-                <div className="ov-panel-head">
+                <div className="ov-compact-head">
+                  <h3>DW Operating mode</h3>
+                </div>
+                <div className="ov-mode-content">
+                  <span className="ov-mode-moon">☾</span>
                   <div>
-                    <span className="ov-eyebrow">DW operating mode</span>
-                    <h3>Normal</h3>
+                    <strong>{autopilotEnabled ? 'Normal' : 'Manual'}</strong>
+                    <p>{autopilotEnabled ? 'Operating within current Autopilot settings.' : 'Autopilot is currently disabled.'}</p>
+                    <button type="button" aria-disabled="true">Change mode</button>
                   </div>
-                  <button className="ov-text-button" type="button" aria-disabled="true">Autopilot settings</button>
-                </div>
-                <div className="ov-mode-options">
-                  <button className="is-selected" type="button" aria-disabled="true">Normal</button>
-                  <button type="button" aria-disabled="true">Night Shift</button>
-                  <button type="button" aria-disabled="true">Cash Recovery</button>
-                  <button type="button" aria-disabled="true">Protect</button>
-                  <button type="button" aria-disabled="true">Away</button>
-                  <button type="button" aria-disabled="true">Quarter-End</button>
-                </div>
-                <div className="ov-mode-meta">
-                  <span>Timezone <strong>Local</strong></span>
-                  <span>Quiet hours <strong>On</strong></span>
-                  <span>Weekend actions <strong>Off</strong></span>
                 </div>
               </section>
             </div>
           </section>
 
-          <RightRail />
+          <RightRail
+            invoices={invoices}
+            events={events}
+            approvals={awaitingSignature.length}
+            autopilotErrorCount={autopilotErrorCount}
+            evidenceCount={evidenceCount}
+            paymentCount={paymentEvents.length}
+            actionCount={dwActions.length}
+          />
         </div>
       </div>
     </div>
