@@ -14,6 +14,7 @@ concurrency:
 
 jobs:
   invoke:
+    if: ${{ vars.DUEWATCH_REPORT_SCHEDULER_ENABLED == 'true' }}
     name: "Invoke report delivery worker"
     runs-on: ubuntu-latest
     timeout-minutes: 5
