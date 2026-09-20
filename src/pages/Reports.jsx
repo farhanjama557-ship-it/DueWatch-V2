@@ -11,6 +11,12 @@ import {
   saveCollectionTarget,
   saveReportView,
 } from '../lib/reports/reportPreferences'
+import {
+  deleteReportSchedule,
+  loadReportSchedules,
+  saveReportSchedule,
+  setReportScheduleEnabled,
+} from '../lib/reports/reportSchedule'
 import './reports.css'
 
 const TABS = [
@@ -445,6 +451,18 @@ export default function Reports() {
   const [activeTab, setActiveTab] = useState('collections')
   const [selectedCurrency, setSelectedCurrency] = useState('')
   const [scheduleMessage, setScheduleMessage] = useState(false)
+  const [schedules, setSchedules] = useState(null)
+  const [scheduleError, setScheduleError] = useState(null)
+  const [savingSchedule, setSavingSchedule] = useState(false)
+  const [scheduleName, setScheduleName] = useState('')
+  const [scheduleEmail, setScheduleEmail] = useState('')
+  const [scheduleCadence, setScheduleCadence] = useState('weekly')
+  const [scheduleWeekday, setScheduleWeekday] = useState(1)
+  const [scheduleDayOfMonth, setScheduleDayOfMonth] = useState(1)
+  const [scheduleHour, setScheduleHour] = useState(8)
+  const [scheduleTimezone] = useState(
+    () => Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+  )
   const [preferences, setPreferences] = useState(null)
   const [preferenceError, setPreferenceError] = useState(null)
   const [showSaveView, setShowSaveView] = useState(false)
@@ -484,6 +502,26 @@ export default function Reports() {
       .catch((error) => {
         if (!active) return
         setPreferenceError(error instanceof Error ? error.message : String(error))
+      })
+    return () => { active = false }
+  }, [user?.id])
+
+  useEffect(() => {
+    if (user?.email && !scheduleEmail) setScheduleEmail(user.email)
+  }, [user?.email, scheduleEmail])
+
+  useEffect(() => {
+    let active = true
+    if (!user?.id) return undefined
+    setScheduleError(null)
+    loadReportSchedules({ database: supabase, userId: user.id })
+      .then((result) => {
+        if (!active) return
+        setSchedules(result)
+      })
+      .catch((error) => {
+        if (!active) return
+        setScheduleError(error instanceof Error ? error.message : String(error))
       })
     return () => { active = false }
   }, [user?.id])
@@ -560,7 +598,7 @@ export default function Reports() {
 
   function exportCsv() {
     if (!model) return
-    const csv = buildReportCsv(model)
+    const csv = buildReportCsv(model, { currency })
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
     const url = URL.createObjectURL(blob)
     const anchor = document.createElement('a')
@@ -653,6 +691,80 @@ export default function Reports() {
     }
   }
 
+  async function reloadSchedules() {
+    if (!user?.id) return
+    const result = await loadReportSchedules({ database: supabase, userId: user.id })
+    setSchedules(result)
+  }
+
+  async function handleSaveSchedule() {
+    if (!user?.id) return
+    setSavingSchedule(true)
+    setScheduleError(null)
+    try {
+      await saveReportSchedule({
+        database: supabase,
+        input: {
+          userId: user.id,
+          name: scheduleName,
+          recipientEmail: scheduleEmail,
+          cadence: scheduleCadence,
+          weekday: scheduleCadence === 'weekly' ? Number(scheduleWeekday) : null,
+          dayOfMonth: scheduleCadence === 'monthly' ? Number(scheduleDayOfMonth) : null,
+          localHour: Number(scheduleHour),
+          timezone: scheduleTimezone,
+          currency: selectedCurrency || null,
+          activeTab,
+          filters: {},
+        },
+      })
+      await reloadSchedules()
+      setScheduleName('')
+      setScheduleMessage(false)
+    } catch (error) {
+      setScheduleError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setSavingSchedule(false)
+    }
+  }
+
+  async function handleDeleteSchedule(id) {
+    if (!user?.id || !id) return
+    setSavingSchedule(true)
+    setScheduleError(null)
+    try {
+      await deleteReportSchedule({ database: supabase, userId: user.id, id })
+      await reloadSchedules()
+    } catch (error) {
+      setScheduleError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setSavingSchedule(false)
+    }
+  }
+
+  async function handleToggleSchedule(schedule) {
+    if (!user?.id || !schedule?.id) return
+    setSavingSchedule(true)
+    setScheduleError(null)
+    try {
+      await setReportScheduleEnabled({
+        database: supabase,
+        userId: user.id,
+        id: schedule.id,
+        enabled: !schedule.enabled,
+      })
+      await reloadSchedules()
+    } catch (error) {
+      setScheduleError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setSavingSchedule(false)
+    }
+  }
+
+  function printReport() {
+    window.print()
+  }
+
   if (loading) return <ReportsLoading />
   if (loadError || !model) {
     return (
@@ -717,16 +829,74 @@ export default function Reports() {
           >
             Save view
           </button>
+          <button className="reports-btn reports-btn-secondary" type="button" onClick={printReport}>Print / PDF</button>
           <button className="reports-btn reports-btn-secondary" type="button" onClick={exportCsv}>Export CSV</button>
           <button className="reports-btn reports-btn-primary" type="button" onClick={() => setScheduleMessage((value) => !value)} aria-expanded={scheduleMessage}>Schedule report</button>
         </div>
       </header>
 
       {scheduleMessage && (
-        <div className="reports-schedule-note" role="status">
-          <strong>Scheduled delivery is the next Reports phase.</strong>
-          <span>The current build supports truthful on-demand CSV exports; it will not pretend a recurring delivery was saved.</span>
-        </div>
+        <section className="reports-schedule-editor" aria-label="Schedule report">
+          <div className="reports-schedule-editor-copy">
+            <strong>Schedule recurring report</strong>
+            <span>
+              Sends the previous complete {scheduleCadence === 'weekly' ? 'week' : 'month'} as a CSV attachment.
+              Times use {scheduleTimezone}.
+            </span>
+          </div>
+          <label>
+            <span>Name</span>
+            <input value={scheduleName} onChange={(e) => setScheduleName(e.target.value)} placeholder="Weekly CFO report" maxLength={80} />
+          </label>
+          <label>
+            <span>Recipient</span>
+            <input type="email" value={scheduleEmail} onChange={(e) => setScheduleEmail(e.target.value)} placeholder="finance@example.com" />
+          </label>
+          <label>
+            <span>Cadence</span>
+            <select value={scheduleCadence} onChange={(e) => setScheduleCadence(e.target.value)}>
+              <option value="weekly">Weekly</option>
+              <option value="monthly">Monthly</option>
+            </select>
+          </label>
+          {scheduleCadence === 'weekly' ? (
+            <label>
+              <span>Day</span>
+              <select value={scheduleWeekday} onChange={(e) => setScheduleWeekday(Number(e.target.value))}>
+                <option value={1}>Monday</option>
+                <option value={2}>Tuesday</option>
+                <option value={3}>Wednesday</option>
+                <option value={4}>Thursday</option>
+                <option value={5}>Friday</option>
+                <option value={6}>Saturday</option>
+                <option value={0}>Sunday</option>
+              </select>
+            </label>
+          ) : (
+            <label>
+              <span>Day of month</span>
+              <select value={scheduleDayOfMonth} onChange={(e) => setScheduleDayOfMonth(Number(e.target.value))}>
+                {Array.from({ length: 28 }, (_, index) => index + 1).map((day) => (
+                  <option key={day} value={day}>{day}</option>
+                ))}
+              </select>
+            </label>
+          )}
+          <label>
+            <span>Hour</span>
+            <select value={scheduleHour} onChange={(e) => setScheduleHour(Number(e.target.value))}>
+              {Array.from({ length: 24 }, (_, hour) => hour).map((hour) => (
+                <option key={hour} value={hour}>{String(hour).padStart(2, '0')}:00</option>
+              ))}
+            </select>
+          </label>
+          <div className="reports-schedule-actions">
+            <button type="button" onClick={handleSaveSchedule} disabled={savingSchedule || !scheduleName.trim() || !scheduleEmail.trim()}>
+              {savingSchedule ? 'Saving…' : 'Save schedule'}
+            </button>
+            <button type="button" className="quiet" onClick={() => setScheduleMessage(false)}>Cancel</button>
+          </div>
+        </section>
       )}
 
       {showSaveView && savedViewsAvailable && (
@@ -773,6 +943,44 @@ export default function Reports() {
 
       {preferenceError && (
         <div className="reports-preference-error" role="alert">{preferenceError}</div>
+      )}
+      {scheduleError && (
+        <div className="reports-preference-error" role="alert">{scheduleError}</div>
+      )}
+
+      {schedules?.schedules?.available && schedules.schedules.rows.length > 0 && (
+        <section className="reports-schedule-list" aria-label="Scheduled reports">
+          <div className="reports-schedule-list-title">
+            <strong>Scheduled reports</strong>
+            <span>{schedules.schedules.rows.length} configured</span>
+          </div>
+          {schedules.schedules.rows.map((schedule) => {
+            const lastRun = schedules?.runs?.rows?.find((run) => run.schedule_id === schedule.id)
+            return (
+              <div className="reports-schedule-row" key={schedule.id}>
+                <div>
+                  <strong>{schedule.name}</strong>
+                  <span>
+                    {schedule.recipient_email} · {schedule.cadence} · {schedule.timezone}
+                  </span>
+                </div>
+                <span className={'reports-schedule-status ' + (schedule.enabled ? 'enabled' : 'disabled')}>
+                  {schedule.enabled ? 'Active' : 'Paused'}
+                </span>
+                <span>
+                  Next {new Date(schedule.next_run_at).toLocaleString()}
+                  {lastRun ? ' · last ' + lastRun.status : ''}
+                </span>
+                <button type="button" onClick={() => handleToggleSchedule(schedule)} disabled={savingSchedule}>
+                  {schedule.enabled ? 'Pause' : 'Resume'}
+                </button>
+                <button type="button" className="delete" onClick={() => handleDeleteSchedule(schedule.id)} disabled={savingSchedule}>
+                  Delete
+                </button>
+              </div>
+            )
+          })}
+        </section>
       )}
 
       <SourceNotice sources={unavailable} />
