@@ -1,56 +1,46 @@
 import { NavLink } from 'react-router-dom'
-import { DataProvider } from '../context/DataContext'
+import { ChevronDown, LogOut } from 'lucide-react'
+import { useAuth } from '../context/AuthContext'
+import { DataProvider, useData } from '../context/DataContext'
 import { PresenceProvider } from '../features/PresenceSystem'
+import { initials } from '../lib/format'
+import { DueWatchMark, OverhaulIcon } from './OverhaulIconSystem'
 import './overhaul.css'
 
-function DueWatchMark() {
-  return (
-    <svg className="ov-brand-mark" viewBox="0 0 44 44" aria-hidden="true">
-      <rect x="7" y="7" width="9" height="30" rx="1.5" fill="currentColor" />
-      <path d="M20 7h7.5A9.5 9.5 0 0 1 37 16.5V22H26a6 6 0 0 1-6-6V7Z" className="ov-brand-orange" />
-      <path d="M26 23h11v4.5A9.5 9.5 0 0 1 27.5 37H20v-8a6 6 0 0 1 6-6Z" fill="currentColor" />
-      <circle cx="28.5" cy="28.5" r="4.7" fill="white" />
-    </svg>
-  )
-}
-
 const primaryNav = [
-  { label: 'Pulse', to: '/', glyph: 'pulse' },
-  { label: 'Invoices', to: '/invoices', glyph: 'invoice' },
-  { label: 'Clients', to: '/clients', glyph: 'clients' },
-  { label: 'Promise-to-Pay', disabled: true, glyph: 'promise' },
-  { label: 'Cash Flow', to: '/cash-flow', glyph: 'cash' },
-  { label: 'Autopilot', to: '/autopilot', glyph: 'autopilot' },
-  { label: 'Activity', to: '/activity', glyph: 'activity' },
-  { label: 'Reports', disabled: true, glyph: 'reports' },
-  { label: 'Integrations', disabled: true, glyph: 'integrations' },
-  { label: 'Settings', to: '/settings', glyph: 'settings' },
+  { label: 'Pulse', to: '/', icon: 'pulse' },
+  { label: 'Invoices', to: '/invoices', icon: 'invoices', badge: true },
+  { label: 'Clients', to: '/clients', icon: 'clients' },
+  { label: 'Promise-to-Pay', disabled: true, icon: 'promise' },
+  { label: 'Cash Flow', to: '/cash-flow', icon: 'cash' },
+  { label: 'Autopilot', to: '/autopilot', icon: 'autopilot' },
+  { label: 'Activity', to: '/activity', icon: 'activity' },
+  { label: 'Reports', to: '/reports', icon: 'reports' },
+  { label: 'Integrations', disabled: true, icon: 'integrations' },
+  { label: 'Settings', to: '/settings', icon: 'settings' },
 ]
 
-function NavGlyph({ type }) {
-  const map = {
-    pulse: '◉',
-    invoice: '▤',
-    clients: '◫',
-    promise: '⌁',
-    cash: '⌁',
-    autopilot: '✦',
-    activity: '↻',
-    reports: '▥',
-    integrations: '⧉',
-    settings: '◌',
-  }
-  return <span className={`ov-nav-glyph ov-nav-glyph--${type}`} aria-hidden="true">{map[type] || '•'}</span>
-}
-
 function Sidebar() {
+  const { user, signOut } = useAuth()
+  const { name, overdueCount, autopilotEnabled, autopilotErrorCount } = useData()
+
+  const fullName = (user?.user_metadata?.full_name || '').trim()
+  const email = user?.email || ''
+  const displayName = fullName || name || email.split('@')[0] || 'Account'
+  const company =
+    user?.user_metadata?.company ||
+    user?.user_metadata?.organization ||
+    user?.user_metadata?.workspace ||
+    'Workspace'
+  const role = user?.user_metadata?.role || 'Early Access'
+
   return (
     <aside className="ov-sidebar">
       <div className="ov-brand">
-        <DueWatchMark />
-        <div>
+        <DueWatchMark className="ov-brand-mark" />
+        <div className="ov-brand-copy">
           <div className="ov-brand-name">DueWatch</div>
-          <div className="ov-brand-company">Acme Holdings</div>
+          <div className="ov-brand-company">{company}</div>
         </div>
       </div>
 
@@ -58,7 +48,7 @@ function Sidebar() {
         {primaryNav.map((item) =>
           item.disabled ? (
             <button key={item.label} className="ov-nav-item is-disabled" type="button" aria-disabled="true">
-              <NavGlyph type={item.glyph} />
+              <OverhaulIcon name={item.icon} size={17} className="ov-nav-glyph" />
               <span>{item.label}</span>
             </button>
           ) : (
@@ -68,8 +58,9 @@ function Sidebar() {
               end={item.to === '/'}
               className={({ isActive }) => `ov-nav-item${isActive ? ' is-active' : ''}`}
             >
-              <NavGlyph type={item.glyph} />
+              <OverhaulIcon name={item.icon} size={17} className="ov-nav-glyph" />
               <span>{item.label}</span>
+              {item.badge && overdueCount > 0 ? <b className="ov-nav-badge">{overdueCount}</b> : null}
             </NavLink>
           )
         )}
@@ -77,27 +68,49 @@ function Sidebar() {
 
       <div className="ov-sidebar-spacer" />
 
-      <div className="ov-autopilot-rail">
-        <span className="ov-status-dot" />
+      <section className="ov-autopilot-rail">
+        <span className={`ov-status-dot ${autopilotErrorCount > 0 ? 'is-warning' : ''}`} />
         <div>
-          <strong>Autopilot running</strong>
-          <span>Watching receivables</span>
+          <strong>Autopilot {autopilotEnabled ? 'active' : 'off'}</strong>
+          <span>
+            {autopilotErrorCount > 0
+              ? `${autopilotErrorCount} recent error${autopilotErrorCount === 1 ? '' : 's'}`
+              : autopilotEnabled
+                ? 'DW is handling receivables'
+                : 'Manual control'}
+          </span>
         </div>
-      </div>
+      </section>
 
       <div className="ov-profile">
-        <div className="ov-avatar">FJ</div>
+        <div className="ov-avatar">{initials(displayName)}</div>
         <div className="ov-profile-copy">
-          <strong>Farhan Jama</strong>
-          <span>Founder</span>
+          <strong>{displayName}</strong>
+          <span>{role}</span>
         </div>
-        <span className="ov-profile-more">•••</span>
+        <ChevronDown size={14} className="ov-profile-more" aria-hidden="true" />
       </div>
+
       <div className="ov-sidebar-links">
-        <button type="button">Help</button>
-        <button type="button">Log out</button>
+        <a href="https://github.com/farhanjama557-ship-it/DueWatch-V2" target="_blank" rel="noreferrer">
+          <OverhaulIcon name="help" size={16} />
+          <span>Help Center</span>
+        </a>
+        <button type="button" onClick={signOut}>
+          <LogOut size={16} />
+          <span>Log out</span>
+        </button>
       </div>
     </aside>
+  )
+}
+
+function ShellInner({ children }) {
+  return (
+    <div className="ov-app-shell">
+      <Sidebar />
+      <main className="ov-main">{children}</main>
+    </div>
   )
 }
 
@@ -105,10 +118,7 @@ export default function OverhaulShell({ children }) {
   return (
     <DataProvider>
       <PresenceProvider>
-        <div className="ov-app-shell">
-          <Sidebar />
-          <main className="ov-main">{children}</main>
-        </div>
+        <ShellInner>{children}</ShellInner>
       </PresenceProvider>
     </DataProvider>
   )
