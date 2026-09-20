@@ -15,6 +15,30 @@ const MAX_REQUEST_BYTES = 20 * 1024
 const MAX_REQUEST_CHARS = 12_000
 const PROVIDER_TIMEOUT_MS = 90_000
 
+type AnyRecord = Record<string, any>
+
+function statusFromError(error: unknown) {
+  if (error && typeof error === 'object' && 'status' in error) {
+    return Number((error as { status?: unknown }).status) || 400
+  }
+  return 400
+}
+
+function messageFromError(error: unknown, fallback: string) {
+  return error instanceof Error && error.message ? error.message : fallback
+}
+
+function errorName(error: unknown) {
+  return error instanceof Error ? error.name : ''
+}
+
+function errorCode(error: unknown) {
+  if (error && typeof error === 'object' && 'code' in error) {
+    return String((error as { code?: unknown }).code || 'unknown')
+  }
+  return error instanceof Error ? error.name : 'unknown'
+}
+
 const ALLOWED_GROQ_MODELS = new Set([
   'openai/gpt-oss-120b',
   'openai/gpt-oss-20b',
@@ -72,11 +96,11 @@ Deno.serve(async (req) => {
     try {
       body = await readBoundedJson(req, MAX_REQUEST_BYTES)
     } catch (error) {
-      const status = Number(error?.status) || 400
+      const status = statusFromError(error)
       return json(
         {
           error: status === 413 ? 'Ask DW request is too large.' : 'Ask DW request must be valid JSON.',
-          code: error?.message || 'INVALID_REQUEST',
+          code: messageFromError(error, 'INVALID_REQUEST'),
         },
         status,
         req
@@ -158,7 +182,7 @@ Deno.serve(async (req) => {
         }),
       })
     } catch (error) {
-      if (error?.name === 'AbortError') {
+      if (errorName(error) === 'AbortError') {
         return json({ error: 'Ask DW model provider timed out.' }, 504, req)
       }
       return json({ error: 'Ask DW model provider could not be reached.' }, 502, req)
@@ -215,12 +239,12 @@ Deno.serve(async (req) => {
       } : null,
     }, 200, req)
   } catch (error) {
-    console.error('ask-dw-model failed', error?.code || error?.name || 'unknown')
+    console.error('ask-dw-model failed', errorCode(error))
     return json({ error: 'Unexpected Ask DW model error.' }, 400, req)
   }
 })
 
-function isCallerEnabled(userId) {
+function isCallerEnabled(userId: string) {
   const callerId = String(userId || '').trim()
   if (!callerId) return false
 
@@ -233,7 +257,7 @@ function isCallerEnabled(userId) {
   return new Set(allowed).has(callerId)
 }
 
-function extractOutputText(payload) {
+function extractOutputText(payload: AnyRecord) {
   for (const item of payload?.output || []) {
     if (item?.type !== 'message') continue
     for (const content of item.content || []) {
@@ -243,7 +267,12 @@ function extractOutputText(payload) {
   return null
 }
 
-function json(body, status, req, extraHeaders = {}) {
+function json(
+  body: Record<string, unknown>,
+  status: number,
+  req: Request,
+  extraHeaders: Record<string, string> = {},
+) {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
