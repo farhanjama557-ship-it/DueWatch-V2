@@ -1,0 +1,185 @@
+/* Canonical Sep 20, 2026 shell — matches the user-supplied UI set. */
+:root {
+  --sidebar-w: 194px;
+}
+
+body {
+  background: #fbfbfa;
+  color: #12182b;
+}
+
+.canonical-sidebar.sidebar {
+  width: var(--sidebar-w);
+  min-width: var(--sidebar-w);
+  padding: 34px 12px 18px;
+  background: #fff;
+  border-right: 1px solid #e9ebef;
+  color: #17203a;
+  overflow: hidden;
+}
+
+.canonical-sidebar .sidebar-brand {
+  gap: 9px;
+  padding: 0 10px 28px;
+  margin: 0;
+}
+
+.canonical-sidebar .canonical-logo-mark {
+  width: 28px;
+  height: 28px;
+}
+
+.canonical-sidebar .sidebar-brand-name {
+  color: #0d1630;
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: -.035em;
+}
+
+.canonical-sidebar .sidebar-brand-subtitle {
+  margin-top: 2px;
+  color: #7b8495;
+  font-size: 10px;
+  line-height: 1.2;
+}
+
+.canonical-sidebar .sidebar-nav {
+  flex: 0 1 auto;
+  gap: 4px;
+}
+
+.canonical-sidebar .nav-item {
+  min-height: 37px;
+  gap: 11px;
+  padding: 9px 11px;
+  border-radius: 7px;
+  color: #26324d;
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.canonical-sidebar .nav-item:hover {
+  background: #f7f8fa;
+  color: #101932;
+}
+
+.canonical-sidebar .nav-item.active {
+  background: #fff1eb;
+  color: #ef4f1d;
+}
+
+.canonical-sidebar .nav-icon {
+  width: 17px;
+  height: 17px;
+}
+
+.canonical-sidebar .nav-badge {
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 6px;
+  background: #f1f3f6;
+  color: #151c2e;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.canonical-sidebar-bottom {
+  margin-top: auto;
+  padding-top: 18px;
+}
+
+.canonical-sidebar .sidebar-profile {
+  gap: 9px;
+  margin: 0 0 12px;
+  padding: 10px 9px;
+  border: 1px solid #e8ebef;
+  border-radius: 9px;
+  background: #fff;
+}
+
+.canonical-sidebar .profile-avatar {
+  width: 32px;
+  height: 32px;
+  background: #17203a;
+  color: #fff;
+  font-size: 10px;
+}
+
+.canonical-sidebar .profile-name {
+  color: #182138;
+  font-size: 11.5px;
+  font-weight: 700;
+}
+
+.canonical-sidebar .profile-tier {
+  margin-top: 1px;
+  color: #7c8494;
+  font-size: 9.5px;
+}
+
+.canonical-sidebar .profile-chevron {
+  margin-left: auto;
+  color: #525c70;
+}
+
+.canonical-sidebar-link {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-height: 38px;
+  padding: 8px 10px;
+  border: 0;
+  background: transparent;
+  color: #475269;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.canonical-sidebar-link:hover {
+  color: #111a31;
+  background: #f8f8f7;
+  border-radius: 7px;
+}
+
+.content {
+  margin-left: var(--sidebar-w);
+  padding: 0;
+  background: #fbfbfa;
+}
+
+@media (max-width: 860px) {
+  :root { --sidebar-w: 74px; }
+
+  .canonical-sidebar.sidebar {
+    padding-inline: 9px;
+  }
+
+  .canonical-sidebar .sidebar-brand {
+    justify-content: center;
+    padding-inline: 0;
+  }
+
+  .canonical-sidebar .sidebar-brand-text,
+  .canonical-sidebar .nav-label,
+  .canonical-sidebar .nav-badge,
+  .canonical-sidebar .profile-meta,
+  .canonical-sidebar .profile-chevron,
+  .canonical-sidebar-link span {
+    display: none;
+  }
+
+  .canonical-sidebar .nav-item,
+  .canonical-sidebar-link {
+    justify-content: center;
+  }
+
+  .canonical-sidebar .sidebar-profile {
+    justify-content: center;
+    padding-inline: 4px;
+  }
+}
