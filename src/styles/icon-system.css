@@ -1,0 +1,63 @@
+.dw-icon {
+  display: inline-block;
+  flex: 0 0 auto;
+}
+
+.dw-icon-orange { color: #f36a1d; }
+.dw-icon-green { color: #21b878; }
+.dw-icon-blue { color: #1488e8; }
+.dw-icon-violet { color: #7b38e8; }
+.dw-icon-pink { color: #f1265c; }
+.dw-icon-red { color: #ed2438; }
+.dw-icon-amber { color: #efa616; }
+.dw-icon-navy { color: #26385d; }
+
+.dw-icon-tile {
+  display: inline-grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: 1px solid rgba(26, 39, 66, .035);
+  border-radius: 11px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.7), 0 5px 14px rgba(34,48,78,.04);
+}
+
+.dw-icon-tile-orange {
+  color: #f36a1d;
+  background: linear-gradient(145deg, #fff9f4, #fff0e7);
+}
+
+.dw-icon-tile-green {
+  color: #20b978;
+  background: linear-gradient(145deg, #f4fff9, #e9fbf2);
+}
+
+.dw-icon-tile-blue {
+  color: #1388e8;
+  background: linear-gradient(145deg, #f4faff, #eaf4ff);
+}
+
+.dw-icon-tile-violet {
+  color: #7939e8;
+  background: linear-gradient(145deg, #faf7ff, #f0eaff);
+}
+
+.dw-icon-tile-pink {
+  color: #ee2760;
+  background: linear-gradient(145deg, #fff7fa, #ffeef4);
+}
+
+.dw-icon-tile-red {
+  color: #ed2438;
+  background: linear-gradient(145deg, #fff8f8, #ffeded);
+}
+
+.dw-icon-tile-amber {
+  color: #eca318;
+  background: linear-gradient(145deg, #fffaf3, #fff3dc);
+}
+
+.dw-icon-tile-navy {
+  color: #2d3d61;
+  background: linear-gradient(145deg, #fafbfe, #f1f4f9);
+}
