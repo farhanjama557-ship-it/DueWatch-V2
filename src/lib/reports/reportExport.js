@@ -109,9 +109,12 @@ export function buildReportExportRows(model) {
   return rows
 }
 
-export function buildReportCsv(model) {
+export function buildReportCsv(model, { currency = null } = {}) {
   const headers = ['section', 'metric', 'currency', 'value', 'detail']
-  const rows = buildReportExportRows(model)
+  const normalizedCurrency = currency ? String(currency).trim().toUpperCase() : null
+  const rows = buildReportExportRows(model).filter(
+    (record) => !normalizedCurrency || !record.currency || record.currency === normalizedCurrency
+  )
   return [
     headers.join(','),
     ...rows.map((record) => headers.map((key) => csvEscape(record[key])).join(',')),
