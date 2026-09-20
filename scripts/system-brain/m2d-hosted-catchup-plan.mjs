@@ -32,7 +32,7 @@ export const M2D_LOCAL_ONLY_ARTIFACTS = Object.freeze([
 ])
 
 export const M2D_EDGE_FUNCTION_FILES = Object.freeze([
-  ['supabase/functions/ask-dw-model/index.ts', 'b7b2eaffe60deb500a11ee9d606fe159e49bdf33'],
+  ['supabase/functions/ask-dw-model/index.ts', '8ea1238f124143a319029044e216c88db2e426db'],
   ['supabase/functions/_shared/cors.js', 'a1a7255bc606b48bf96b7d62896e3778cad3548a'],
   ['supabase/functions/_shared/askDwOpenAiContract.js', 'e3870f6ffc62fea71118a9202d79af00cdf70477'],
   ['supabase/functions/_shared/rateLimit.js', 'b693d48f2ec7959e45a3e61d71e07e9592261ce2'],
