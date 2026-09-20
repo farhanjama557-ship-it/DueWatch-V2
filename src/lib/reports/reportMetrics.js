@@ -164,6 +164,7 @@ export function buildClientExposure(invoices = [], asOf = new Date()) {
         overdueAmount: 0,
         invoiceCount: 0,
         overdueInvoiceCount: 0,
+        maxDaysOverdue: 0,
         byCurrency: {},
         overdueByCurrency: {},
         unsupportedCurrencyCount: 0,
@@ -184,6 +185,7 @@ export function buildClientExposure(invoices = [], asOf = new Date()) {
     const days = reportDaysOverdue(invoice?.due_date, asOf)
     if (days !== null && days > 0) {
       row.overdueInvoiceCount += 1
+      row.maxDaysOverdue = Math.max(row.maxDaysOverdue, days)
       addCurrency(row.overdueByCurrency, currency, balance)
     }
   }
