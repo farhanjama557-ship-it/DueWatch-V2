@@ -2,14 +2,28 @@ import { createClient } from 'npm:@supabase/supabase-js@2'
 import { isProviderConfigured, sendEmail } from '../_shared/resend.js'
 import { processClaimedReportRun } from '../_shared/reportDeliveryCore.js'
 
-function json(body, status = 200) {
+type JsonBody = Record<string, unknown>
+
+type CompletionInput = {
+  runId: string
+  leaseToken: string
+  status: 'sent' | 'failed' | 'skipped'
+  provider?: string | null
+  providerMessageId?: string | null
+  artifactSha256?: string | null
+  errorCode?: string | null
+  errorDetail?: string | null
+  nextRunAt?: string | null
+}
+
+function json(body: JsonBody, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: { 'Content-Type': 'application/json' },
   })
 }
 
-function constantTimeEqual(a, b) {
+function constantTimeEqual(a: string | null | undefined, b: string | null | undefined) {
   const left = new TextEncoder().encode(String(a ?? ''))
   const right = new TextEncoder().encode(String(b ?? ''))
   const length = Math.max(left.length, right.length)
@@ -76,7 +90,7 @@ Deno.serve(async (req) => {
           errorCode = null,
           errorDetail = null,
           nextRunAt = null,
-        }) => {
+        }: CompletionInput) => {
           const { error } = await admin.rpc('complete_report_delivery_run', {
             p_run_id: runId,
             p_lease_token: leaseToken,
