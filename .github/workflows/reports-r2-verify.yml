@@ -1,0 +1,35 @@
+name: "Reports R2 Verification"
+
+on:
+  push:
+    branches:
+      - reports/r2-payments
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: reports-r2-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: "Verify Reports R2"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact pushed SHA
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install dependencies
+        run: npm ci
+      - name: Run Reports R1-R2 targeted tests
+        run: node --test tests/reportMetrics.test.mjs tests/reportPaymentMetrics.test.mjs
+      - name: Run complete JavaScript suite
+        run: npm test
+      - name: Build production application
+        run: npm run build
