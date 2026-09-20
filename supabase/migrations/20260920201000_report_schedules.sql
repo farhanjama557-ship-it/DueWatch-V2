@@ -3,6 +3,18 @@
 -- are service-owned execution receipts; authenticated users may read their
 -- own receipts but cannot create or mutate delivery claims.
 
+create or replace function public.report_timezone_valid(p_timezone text)
+returns boolean
+language sql
+stable
+as $
+  select exists (
+    select 1
+    from pg_catalog.pg_timezone_names
+    where name = p_timezone
+  );
+$;
+
 create table if not exists public.report_schedules (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
@@ -21,6 +33,7 @@ create table if not exists public.report_schedules (
   next_run_at timestamptz not null,
   enabled boolean not null default true,
   last_run_at timestamptz,
+  deleted_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint report_schedules_name_check
@@ -38,7 +51,10 @@ create table if not exists public.report_schedules (
   constraint report_schedules_hour_check
     check (local_hour between 0 and 23),
   constraint report_schedules_timezone_check
-    check (char_length(trim(timezone)) between 1 and 80),
+    check (
+      char_length(trim(timezone)) between 1 and 80
+      and public.report_timezone_valid(timezone)
+    ),
   constraint report_schedules_currency_check
     check (currency is null or currency ~ '^[A-Z]{3}$'),
   constraint report_schedules_active_tab_check
@@ -75,7 +91,7 @@ create table if not exists public.report_delivery_runs (
   constraint report_delivery_runs_schedule_tenant_fk
     foreign key (schedule_id, user_id)
     references public.report_schedules(id, user_id)
-    on delete cascade,
+    on delete restrict,
   constraint report_delivery_runs_period_check check (period_end > period_start),
   constraint report_delivery_runs_currency_check check (currency is null or currency ~ '^[A-Z]{3}$'),
   constraint report_delivery_runs_status_check check (status in ('processing', 'sent', 'failed', 'skipped')),
@@ -115,15 +131,13 @@ create policy report_schedules_update_own on public.report_schedules
   with check ((select auth.uid()) = user_id);
 
 drop policy if exists report_schedules_delete_own on public.report_schedules;
-create policy report_schedules_delete_own on public.report_schedules
-  for delete to authenticated using ((select auth.uid()) = user_id);
 
 drop policy if exists report_delivery_runs_select_own on public.report_delivery_runs;
 create policy report_delivery_runs_select_own on public.report_delivery_runs
   for select to authenticated using ((select auth.uid()) = user_id);
 
 revoke all on public.report_schedules, public.report_delivery_runs from public, anon;
-grant select, insert, update, delete on public.report_schedules to authenticated;
+grant select, insert, update on public.report_schedules to authenticated;
 grant select on public.report_delivery_runs to authenticated;
 grant select, insert, update, delete on public.report_schedules, public.report_delivery_runs to service_role;
 
@@ -179,6 +193,7 @@ begin
     select s.*
     from public.report_schedules s
     where s.enabled = true
+      and s.deleted_at is null
       and s.next_run_at <= p_now
     order by s.next_run_at, s.id
     for update skip locked
