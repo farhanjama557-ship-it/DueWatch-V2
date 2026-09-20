@@ -14,10 +14,18 @@ export async function collectPagedRows(fetchPage, { pageSize = 1000, maxPages = 
   return { rows, truncated: true }
 }
 
-async function loadPaged({ database, table, select, userId = null, orderColumn = null }) {
+async function loadPaged({
+  database,
+  table,
+  select,
+  userId = null,
+  orderColumn = null,
+  tenantFilter = null,
+}) {
   return collectPagedRows(async ({ from, to }) => {
     let query = database.from(table).select(select)
     if (userId) query = query.eq('user_id', userId)
+    if (tenantFilter) query = tenantFilter(query)
     if (orderColumn) query = query.order(orderColumn, { ascending: true })
     return query.range(from, to)
   })
@@ -65,7 +73,8 @@ export async function loadReportsSourceData({ database, userId }) {
       database,
       table: 'payment_allocations',
       select:
-        'id,payment_id,invoice_id,amount,invoices(id,user_id,client_id,inv_num,clients(id,name))',
+        'id,payment_id,invoice_id,amount,created_at,invoices!inner(id,user_id,client_id,inv_num,clients(id,name))',
+      tenantFilter: (query) => query.eq('invoices.user_id', userId),
       orderColumn: 'created_at',
     }),
     loadPaged({
