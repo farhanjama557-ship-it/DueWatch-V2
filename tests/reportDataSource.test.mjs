@@ -69,19 +69,43 @@ function fakeDatabase(config = {}) {
 test('loadReportsSourceData reports per-source availability independently', async () => {
   const result = await loadReportsSourceData({
     database: fakeDatabase({
+      invoices: [{ id: 'i1' }],
       payments: [{ id: 'p1' }],
       payment_allocations: [{ id: 'a1' }],
       promises: new Error('relation promises does not exist'),
       autopilot_execution_claims: [{ id: 'c1' }],
       awaiting_signature: [{ id: 's1' }],
+      events: [{ id: 'e1' }],
     }),
     userId: 'u1',
   })
 
+  assert.equal(result.invoices.available, true)
   assert.equal(result.payments.available, true)
   assert.equal(result.allocations.available, true)
   assert.equal(result.promises.available, false)
   assert.match(result.promises.error, /promises/)
   assert.equal(result.executionClaims.available, true)
   assert.equal(result.approvals.available, true)
+  assert.equal(result.events.available, true)
+})
+
+test('loadReportsSourceData does not collapse invoice or event failures into empty success', async () => {
+  const result = await loadReportsSourceData({
+    database: fakeDatabase({
+      invoices: new Error('invoice query failed'),
+      payments: [],
+      payment_allocations: [],
+      promises: [],
+      autopilot_execution_claims: [],
+      awaiting_signature: [],
+      events: new Error('event query failed'),
+    }),
+    userId: 'u1',
+  })
+
+  assert.equal(result.invoices.available, false)
+  assert.match(result.invoices.error, /invoice query failed/)
+  assert.equal(result.events.available, false)
+  assert.match(result.events.error, /event query failed/)
 })
