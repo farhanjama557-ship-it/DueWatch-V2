@@ -3,6 +3,8 @@ import { Routes, Route, Navigate } from 'react-router-dom'
 import { useAuth } from './context/AuthContext'
 import ProtectedRoute from './components/ProtectedRoute'
 import Layout from './components/Layout'
+import OverhaulShell from './overhaul/OverhaulShell'
+import LockedPulse from './overhaul/LockedPulse'
 import Login from './pages/Login'
 import Signup from './pages/Signup'
 import Dashboard from './pages/Dashboard'
@@ -50,9 +52,9 @@ function RootRoute() {
   if (loading) return <div className="app-loading">Loading…</div>
   if (!session) return <LandingPage />
   return (
-    <Layout>
-      <Dashboard />
-    </Layout>
+    <OverhaulShell>
+      <LockedPulse />
+    </OverhaulShell>
   )
 }
 
@@ -85,6 +87,7 @@ export default function App() {
           </ProtectedRoute>
         }
       >
+        <Route path="/legacy-pulse" element={<Dashboard />} />
         <Route path="/invoices" element={<Invoices />} />
         <Route
           path="/import"
