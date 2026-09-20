@@ -4,6 +4,13 @@ import { supabase } from '../lib/supabase'
 import { loadReportsSourceData } from '../lib/reports/reportDataSource'
 import { buildReportsReadModel } from '../lib/reports/reportReadModel'
 import { buildReportCsv, reportExportFilename } from '../lib/reports/reportExport'
+import {
+  deleteReportView,
+  findCollectionTarget,
+  loadReportPreferences,
+  saveCollectionTarget,
+  saveReportView,
+} from '../lib/reports/reportPreferences'
 import './reports.css'
 
 const TABS = [
