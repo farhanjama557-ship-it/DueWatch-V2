@@ -115,6 +115,7 @@ test('monthly series returns separate currency buckets instead of cross-currency
 test('R5 read model exposes unsupported mockup metrics as unavailable instead of fabricating them', () => {
   const result = buildReportsReadModel({
     invoices: [invoice()],
+    invoicesAvailable: true,
     payments: [payment({ id: 'p1' })],
     allocations: [allocation({ payment_id: 'p1' })],
     promisesAvailable: false,
@@ -149,4 +150,35 @@ test('R5 insights cite only proven source classes', () => {
   for (const type of evidenceTypes) {
     assert.ok(['payment_ledger', 'invoice_ledger', 'autopilot_execution_claims'].includes(type))
   }
+})
+
+
+test('R5 source availability fails closed for invoices, payments, allocations, operations, and activity', () => {
+  const result = buildReportsReadModel({
+    invoices: [],
+    invoicesAvailable: false,
+    payments: [],
+    paymentsAvailable: false,
+    allocations: [],
+    allocationsAvailable: false,
+    promises: [],
+    promisesAvailable: false,
+    executionClaims: [],
+    executionClaimsAvailable: false,
+    approvals: [],
+    approvalsAvailable: false,
+    events: [],
+    eventsAvailable: false,
+    asOf: AS_OF,
+  })
+
+  assert.equal(result.availability.aging, false)
+  assert.equal(result.availability.clientExposure, false)
+  assert.equal(result.availability.collections, false)
+  assert.equal(result.availability.collectedInvoices, false)
+  assert.equal(result.availability.clientCollections, false)
+  assert.equal(result.availability.operationalExecution, false)
+  assert.equal(result.availability.operationalApprovals, false)
+  assert.equal(result.availability.activityEvidence, false)
+  assert.equal(result.insights.some((item) => item.evidence.type === 'payment_ledger'), false)
 })
