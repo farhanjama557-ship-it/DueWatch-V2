@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 
 const sql = fs.readFileSync(
-  new URL('../supabase/migrations/20260920201000_report_schedules.sql', import.meta.url),
+  new URL('../supabase/migrations/20260920214647_report_schedules.sql', import.meta.url),
   'utf8'
 )
 const worker = fs.readFileSync(
