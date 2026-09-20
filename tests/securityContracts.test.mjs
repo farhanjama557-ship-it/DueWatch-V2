@@ -61,3 +61,13 @@ test('frontend Supabase client accepts publishable config and contains no server
   assert.doesNotMatch(client, /SUPABASE_SERVICE_ROLE_KEY/)
   assert.doesNotMatch(client, /RESEND_API_KEY|GROQ_API_KEY/)
 })
+
+
+test('incident kill switches can fail closed for outbound email and Autopilot execution', () => {
+  const resend = read('supabase/functions/_shared/resend.js')
+  const scheduler = read('supabase/functions/autopilot-scheduler/index.ts')
+  assert.match(resend, /DUEWATCH_EMAIL_SEND_DISABLED/)
+  assert.match(resend, /incident-control switch/)
+  assert.match(scheduler, /DUEWATCH_AUTOPILOT_DISABLED/)
+  assert.match(scheduler, /Autopilot execution is disabled/)
+})
