@@ -15,6 +15,7 @@ const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024
 // acquiring a durable claim, so a misconfigured deployment never
 // permanently consumes an execution identity for zero external attempts.
 export function isProviderConfigured() {
+  if (Deno.env.get('DUEWATCH_EMAIL_SEND_DISABLED') === 'true') return false
   return Boolean(Deno.env.get('RESEND_API_KEY'))
 }
 
@@ -66,6 +67,10 @@ export async function sendEmail({
   idempotencyKey,
   attachments = undefined,
 }) {
+  if (Deno.env.get('DUEWATCH_EMAIL_SEND_DISABLED') === 'true') {
+    return { error: 'Email delivery is disabled by the DueWatch incident-control switch.' }
+  }
+
   const apiKey = Deno.env.get('RESEND_API_KEY')
   if (!apiKey) {
     return { error: 'RESEND_API_KEY is not configured as an Edge Function secret.' }
