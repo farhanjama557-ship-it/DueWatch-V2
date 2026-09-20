@@ -12,6 +12,7 @@ import {
   CashFlowIcon,
   SparkleIcon,
   ActivityIcon,
+  ReportsIcon,
   SettingsIcon,
   LogoMark,
 } from './icons'
@@ -26,6 +27,7 @@ const mainNav = [
   { to: '/cash-flow', label: 'Cash Flow', Icon: CashFlowIcon },
   { to: '/autopilot', label: 'Autopilot', Icon: SparkleIcon },
   { to: '/activity', label: 'Activity', Icon: ActivityIcon },
+  { to: '/reports', label: 'Reports', Icon: ReportsIcon },
   { to: '/settings', label: 'Settings', Icon: SettingsIcon },
 ]
 
