@@ -129,11 +129,7 @@ jobs:
         run: npm run build
 
       - name: Prove server secrets are absent from built browser assets
-        run: |
-          if grep -R -E -n 'SUPABASE_SERVICE_ROLE_KEY|RESEND_API_KEY|GROQ_API_KEY|sb_secret_|gsk_[A-Za-z0-9]{20,}|re_[A-Za-z0-9_-]{20,}' dist; then
-            echo "Server secret material or identifiers leaked into browser assets." >&2
-            exit 1
-          fi
+        run: node scripts/security/scan-built-assets.mjs dist
 
       - name: Stop disposable Supabase
         if: always()
