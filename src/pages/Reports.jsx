@@ -380,7 +380,7 @@ function OperationsPanel({ operations, executionAvailable, approvalsAvailable, e
   )
 }
 
-function InsightsRail({ model, currency, sourceUnavailable }) {
+function InsightsRail({ model, currency, sourceUnavailable, configuredTarget }) {
   const collection = model.collections?.comparisonByCurrency?.[currency]
   return (
     <aside className="reports-insights">
@@ -413,7 +413,7 @@ function InsightsRail({ model, currency, sourceUnavailable }) {
       <section className="reports-insight-section">
         <h3>Proof boundaries</h3>
         <div className="reports-boundary-list">
-          <span><b>Collection target</b> Not configured</span>
+          <span><b>Collection target</b> {configuredTarget ? formatMoney(configuredTarget, currency) : 'Not configured'}</span>
           <span><b>Collection rate</b> Historical denominator not proven</span>
           <span><b>PTP fulfillment</b> Terminal lifecycle not proven</span>
           <span><b>Autopilot ROI</b> Causal attribution not proven</span>
@@ -1069,7 +1069,12 @@ export default function Reports() {
             <RiskTable rows={model.clientExposure} currency={currency} available={model.availability.clientExposure} />
           </div>
         </main>
-        <InsightsRail model={model} currency={currency} sourceUnavailable={unavailable} />
+        <InsightsRail
+          model={model}
+          currency={currency}
+          sourceUnavailable={unavailable}
+          configuredTarget={configuredTarget}
+        />
       </div>
     </div>
   )
