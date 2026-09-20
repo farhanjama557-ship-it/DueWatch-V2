@@ -238,8 +238,28 @@ async function runClaimedSend({
   }
 
   if (sendResult.error) {
-    // A clean response reporting a definite failure — still never
-    // auto-retried by a later run/approval attempt.
+    // A provider/network result can be ambiguous even when it is returned
+    // as a structured error. Never downgrade "unknown whether it sent" to
+    // a definite failure, because that would make a later retry unsafe.
+    if (sendResult.ambiguous === true) {
+      await io.resolveClaim({
+        claimId: claim.claimId,
+        status: 'uncertain',
+        evidence: { error: sendResult.error },
+      })
+      await io.recordUncertainEvidence({
+        claimId: claim.claimId,
+        error: sendResult.error,
+        authority,
+        reason,
+        text,
+        ruleSnapshot,
+      })
+      throw new Error(sendResult.error)
+    }
+
+    // A definite provider rejection — still never auto-retried by a later
+    // run/approval attempt under this same execution identity.
     await io.resolveClaim({
       claimId: claim.claimId,
       status: 'send_failed',
