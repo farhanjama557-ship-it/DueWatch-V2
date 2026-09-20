@@ -146,3 +146,28 @@ test('allocation reads are explicitly tenant scoped even when RLS is bypassed se
     )
   )
 })
+
+
+test('loadReportsSourceData withholds truncated sources instead of reporting partial totals', async () => {
+  const result = await loadReportsSourceData({
+    database: fakeDatabase({
+      invoices: [{ id: 'i1' }],
+      payments: [{ id: 'p1' }],
+      payment_allocations: [{ id: 'a1' }],
+      promises: [{ id: 'ptp1' }],
+      autopilot_execution_claims: [{ id: 'c1' }],
+      awaiting_signature: [{ id: 's1' }],
+      events: [{ id: 'e1' }],
+    }),
+    userId: 'u1',
+    pageSize: 1,
+    maxPages: 1,
+  })
+
+  assert.equal(result.payments.available, false)
+  assert.equal(result.payments.truncated, true)
+  assert.deepEqual(result.payments.rows, [])
+  assert.match(result.payments.error, /exceeded the supported row limit/i)
+  assert.equal(result.invoices.available, false)
+  assert.equal(result.allocations.available, false)
+})
