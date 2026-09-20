@@ -1,0 +1,36 @@
+name: "DueWatch Report Scheduler"
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: duewatch-report-scheduler
+  cancel-in-progress: false
+
+jobs:
+  invoke:
+    name: "Invoke report delivery worker"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require scheduler configuration
+        env:
+          WORKER_URL: ${{ secrets.DUEWATCH_REPORT_WORKER_URL }}
+          SCHEDULER_SECRET: ${{ secrets.DUEWATCH_REPORT_SCHEDULER_SECRET }}
+        run: |
+          if [ -z "$WORKER_URL" ] || [ -z "$SCHEDULER_SECRET" ]; then
+            echo "Report scheduler secrets are not configured." >&2
+            exit 1
+          fi
+
+      - name: Invoke worker
+        env:
+          WORKER_URL: ${{ secrets.DUEWATCH_REPORT_WORKER_URL }}
+          SCHEDULER_SECRET: ${{ secrets.DUEWATCH_REPORT_SCHEDULER_SECRET }}
+        run: |
+          curl --fail-with-body --silent --show-error             --retry 2             --retry-all-errors             --max-time 45             -X POST "$WORKER_URL"             -H "x-duewatch-scheduler-secret: $SCHEDULER_SECRET"             -H "content-type: application/json"             --data '{}'
