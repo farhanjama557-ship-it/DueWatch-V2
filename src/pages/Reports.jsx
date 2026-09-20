@@ -103,7 +103,7 @@ function Skeleton({ className = '' }) {
   return <span className={'reports-skeleton ' + className} aria-hidden="true" />
 }
 
-function MetricCard({ label, value, support, trend, tone = 'neutral', loading = false }) {
+function MetricCard({ label, value, support, trend, tone = 'neutral', loading = false, action = null }) {
   return (
     <article className="reports-metric-card">
       <span className="reports-metric-label">{label}</span>
@@ -116,6 +116,7 @@ function MetricCard({ label, value, support, trend, tone = 'neutral', loading = 
         <>
           <strong className="reports-metric-value">{value}</strong>
           <span className={'reports-metric-support reports-tone-' + tone}>{trend || support}</span>
+          {action}
         </>
       )}
     </article>
@@ -444,6 +445,13 @@ export default function Reports() {
   const [activeTab, setActiveTab] = useState('collections')
   const [selectedCurrency, setSelectedCurrency] = useState('')
   const [scheduleMessage, setScheduleMessage] = useState(false)
+  const [preferences, setPreferences] = useState(null)
+  const [preferenceError, setPreferenceError] = useState(null)
+  const [showSaveView, setShowSaveView] = useState(false)
+  const [viewName, setViewName] = useState('')
+  const [showTargetEditor, setShowTargetEditor] = useState(false)
+  const [targetAmount, setTargetAmount] = useState('')
+  const [savingPreference, setSavingPreference] = useState(false)
 
   useEffect(() => {
     let active = true
@@ -460,6 +468,22 @@ export default function Reports() {
         if (!active) return
         setLoadError(error instanceof Error ? error.message : String(error))
         setLoading(false)
+      })
+    return () => { active = false }
+  }, [user?.id])
+
+  useEffect(() => {
+    let active = true
+    if (!user?.id) return undefined
+    setPreferenceError(null)
+    loadReportPreferences({ database: supabase, userId: user.id })
+      .then((result) => {
+        if (!active) return
+        setPreferences(result)
+      })
+      .catch((error) => {
+        if (!active) return
+        setPreferenceError(error instanceof Error ? error.message : String(error))
       })
     return () => { active = false }
   }, [user?.id])
@@ -548,6 +572,87 @@ export default function Reports() {
     URL.revokeObjectURL(url)
   }
 
+  async function reloadPreferences() {
+    if (!user?.id) return
+    const result = await loadReportPreferences({ database: supabase, userId: user.id })
+    setPreferences(result)
+  }
+
+  async function handleSaveView() {
+    if (!user?.id || !viewName.trim()) return
+    setSavingPreference(true)
+    setPreferenceError(null)
+    try {
+      await saveReportView({
+        database: supabase,
+        input: {
+          userId: user.id,
+          name: viewName,
+          cadence,
+          startDate,
+          endDate,
+          currency: selectedCurrency || null,
+          activeTab,
+          filters: {},
+        },
+      })
+      await reloadPreferences()
+      setViewName('')
+      setShowSaveView(false)
+    } catch (error) {
+      setPreferenceError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setSavingPreference(false)
+    }
+  }
+
+  async function handleDeleteView(id) {
+    if (!user?.id || !id) return
+    setSavingPreference(true)
+    setPreferenceError(null)
+    try {
+      await deleteReportView({ database: supabase, userId: user.id, id })
+      await reloadPreferences()
+    } catch (error) {
+      setPreferenceError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setSavingPreference(false)
+    }
+  }
+
+  function applySavedView(view) {
+    setCadence(view.cadence)
+    setStartDate(view.start_date)
+    setEndDate(view.end_date)
+    if (view.currency) setSelectedCurrency(view.currency)
+    setActiveTab(view.active_tab || 'collections')
+  }
+
+  async function handleSaveTarget(currency) {
+    if (!user?.id || !currency || !targetAmount) return
+    setSavingPreference(true)
+    setPreferenceError(null)
+    try {
+      await saveCollectionTarget({
+        database: supabase,
+        input: {
+          userId: user.id,
+          startDate,
+          endDate,
+          currency,
+          targetAmount,
+        },
+      })
+      await reloadPreferences()
+      setTargetAmount('')
+      setShowTargetEditor(false)
+    } catch (error) {
+      setPreferenceError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setSavingPreference(false)
+    }
+  }
+
   if (loading) return <ReportsLoading />
   if (loadError || !model) {
     return (
@@ -567,6 +672,16 @@ export default function Reports() {
   const collectionTrend = collection?.relativeChange === null || collection?.relativeChange === undefined
     ? null
     : (collection.relativeChange >= 0 ? '↑ ' : '↓ ') + Math.abs(Math.round(collection.relativeChange * 100)) + '% vs prior period'
+  const target = preferences?.targets?.available
+    ? findCollectionTarget(preferences.targets.rows, { startDate, endDate, currency })
+    : null
+  const configuredTarget = target ? Number(target.target_amount) : null
+  const targetAttainment =
+    configuredTarget && collectionCurrent
+      ? Number(collectionCurrent.amount || 0) / configuredTarget
+      : null
+  const savedViewsAvailable = preferences?.savedViews?.available === true
+  const targetsAvailable = preferences?.targets?.available === true
 
   return (
     <div className="reports-page">
@@ -593,6 +708,15 @@ export default function Reports() {
               <option>Monthly</option><option>Quarterly</option><option>Yearly</option><option disabled value="Custom">Custom</option>
             </select>
           </label>
+          <button
+            className="reports-btn reports-btn-secondary"
+            type="button"
+            onClick={() => setShowSaveView((value) => !value)}
+            disabled={!savedViewsAvailable || savingPreference}
+            title={savedViewsAvailable ? 'Save this report view' : 'Saved views storage is unavailable'}
+          >
+            Save view
+          </button>
           <button className="reports-btn reports-btn-secondary" type="button" onClick={exportCsv}>Export CSV</button>
           <button className="reports-btn reports-btn-primary" type="button" onClick={() => setScheduleMessage((value) => !value)} aria-expanded={scheduleMessage}>Schedule report</button>
         </div>
@@ -605,7 +729,65 @@ export default function Reports() {
         </div>
       )}
 
+      {showSaveView && savedViewsAvailable && (
+        <div className="reports-config-panel">
+          <div>
+            <strong>Save current view</strong>
+            <span>Stores the period, cadence, currency, and active section.</span>
+          </div>
+          <input
+            value={viewName}
+            onChange={(e) => setViewName(e.target.value)}
+            placeholder="e.g. Monthly close"
+            maxLength={80}
+            autoFocus
+          />
+          <button type="button" onClick={handleSaveView} disabled={!viewName.trim() || savingPreference}>
+            {savingPreference ? 'Saving…' : 'Save'}
+          </button>
+          <button type="button" className="quiet" onClick={() => setShowSaveView(false)}>Cancel</button>
+        </div>
+      )}
+
+      {showTargetEditor && targetsAvailable && (
+        <div className="reports-config-panel">
+          <div>
+            <strong>Set collection target · {currency}</strong>
+            <span>{displayStartDate(startDate)} – {displayEndDate(endDate)}</span>
+          </div>
+          <input
+            type="number"
+            min="0.01"
+            step="0.01"
+            value={targetAmount}
+            onChange={(e) => setTargetAmount(e.target.value)}
+            placeholder="Target amount"
+            autoFocus
+          />
+          <button type="button" onClick={() => handleSaveTarget(currency)} disabled={!targetAmount || savingPreference}>
+            {savingPreference ? 'Saving…' : 'Save target'}
+          </button>
+          <button type="button" className="quiet" onClick={() => setShowTargetEditor(false)}>Cancel</button>
+        </div>
+      )}
+
+      {preferenceError && (
+        <div className="reports-preference-error" role="alert">{preferenceError}</div>
+      )}
+
       <SourceNotice sources={unavailable} />
+
+      {savedViewsAvailable && preferences.savedViews.rows.length > 0 && (
+        <div className="reports-saved-views" aria-label="Saved report views">
+          <span>Saved views</span>
+          {preferences.savedViews.rows.map((view) => (
+            <div className="reports-saved-view" key={view.id}>
+              <button type="button" onClick={() => applySavedView(view)}>{view.name}</button>
+              <button type="button" className="delete" aria-label={'Delete ' + view.name} onClick={() => handleDeleteView(view.id)}>×</button>
+            </div>
+          ))}
+        </div>
+      )}
       <div className="reports-period-line">
         <span>{displayStartDate(startDate)} – {displayEndDate(endDate)}</span>
         <CurrencySelector currencies={currencies} value={currency} onChange={setSelectedCurrency} />
@@ -623,7 +805,23 @@ export default function Reports() {
           support={model.availability.collections ? String(collectionCurrent?.paymentCount || 0) + ' payments' : 'Payment ledger unavailable'}
           tone={collection?.relativeChange >= 0 ? 'positive' : collection?.relativeChange < 0 ? 'attention' : 'neutral'}
         />
-        <MetricCard label="Collection target" value="Not configured" support="No target source exists yet" />
+        <MetricCard
+          label="Collection target"
+          value={configuredTarget ? formatMoney(configuredTarget, currency) : targetsAvailable ? 'Not configured' : '—'}
+          support={
+            configuredTarget
+              ? (targetAttainment === null ? 'Explicit founder target' : pct(targetAttainment) + ' attained')
+              : targetsAvailable ? 'No target set for this period' : 'Target storage unavailable'
+          }
+          tone={targetAttainment !== null && targetAttainment >= 1 ? 'positive' : 'neutral'}
+          action={
+            targetsAvailable ? (
+              <button className="reports-card-action" type="button" onClick={() => setShowTargetEditor((value) => !value)}>
+                {configuredTarget ? 'Edit target' : 'Set target'}
+              </button>
+            ) : null
+          }
+        />
         <MetricCard
           label="Collected invoices"
           value={model.availability.collectedInvoices ? model.collectedInvoices.collectedInvoiceCount : '—'}
@@ -638,7 +836,10 @@ export default function Reports() {
           <section className="reports-panel reports-chart-panel">
             <div className="reports-panel-head">
               <div><span className="reports-kicker">Trend</span><h2>Monthly collections</h2></div>
-              <div className="reports-chart-legend"><span><i className="collections" />Collections</span><span className="muted"><i />Target not configured</span></div>
+              <div className="reports-chart-legend">
+                <span><i className="collections" />Collections</span>
+                <span className={configuredTarget ? '' : 'muted'}><i />{configuredTarget ? 'Target ' + formatMoney(configuredTarget, currency) : 'Target not configured'}</span>
+              </div>
             </div>
             <CollectionsChart series={model.monthlyCollections} currency={currency} available={model.availability.collections} />
           </section>
