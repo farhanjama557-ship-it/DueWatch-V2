@@ -80,8 +80,8 @@ jobs:
       - name: Apply repository baseline and Reports migrations
         run: |
           psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/schema.sql
-          psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/20260920195000_reports_saved_views_targets.sql
-          psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/20260920201000_report_schedules.sql
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/20260920214632_reports_saved_views_targets.sql
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/20260920214647_report_schedules.sql
 
       - name: Prove R6 saved-view and target RLS remains intact
         run: psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/tests/reports_r6_saved_views_targets_test.sql
