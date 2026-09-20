@@ -1,0 +1,113 @@
+name: "Full App Security Verification"
+
+on:
+  push:
+    branches:
+      - security/full-app-hardening
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: duewatch-security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: "Verify full-app hardening"
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout complete history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Scan reachable Git history for high-confidence secrets
+        run: node scripts/security/scan-git-history.mjs
+
+      - name: Run security contract tests
+        run: >
+          node --test
+          tests/securityContracts.test.mjs
+          tests/reportCsvSecurity.test.mjs
+          tests/autopilotExecutionCore.test.mjs
+          tests/import/safety.test.mjs
+          tests/askDwRateLimitErrors.test.mjs
+          tests/askDwAnswerUxHardening.test.mjs
+
+      - name: Audit high-severity npm vulnerabilities
+        run: npm audit --audit-level=high
+
+      - name: Set up Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Type-check hardened Edge Functions
+        run: |
+          deno check supabase/functions/send-reminder-email/index.ts
+          deno check supabase/functions/autopilot-scheduler/index.ts
+          deno check supabase/functions/ask-dw-model/index.ts
+          deno check supabase/functions/process-report-schedules/index.ts
+
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: 2.111.0
+
+      - name: Start disposable Supabase
+        run: supabase start
+
+      - name: Resolve disposable database URL
+        run: |
+          supabase status -o env > /tmp/duewatch_security_supabase.env
+          DB_URL=$(grep '^DB_URL=' /tmp/duewatch_security_supabase.env | cut -d '=' -f2- | tr -d '"')
+          test -n "$DB_URL"
+          echo "DB_URL=$DB_URL" >> "$GITHUB_ENV"
+          rm -f /tmp/duewatch_security_supabase.env
+
+      - name: Apply repository schema and forward migrations
+        run: |
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/schema.sql
+          for migration in $(find supabase/migrations -maxdepth 1 -type f -name '*.sql' | sort); do
+            echo "Applying $migration"
+            psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$migration"
+          done
+
+      - name: Prove full-app security migration
+        run: psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/tests/security_hardening_test.sql
+
+      - name: Re-run critical database regression proofs
+        run: |
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/tests/payments_foundation_test.sql
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/tests/reports_r6_saved_views_targets_test.sql
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/tests/reports_r7_scheduling_test.sql
+
+      - name: Run complete JavaScript suite
+        run: npm test
+
+      - name: Build production application
+        run: npm run build
+
+      - name: Prove server secrets are absent from built browser assets
+        run: |
+          if grep -R -E -n 'SUPABASE_SERVICE_ROLE_KEY|RESEND_API_KEY|GROQ_API_KEY|sb_secret_|gsk_[A-Za-z0-9]{20,}|re_[A-Za-z0-9_-]{20,}' dist; then
+            echo "Server secret material or identifiers leaked into browser assets." >&2
+            exit 1
+          fi
+
+      - name: Stop disposable Supabase
+        if: always()
+        run: supabase stop --no-backup || true
