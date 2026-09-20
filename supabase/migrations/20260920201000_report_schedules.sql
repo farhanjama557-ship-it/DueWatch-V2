@@ -7,13 +7,13 @@ create or replace function public.report_timezone_valid(p_timezone text)
 returns boolean
 language sql
 stable
-as $
+as $reports_timezone$
   select exists (
     select 1
     from pg_catalog.pg_timezone_names
     where name = p_timezone
   );
-$;
+$reports_timezone$;
 
 create table if not exists public.report_schedules (
   id uuid primary key default gen_random_uuid(),
