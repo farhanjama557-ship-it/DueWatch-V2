@@ -96,7 +96,8 @@ create table if not exists public.report_delivery_runs (
   constraint report_delivery_runs_currency_check check (currency is null or currency ~ '^[A-Z]{3}$'),
   constraint report_delivery_runs_status_check check (status in ('processing', 'sent', 'failed', 'skipped')),
   constraint report_delivery_runs_attempt_check check (attempt_count between 0 and 20),
-  unique (schedule_id, scheduled_for)
+  constraint report_delivery_runs_schedule_occurrence_key
+    unique (schedule_id, scheduled_for)
 );
 
 create index if not exists report_schedules_due_idx
@@ -241,7 +242,7 @@ begin
       null,
       null
     )
-    on conflict (schedule_id, scheduled_for) do update
+    on conflict on constraint report_delivery_runs_schedule_occurrence_key do update
       set status = 'processing',
           attempt_count = public.report_delivery_runs.attempt_count + 1,
           lease_token = excluded.lease_token,
