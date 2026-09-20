@@ -67,7 +67,7 @@ jobs:
       - name: Apply repository baseline and Reports R6 migration
         run: |
           psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/schema.sql
-          psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/20260920195000_reports_saved_views_targets.sql
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/20260920214632_reports_saved_views_targets.sql
 
       - name: Prove saved-view and target RLS
         run: psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/tests/reports_r6_saved_views_targets_test.sql
