@@ -41,15 +41,17 @@ test('collectPagedRows surfaces query errors rather than turning them into empty
   )
 })
 
-function fakeDatabase(config = {}) {
+function fakeDatabase(config = {}, trace = []) {
   return {
     from(table) {
       const state = { table }
       const chain = {
-        select() {
+        select(value) {
+          trace.push({ table, op: 'select', value })
           return chain
         },
-        eq() {
+        eq(column, value) {
+          trace.push({ table, op: 'eq', column, value })
           return chain
         },
         order() {
@@ -108,4 +110,39 @@ test('loadReportsSourceData does not collapse invoice or event failures into emp
   assert.match(result.invoices.error, /invoice query failed/)
   assert.equal(result.events.available, false)
   assert.match(result.events.error, /event query failed/)
+})
+
+
+test('allocation reads are explicitly tenant scoped even when RLS is bypassed server-side', async () => {
+  const trace = []
+  await loadReportsSourceData({
+    database: fakeDatabase({
+      invoices: [],
+      payments: [],
+      payment_allocations: [],
+      promises: [],
+      autopilot_execution_claims: [],
+      awaiting_signature: [],
+      events: [],
+    }, trace),
+    userId: 'tenant-1',
+  })
+
+  assert.ok(
+    trace.some(
+      (entry) =>
+        entry.table === 'payment_allocations' &&
+        entry.op === 'eq' &&
+        entry.column === 'invoices.user_id' &&
+        entry.value === 'tenant-1'
+    )
+  )
+  assert.ok(
+    trace.some(
+      (entry) =>
+        entry.table === 'payment_allocations' &&
+        entry.op === 'select' &&
+        String(entry.value).includes('invoices!inner')
+    )
+  )
 })
