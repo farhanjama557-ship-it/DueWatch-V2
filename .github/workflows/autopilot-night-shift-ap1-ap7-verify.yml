@@ -64,10 +64,10 @@ jobs:
       - name: Apply baseline schema and Night Shift migration
         run: |
           psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/schema.sql
-          psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/20260920033000_autopilot_night_shift_foundation.sql
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/checkpoints/autopilot_night_shift_foundation.sql
 
       - name: Re-apply Night Shift migration for idempotency
-        run: psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/20260920033000_autopilot_night_shift_foundation.sql
+        run: psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/checkpoints/autopilot_night_shift_foundation.sql
 
       - name: Run Night Shift database safety proof
         run: psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/tests/autopilot_night_shift_foundation_test.sql
