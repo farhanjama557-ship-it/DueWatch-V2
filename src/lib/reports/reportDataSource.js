@@ -33,10 +33,18 @@ async function loadPaged({
 
 function safeResult(value, fallback = []) {
   if (value.status === 'fulfilled') {
+    if (value.value.truncated) {
+      return {
+        available: false,
+        rows: fallback,
+        truncated: true,
+        error: 'Report source exceeded the supported row limit; dependent metrics were withheld.',
+      }
+    }
     return {
       available: true,
       rows: value.value.rows,
-      truncated: value.value.truncated,
+      truncated: false,
       error: null,
     }
   }
