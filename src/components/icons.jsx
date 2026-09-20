@@ -64,6 +64,18 @@ export function ActivityIcon(props) {
   )
 }
 
+export function ReportsIcon(props) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M4 20V10" />
+      <path d="M10 20V4" />
+      <path d="M16 20v-7" />
+      <path d="M22 20V8" />
+      <path d="M2 20h22" />
+    </svg>
+  )
+}
+
 export function SettingsIcon(props) {
   return (
     <svg {...base} {...props}>
