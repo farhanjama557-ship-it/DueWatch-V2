@@ -1,5 +1,4 @@
 import { supabase } from './supabase'
-import { logEvent } from './events'
 
 export const TONES = ['friendly', 'professional', 'firm']
 
@@ -77,24 +76,14 @@ export async function sendReminderNow({ userId, invoice, draft, signatureContext
     return { error: sendResult?.error || sendErr.message }
   }
 
-  const nowIso = new Date().toISOString()
-  const { error: remErr } = await supabase.from('reminders').insert({
-    invoice_id: invoice.id,
-    user_id: userId,
-    title: 'Reminder sent',
-    detail: trimmed,
-  })
-  if (remErr) return { error: remErr.message }
-
-  await supabase.from('invoices').update({ last_reminder: nowIso }).eq('id', invoice.id)
-
-  logEvent('reminder_sent', {
-    userId,
-    invoiceId: invoice.id,
-    lifecycleStage: 'sent',
-    lifecycleState: 'completed',
-    evidence: { resend_id: sendResult?.id || null, delivery_status: 'sent' },
-  })
-
-  return { sendResult, nowIso, draft: trimmed }
+  // The Edge Function now owns the canonical execution receipt AND the
+  // reminder/invoice/activity projections. The browser must never perform
+  // those writes after an external send, because a browser failure would
+  // make a successful email look retryable and could create duplicates.
+  return {
+    sendResult,
+    nowIso: new Date().toISOString(),
+    draft: trimmed,
+    projectionComplete: sendResult?.projectionComplete !== false,
+  }
 }
