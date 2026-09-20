@@ -7,6 +7,7 @@ import {
 } from '../src/lib/reports/reportExport.js'
 
 const model = {
+  schemaVersion: 'reports-r5-read-model-v1',
   asOf: '2026-09-20',
   period: { startDate: '2026-09-01', endDate: '2026-10-01' },
   collections: {
@@ -28,6 +29,18 @@ const model = {
   },
   operations: {
     execution: { byStatus: { sent: 4, send_failed: 1, uncertain: 0, in_flight: 0 } },
+    approvals: { byStatus: { pending: 2, approved: 3, skipped: 1, other: 0 } },
+  },
+  availability: {
+    collections: true,
+    aging: true,
+    collectedInvoices: true,
+    promiseCurrentState: true,
+    operationalExecution: true,
+    operationalApprovals: true,
+    clientExposure: true,
+    collectionRate: false,
+    recoveredCashAttribution: false,
   },
   clientExposure: [
     {
@@ -59,4 +72,23 @@ test('export filename contains explicit report period', () => {
     reportExportFilename(model),
     'duewatch-report-2026-09-01-to-2026-10-01.csv'
   )
+})
+
+
+test('unavailable report sources are marked unavailable and never exported as zero facts', () => {
+  const unavailableModel = {
+    ...model,
+    availability: {
+      ...model.availability,
+      promiseCurrentState: false,
+      operationalExecution: false,
+      clientExposure: false,
+    },
+  }
+  const rows = buildReportExportRows(unavailableModel)
+
+  assert.ok(rows.some((r) => r.section === 'availability' && r.metric === 'promiseCurrentState' && r.value === 'unavailable'))
+  assert.equal(rows.some((r) => r.section === 'promise_to_pay'), false)
+  assert.equal(rows.some((r) => r.metric === 'execution_send_failed'), false)
+  assert.equal(rows.some((r) => r.section === 'client_exposure'), false)
 })
