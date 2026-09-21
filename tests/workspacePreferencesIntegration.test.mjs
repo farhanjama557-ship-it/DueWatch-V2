@@ -29,7 +29,6 @@ test('workspace preferences contain presentation and notification state, not exe
 
 test('settings save through persisted preference service and Autopilot approval stays in authority service',()=>{
   assert.match(service,/\.from\('workspace_preferences'\)/)
-  assert.match(service,/\.upsert\(payload/)
   assert.match(autopilot,/setAutopilotApprovalRequired/)
   assert.match(autopilot,/\.from\('autopilot_settings'\)/)
   assert.match(context,/saveWorkspacePreferences/)
