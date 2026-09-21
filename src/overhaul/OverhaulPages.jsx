@@ -1210,6 +1210,20 @@ export function OverhaulAutopilot() {
     }
   }
 
+  async function setApprovalMode(next) {
+    if (!user?.id || saving) return
+    setSaving(true)
+    setError('')
+    const result = await setAutopilotApprovalRequired(user.id, next)
+    if (result?.error) {
+      setError(result.error.message || 'Could not update approval mode.')
+      setSaving(false)
+      return
+    }
+    await refresh()
+    setSaving(false)
+  }
+
   return (
     <div className="ov2-page ov2-autopilot-page">
       <PageHeader
@@ -1238,6 +1252,7 @@ export function OverhaulAutopilot() {
                   <span className="ov2-timeline-dot" />
                   <div><b>{String(event.event_type || 'Action').replaceAll('_',' ')}</b><p>{event.invoices?.clients?.name || 'Receivables'} · {event.invoices?.inv_num || 'operational event'}</p></div>
                   <small>{timeAgo(event.created_at)}</small>
+                  {event.invoice_id ? <Link className="ov2-mini-link" to={`/invoices?invoice=${event.invoice_id}`}>Open</Link> : null}
                 </div>
               ))}
               {autopilotEvents.length === 0 ? <TableEmpty>No recent Autopilot events in the current activity window.</TableEmpty> : null}
@@ -1253,6 +1268,7 @@ export function OverhaulAutopilot() {
                   <span><b>{invoice.clients?.name || 'Client'}</b><small>{invoice.invoice_number || 'Invoice'} · {Math.max(daysOverdue(invoice.due_date),0)} days overdue</small></span>
                   <strong>{formatMoney(balanceOf(invoice))}</strong>
                   <Pill tone={daysOverdue(invoice.due_date) >= 15 ? 'red' : 'amber'}>{daysOverdue(invoice.due_date) > 0 ? 'Watching' : 'Upcoming'}</Pill>
+                  <Link className="ov2-mini-link" to={`/invoices?invoice=${invoice.id}`}>Open</Link>
                 </div>
               ))}
               {focus.length === 0 ? <TableEmpty>No open invoices to watch.</TableEmpty> : null}
@@ -1275,7 +1291,7 @@ export function OverhaulAutopilot() {
             <div className="ov2-authority-list">
               <div><span>Operating mode</span><strong>Normal</strong></div>
               <div><span>Action class</span><strong>Reminder follow-ups</strong></div>
-              <div><span>Approval</span><strong>{autopilotApprovalRequired ? 'Required' : 'Automatic within rules'}</strong></div>
+              <div className="ov2-authority-toggle"><span>Approval</span><span><strong>{autopilotApprovalRequired ? 'Required' : 'Automatic within rules'}</strong><Toggle checked={autopilotApprovalRequired} onChange={setApprovalMode} disabled={saving} /></span></div>
               <div><span>Last run</span><strong>{lastAutopilotRun?.created_at ? timeAgo(lastAutopilotRun.created_at) : 'No completed run shown'}</strong></div>
             </div>
             <div className="ov2-truth-note ov2-truth-note--compact"><ShieldCheck size={15} /><span>Night Shift, Cash Recovery, Protect, Away, and Quarter-End are not exposed here because the current production authority model is Normal-mode only.</span></div>
@@ -1303,6 +1319,7 @@ export function OverhaulAutopilot() {
                 <div key={item.id}>
                   <span><b>{item.invoice?.clients?.name || 'Client'}</b><small>{item.invoice?.invoice_number || 'Invoice'} · founder approval required</small></span>
                   <Pill tone="amber">Review</Pill>
+                  {item.invoice_id ? <Link className="ov2-mini-link" to={`/invoices?invoice=${item.invoice_id}`}>Open approval</Link> : null}
                 </div>
               ))}
               {awaitingSignature.length === 0 ? <TableEmpty>No approvals waiting.</TableEmpty> : null}
