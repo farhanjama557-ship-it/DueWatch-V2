@@ -1,9 +1,11 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { ChevronDown, Mic, MoreHorizontal } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import { balanceOf, isOutstanding, useData } from '../context/DataContext'
 import { daysOverdue, formatLongDate, formatMoney, timeAgo } from '../lib/format'
+import { supabase } from '../lib/supabase'
 import { OverhaulIcon } from './OverhaulIconSystem'
+import { createPulseAskDwRuntime } from './integration/pulseAskDw'
 
 function TinySpark({ tone = 'green', variant = 'up' }) {
   const d = variant === 'flat'
@@ -356,6 +358,11 @@ function AttentionQueue({ rows }) {
 
 export default function LockedPulse() {
   const { user } = useAuth()
+  const askDwRuntime = useMemo(() => createPulseAskDwRuntime({ supabase }), [])
+  const [askQuestion, setAskQuestion] = useState('')
+  const [askResult, setAskResult] = useState(null)
+  const [askError, setAskError] = useState('')
+  const [askBusy, setAskBusy] = useState(false)
   const {
     invoices,
     clients,
@@ -406,6 +413,42 @@ export default function LockedPulse() {
     user?.user_metadata?.organization ||
     user?.user_metadata?.workspace ||
     'Workspace'
+
+  async function runPulseAskDw(questionOverride = null) {
+    const question = String(questionOverride ?? askQuestion).trim()
+    if (!question || askBusy || !user?.id) return
+    setAskQuestion(question)
+    setAskBusy(true)
+    setAskError('')
+    setAskResult(null)
+    try {
+      const result = await askDwRuntime.run({
+        tenantId: user.id,
+        text: question,
+        invoices,
+        clients,
+        events,
+        approvals: awaitingSignature,
+      })
+      setAskResult(result)
+    } catch (runError) {
+      setAskError(runError?.message || 'Ask DW could not complete this request.')
+    } finally {
+      setAskBusy(false)
+    }
+  }
+
+  const realClientPrompt = priorityRows[0]?.clients?.name
+    ? `Why did ${priorityRows[0].clients.name} pay late?`
+    : 'Why did this client pay late?'
+
+  const askPrompts = [
+    'What needs my attention?',
+    realClientPrompt,
+    'Show overdue by reason',
+    'Draft a follow-up',
+    'Cash forecast',
+  ]
 
   if (loading) {
     return <div className="ov-pulse-page"><div className="ov-page-state">Loading DueWatch…</div></div>
@@ -460,17 +503,63 @@ export default function LockedPulse() {
         </section>
 
         <section className="ov-ask">
-          <div className="ov-ask-row">
+          <form
+            className="ov-ask-row"
+            onSubmit={(event) => {
+              event.preventDefault()
+              runPulseAskDw()
+            }}
+          >
             <span className="ov-ask-mark"><OverhaulIcon name="sparkle" size={18} /></span>
-            <input placeholder="Ask DW anything about your receivables..." readOnly />
-            <button type="button" aria-label="Voice input" aria-disabled="true"><Mic size={19} /></button>
-            <button className="ov-send" type="button" aria-disabled="true"><OverhaulIcon name="send" size={17} /></button>
-          </div>
+            <input
+              value={askQuestion}
+              onChange={(event) => setAskQuestion(event.target.value)}
+              placeholder="Ask DW anything about your receivables..."
+              disabled={askBusy}
+              aria-label="Ask DW"
+            />
+            <button type="button" aria-label="Voice input unavailable" aria-disabled="true"><Mic size={19} /></button>
+            <button className="ov-send" type="submit" disabled={askBusy || !askQuestion.trim()} aria-label="Ask DW">
+              <OverhaulIcon name="send" size={17} />
+            </button>
+          </form>
           <div className="ov-prompt-row">
-            {['What needs my attention?', 'Why did this client pay late?', 'Show overdue by reason', 'Draft a follow-up', 'Cash forecast'].map((prompt) => (
-              <button type="button" key={prompt} aria-disabled="true">{prompt}</button>
+            {askPrompts.map((prompt) => (
+              <button type="button" key={prompt} disabled={askBusy} onClick={() => runPulseAskDw(prompt)}>{prompt}</button>
             ))}
           </div>
+
+          {(askBusy || askError || askResult) ? (
+            <div className="ov-ask-response" aria-live="polite">
+              {askBusy ? (
+                <div className="ov-ask-response-loading"><span className="ov-live-dot" />Checking DueWatch truth…</div>
+              ) : askError ? (
+                <div className="ov-ask-response-error">{askError}</div>
+              ) : askResult ? (
+                <>
+                  <div className="ov-ask-response-head">
+                    <span className={`ov-chip ov-chip--${askResult.status === 'blocked' ? 'orange' : askResult.status === 'needs_resolution' ? 'blue' : 'green'}`}>
+                      {askResult.status === 'answered' ? 'DW verified' : askResult.status === 'blocked' ? 'Guarded' : 'Needs a reference'}
+                    </span>
+                    <small>{askResult.scope === 'PORTFOLIO' ? 'Portfolio read' : 'Invoice truth'}</small>
+                  </div>
+                  <p className="ov-ask-response-conclusion">{askResult.conclusion}</p>
+                  {askResult.nextStep ? <p className="ov-ask-response-next"><strong>Next:</strong> {askResult.nextStep}</p> : null}
+                  {askResult.limitations?.length ? (
+                    <div className="ov-ask-response-limit">
+                      {askResult.limitations.map((item) => <span key={item}>{item}</span>)}
+                    </div>
+                  ) : null}
+                  {askResult.evidence?.length ? (
+                    <details className="ov-ask-response-evidence">
+                      <summary>Evidence</summary>
+                      <ul>{askResult.evidence.map((item) => <li key={item}>{item}</li>)}</ul>
+                    </details>
+                  ) : null}
+                </>
+              ) : null}
+            </div>
+          ) : null}
         </section>
 
         <div className="ov-main-grid">
