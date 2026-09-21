@@ -53,6 +53,7 @@ import {
   initials,
   timeAgo,
 } from '../lib/format'
+import { SUPPORTED_CURRENCIES } from '../lib/import/money'
 import { OverhaulIcon } from './OverhaulIconSystem'
 import './overhaul-pages.css'
 
@@ -329,7 +330,7 @@ export function OverhaulClients() {
 
 export function OverhaulPromises() {
   const { user } = useAuth()
-  const { invoices } = useData()
+  const { invoices, refresh } = useData()
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -340,12 +341,13 @@ export function OverhaulPromises() {
   const [recordInvoiceId, setRecordInvoiceId] = useState('')
   const [recordAmount, setRecordAmount] = useState('')
   const [recordDate, setRecordDate] = useState('')
+  const [recordCurrency, setRecordCurrency] = useState('')
   const [recordNote, setRecordNote] = useState('')
   const [recordBusy, setRecordBusy] = useState(false)
 
   const promiseEligibleInvoices = useMemo(
     () => invoices
-      .filter((invoice) => isOutstanding(invoice) && invoice.currency)
+      .filter((invoice) => isOutstanding(invoice))
       .sort((a, b) => String(a.due_date || '9999').localeCompare(String(b.due_date || '9999'))),
     [invoices]
   )
@@ -375,12 +377,14 @@ export function OverhaulPromises() {
     if (!first) return
     setRecordInvoiceId(first.id)
     setRecordAmount(Number(balanceOf(first)).toFixed(2))
+    setRecordCurrency(first.currency || '')
   }, [showRecord, recordInvoiceId, promiseEligibleInvoices])
 
   function chooseRecordInvoice(invoiceId) {
     setRecordInvoiceId(invoiceId)
     const invoice = promiseEligibleInvoices.find((candidate) => candidate.id === invoiceId)
     setRecordAmount(invoice ? Number(balanceOf(invoice)).toFixed(2) : '')
+    setRecordCurrency(invoice?.currency || '')
   }
 
   const filtered = useMemo(() => {
@@ -417,14 +421,16 @@ export function OverhaulPromises() {
         invoiceId: recordInvoiceId,
         amount: recordAmount,
         promisedDate: recordDate,
+        currency: recordCurrency,
         note: recordNote,
       })
       setShowRecord(false)
       setRecordInvoiceId('')
       setRecordAmount('')
       setRecordDate('')
+      setRecordCurrency('')
       setRecordNote('')
-      await reloadPromises()
+      await Promise.all([reloadPromises(), refresh()])
     } catch (recordError) {
       setError(recordError?.message || 'Could not record the promise.')
     } finally {
@@ -576,6 +582,21 @@ export function OverhaulPromises() {
               </label>
             </div>
             <label className="ov2-field">
+              <span>Invoice currency {promiseEligibleInvoices.find((invoice) => invoice.id === recordInvoiceId)?.currency ? <small>already established</small> : <small>required for legacy invoice</small>}</span>
+              <select
+                value={recordCurrency}
+                onChange={(event) => setRecordCurrency(event.target.value)}
+                disabled={Boolean(promiseEligibleInvoices.find((invoice) => invoice.id === recordInvoiceId)?.currency)}
+                required
+              >
+                <option value="">Choose currency</option>
+                {SUPPORTED_CURRENCIES.map((currency) => <option key={currency} value={currency}>{currency}</option>)}
+              </select>
+              {!promiseEligibleInvoices.find((invoice) => invoice.id === recordInvoiceId)?.currency ? (
+                <small className="ov2-field-help">DueWatch will save your explicit choice on this invoice. It will never assume USD.</small>
+              ) : null}
+            </label>
+            <label className="ov2-field">
               <span>Note <small>optional</small></span>
               <textarea rows={3} value={recordNote} onChange={(event) => setRecordNote(event.target.value)} placeholder="What did the customer commit to?" />
             </label>
@@ -585,7 +606,7 @@ export function OverhaulPromises() {
             </div>
             <div className="ov2-modal-actions">
               <button className="ov2-button ov2-button--ghost" type="button" onClick={() => setShowRecord(false)} disabled={recordBusy}>Cancel</button>
-              <button className="ov2-button ov2-button--primary" type="submit" disabled={recordBusy || !recordInvoiceId || !recordAmount || !recordDate}>
+              <button className="ov2-button ov2-button--primary" type="submit" disabled={recordBusy || !recordInvoiceId || !recordAmount || !recordDate || !recordCurrency}>
                 {recordBusy ? 'Recording…' : 'Record promise'}
               </button>
             </div>
