@@ -56,12 +56,8 @@ import {
 } from '../lib/format'
 import { SUPPORTED_CURRENCIES } from '../lib/import/money'
 import { buildCashFlowReadModel } from '../lib/cashFlowReadModel'
-import {
-  DEFAULT_WORKSPACE_PREFERENCES,
-  loadWorkspacePreferences,
-  saveWorkspacePreferences,
-} from '../lib/workspacePreferences'
 import { OverhaulIcon } from './OverhaulIconSystem'
+import { useWorkspacePreferences } from './WorkspacePreferencesContext'
 import './overhaul-pages.css'
 
 function PageHeader({ title, subtitle, actions }) {
@@ -958,47 +954,25 @@ export function OverhaulSettings() {
     lastSyncedAt,
     refresh,
   } = useData()
-  const fallbackWorkspace =
-    user?.user_metadata?.company ||
-    user?.user_metadata?.organization ||
-    user?.user_metadata?.workspace ||
-    'Workspace'
-  const browserTimezone = (() => {
-    try { return Intl.DateTimeFormat().resolvedOptions().timeZone || '' } catch { return '' }
-  })()
+  const {
+    preferences: persistedPrefs,
+    loading: loadingPrefs,
+    error: preferenceLoadError,
+    save: saveShellPreferences,
+  } = useWorkspacePreferences()
 
-  const [prefs, setPrefs] = useState({
-    ...DEFAULT_WORKSPACE_PREFERENCES,
-    workspace_name: fallbackWorkspace,
-    timezone: browserTimezone || null,
-  })
-  const [loadingPrefs, setLoadingPrefs] = useState(true)
+  const [prefs, setPrefs] = useState(persistedPrefs)
   const [savingPrefs, setSavingPrefs] = useState(false)
   const [settingsError, setSettingsError] = useState('')
   const [savedMessage, setSavedMessage] = useState('')
 
   useEffect(() => {
-    if (!user?.id) return
-    let cancelled = false
-    setLoadingPrefs(true)
-    loadWorkspacePreferences({ database: supabase, userId: user.id })
-      .then((loaded) => {
-        if (cancelled) return
-        setPrefs({
-          ...loaded,
-          workspace_name: loaded.workspace_name || fallbackWorkspace,
-          timezone: loaded.timezone || browserTimezone || null,
-        })
-        setSettingsError('')
-      })
-      .catch((loadError) => {
-        if (!cancelled) setSettingsError(loadError?.message || 'Could not load workspace preferences.')
-      })
-      .finally(() => {
-        if (!cancelled) setLoadingPrefs(false)
-      })
-    return () => { cancelled = true }
-  }, [user?.id])
+    if (!savingPrefs) setPrefs(persistedPrefs)
+  }, [persistedPrefs, savingPrefs])
+
+  useEffect(() => {
+    if (preferenceLoadError) setSettingsError(preferenceLoadError)
+  }, [preferenceLoadError])
 
   function patchPref(key, value) {
     setPrefs((current) => ({ ...current, [key]: value }))
@@ -1011,12 +985,8 @@ export function OverhaulSettings() {
     setSettingsError('')
     setSavedMessage('')
     try {
-      const saved = await saveWorkspacePreferences({
-        database: supabase,
-        userId: user.id,
-        preferences: prefs,
-      })
-      setPrefs((current) => ({ ...current, ...saved, exists: true }))
+      const saved = await saveShellPreferences(prefs)
+      setPrefs(saved)
       setSavedMessage('Settings saved')
     } catch (saveError) {
       setSettingsError(saveError?.message || 'Could not save settings.')
