@@ -35,6 +35,7 @@ import {
   promiseStateLabel,
   promiseStateTone,
   recordPromise,
+  replacePromise,
 } from '../lib/promises'
 import {
   DEFAULT_RULES,
@@ -222,7 +223,7 @@ export function OverhaulInvoices() {
               <button key={invoice.id} className="ov2-invoice-grid ov2-grid-row" onClick={() => openInvoice(invoice)}>
                 <span className="ov2-strong">{invoice.invoice_number || '—'}</span>
                 <span className="ov2-person"><InitialBadge name={invoice.clients?.name} /><b>{invoice.clients?.name || 'No client'}</b></span>
-                <span>{formatShortDate(invoice.issue_date)}</span>
+                <span>{formatShortDate(invoice.inv_date)}</span>
                 <span>{formatShortDate(invoice.due_date)}</span>
                 <span className="ov2-money">{formatMoney(invoice.amount)}</span>
                 <span className="ov2-money">{formatMoney(balanceOf(invoice))}</span>
@@ -371,7 +372,7 @@ export function OverhaulClients() {
 
 export function OverhaulPromises() {
   const { user } = useAuth()
-  const { invoices, refresh } = useData()
+  const { invoices, refresh, lastSyncedAt } = useData()
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -385,6 +386,11 @@ export function OverhaulPromises() {
   const [recordCurrency, setRecordCurrency] = useState('')
   const [recordNote, setRecordNote] = useState('')
   const [recordBusy, setRecordBusy] = useState(false)
+  const [replaceTarget, setReplaceTarget] = useState(null)
+  const [replaceAmount, setReplaceAmount] = useState('')
+  const [replaceDate, setReplaceDate] = useState('')
+  const [replaceNote, setReplaceNote] = useState('')
+  const [replaceBusy, setReplaceBusy] = useState(false)
 
   const promiseEligibleInvoices = useMemo(
     () => invoices
@@ -484,6 +490,43 @@ export function OverhaulPromises() {
       setError(recordError?.message || 'Could not record the promise.')
     } finally {
       setRecordBusy(false)
+    }
+  }
+
+  function openReplacePromise(row) {
+    const remaining = Math.max(
+      0,
+      Number(row.promised_amount || 0) - Number(row.operational?.fulfilledAmount || 0)
+    )
+    setReplaceTarget(row)
+    setReplaceAmount(remaining > 0 ? remaining.toFixed(2) : Number(row.promised_amount || 0).toFixed(2))
+    setReplaceDate(row.promised_date || '')
+    setReplaceNote(row.note || '')
+  }
+
+  async function handleReplace(event) {
+    event.preventDefault()
+    if (!replaceTarget?.id || replaceBusy) return
+    setReplaceBusy(true)
+    setError('')
+    try {
+      await replacePromise({
+        database: supabase,
+        promiseId: replaceTarget.id,
+        promisedAmount: replaceAmount,
+        promisedDate: replaceDate,
+        source: replaceTarget.source || 'founder_manual',
+        note: replaceNote || null,
+      })
+      setReplaceTarget(null)
+      setReplaceAmount('')
+      setReplaceDate('')
+      setReplaceNote('')
+      await Promise.all([reloadPromises(), refresh()])
+    } catch (replaceError) {
+      setError(replaceError?.message || 'Could not replace the promise.')
+    } finally {
+      setReplaceBusy(false)
     }
   }
 
@@ -594,6 +637,9 @@ export function OverhaulPromises() {
                     {canCancel ? (
                       <button type="button" disabled={busyId === row.id} onClick={() => handlePromiseAction(row, 'cancel')}>Cancel</button>
                     ) : null}
+                    {canCancel ? (
+                      <button type="button" disabled={busyId === row.id} onClick={() => openReplacePromise(row)}>Replace</button>
+                    ) : null}
                     {!canConfirm && !canCancel ? <span className="ov2-muted">Read only</span> : null}
                     <Link className="ov2-mini-link" to={`/invoices?invoice=${row.invoice_id}`}>Invoice</Link>
                   </span>
@@ -616,7 +662,7 @@ export function OverhaulPromises() {
               <select value={recordInvoiceId} onChange={(event) => chooseRecordInvoice(event.target.value)} required>
                 {promiseEligibleInvoices.map((invoice) => (
                   <option key={invoice.id} value={invoice.id}>
-                    {invoice.invoice_number || 'Invoice'} · {invoice.clients?.name || 'Client'} · {formatMoney(balanceOf(invoice))}
+                    {invoice.invoice_number || 'Invoice'} · {invoice.clients?.name || 'Client'} · {formatMoneyTruth(balanceOf(invoice), invoice.currency)}
                   </option>
                 ))}
               </select>
@@ -658,6 +704,44 @@ export function OverhaulPromises() {
               <button className="ov2-button ov2-button--ghost" type="button" onClick={() => setShowRecord(false)} disabled={recordBusy}>Cancel</button>
               <button className="ov2-button ov2-button--primary" type="submit" disabled={recordBusy || !recordInvoiceId || !recordAmount || !recordDate || !recordCurrency}>
                 {recordBusy ? 'Recording…' : 'Record promise'}
+              </button>
+            </div>
+          </form>
+        </div>
+      ) : null}
+      {replaceTarget ? (
+        <div className="ov2-modal-backdrop" role="presentation" onMouseDown={() => !replaceBusy && setReplaceTarget(null)}>
+          <form className="ov2-modal" onSubmit={handleReplace} onMouseDown={(event) => event.stopPropagation()}>
+            <div className="ov2-modal-head">
+              <div><span>Promise-to-Pay</span><h2>Replace commitment</h2></div>
+              <button type="button" onClick={() => setReplaceTarget(null)} disabled={replaceBusy}>×</button>
+            </div>
+            <div className="ov2-modal-truth">
+              <ShieldCheck size={16} />
+              <span>The existing promise will be resolved and preserved in history. DueWatch creates a new promise instead of mutating confirmed terms.</span>
+            </div>
+            <div className="ov2-field-grid">
+              <label className="ov2-field">
+                <span>New promised amount</span>
+                <input inputMode="decimal" value={replaceAmount} onChange={(event) => setReplaceAmount(event.target.value)} required />
+              </label>
+              <label className="ov2-field">
+                <span>New promised date</span>
+                <input type="date" value={replaceDate} onChange={(event) => setReplaceDate(event.target.value)} required />
+              </label>
+            </div>
+            <label className="ov2-field">
+              <span>Currency</span>
+              <input value={replaceTarget.currency || 'Unknown'} readOnly />
+            </label>
+            <label className="ov2-field">
+              <span>Note <small>optional</small></span>
+              <textarea rows={3} value={replaceNote} onChange={(event) => setReplaceNote(event.target.value)} />
+            </label>
+            <div className="ov2-modal-actions">
+              <button className="ov2-button ov2-button--ghost" type="button" onClick={() => setReplaceTarget(null)} disabled={replaceBusy}>Keep existing</button>
+              <button className="ov2-button ov2-button--primary" type="submit" disabled={replaceBusy || !replaceAmount || !replaceDate}>
+                {replaceBusy ? 'Replacing…' : 'Replace promise'}
               </button>
             </div>
           </form>
