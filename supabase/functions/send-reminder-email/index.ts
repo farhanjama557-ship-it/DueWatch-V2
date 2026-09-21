@@ -23,7 +23,6 @@ const MAX_REQUEST_BYTES = 24 * 1024
 const MAX_MESSAGE_CHARS = 8_000
 const MAX_SUBJECT_CHARS = 180
 const MANUAL_ACTION_TYPE = 'manual_reminder_email'
-const MANUAL_DEDUPE_WINDOW_MS = 5 * 60 * 1000
 
 type AnyRecord = Record<string, any>
 
@@ -140,9 +139,13 @@ Deno.serve(async (req) => {
     const body = typeof requestBody.body === 'string' ? requestBody.body.trim() : ''
     const requestedSubject =
       typeof requestBody.subject === 'string' ? requestBody.subject.trim() : ''
+    const operationId = String(requestBody.operationId || '')
 
     if (!isUuid(invoiceId) || !body) {
       return json({ error: 'A valid invoiceId and body are required.' }, 400, req)
+    }
+    if (!isUuid(operationId)) {
+      return json({ error: 'A stable reminder operationId is required.', code: 'OPERATION_ID_REQUIRED' }, 400, req)
     }
     if (body.length > MAX_MESSAGE_CHARS) {
       return json({ error: 'Reminder text is too long.' }, 400, req)
@@ -178,8 +181,7 @@ Deno.serve(async (req) => {
     const subject =
       requestedSubject || `Regarding invoice ${invoice.inv_num || ''}`.trim()
     const messageHash = await sha256Hex(`${invoice.id}\n${subject}\n${body}`)
-    const bucket = Math.floor(Date.now() / MANUAL_DEDUPE_WINDOW_MS)
-    const idempotencyKey = `manual-reminder:${invoice.id}:${messageHash}:${bucket}`
+    const idempotencyKey = `manual-reminder:${operationId}`
 
     const { data: claimRows, error: claimError } = await admin.rpc(
       'acquire_external_action_claim',
@@ -194,6 +196,7 @@ Deno.serve(async (req) => {
           invoiceId: invoice.id,
           actionType: MANUAL_ACTION_TYPE,
           idempotencyKey,
+          operationId,
           messageHash,
           recipient: to,
           subject,
@@ -201,7 +204,16 @@ Deno.serve(async (req) => {
         },
       }
     )
-    if (claimError) throw claimError
+    if (claimError) {
+      if (String(claimError.message || '').includes('EXTERNAL_ACTION_OPERATION_CONFLICT')) {
+        return json(
+          { error: 'This reminder operation changed after it was created. Start a new send action.', code: 'OPERATION_CONFLICT' },
+          409,
+          req
+        )
+      }
+      throw claimError
+    }
 
     const claim = claimRows?.[0]
     if (!claim?.acquired) {
@@ -384,6 +396,7 @@ async function handleApprovalSend({ admin, userId, awaitingSignatureId, editedBo
       text: editedBody ?? row.draft_content,
       reason: row.ai_reason,
       now: new Date(),
+      approvalId: row.id,
       io,
     })
   } catch (error) {
@@ -432,17 +445,33 @@ function buildApprovalIo({ admin, userId, row }: ApprovalIoArgs) {
       })
     },
     isProviderConfigured,
-    async acquireClaim({ userId: uid, invoiceId, ruleId, actionType, idempotencyKey, receipt }: AnyRecord) {
-      const { data, error } = await admin.rpc('acquire_autopilot_execution_claim', {
+    async acquireClaim({
+      userId: uid,
+      invoiceId,
+      ruleId,
+      actionType,
+      idempotencyKey,
+      receipt,
+      ruleSnapshot,
+      expectedApprovalRequired,
+      approvalId,
+    }: AnyRecord) {
+      const { data, error } = await admin.rpc('acquire_guarded_autopilot_execution_claim', {
         p_user_id: uid,
         p_invoice_id: invoiceId,
         p_rule_id: ruleId,
         p_action_type: actionType,
         p_idempotency_key: idempotencyKey,
         p_receipt: receipt ?? {},
+        p_expected_rule_snapshot: ruleSnapshot ?? {},
+        p_expected_approval_required: expectedApprovalRequired === true,
+        p_approval_id: approvalId ?? row.id,
       })
       if (error) throw error
       const claimRow = data?.[0]
+      if (claimRow?.stale_reason) {
+        return { claimId: null, acquired: false, staleReason: claimRow.stale_reason }
+      }
       if (claimRow?.acquired) return { claimId: claimRow.claim_id, acquired: true }
 
       let existingStatus = null
@@ -488,12 +517,16 @@ function buildApprovalIo({ admin, userId, row }: ApprovalIoArgs) {
         .eq('user_id', userId)
       if (invErr) throw invErr
 
-      const { error: sigErr } = await admin
+      const { data: resolvedApproval, error: sigErr } = await admin
         .from('awaiting_signature')
         .update({ status: 'approved', resolved_at: nowIso() })
         .eq('id', row.id)
         .eq('user_id', userId)
+        .eq('status', 'dispatching')
+        .select('id')
+        .maybeSingle()
       if (sigErr) throw sigErr
+      if (!resolvedApproval) throw new Error('Approval dispatch state changed before sent evidence could be finalized.')
 
       const { error: evErr } = await admin.from('events').insert({
         user_id: userId,
@@ -518,6 +551,14 @@ function buildApprovalIo({ admin, userId, row }: ApprovalIoArgs) {
       if (evErr) throw evErr
     },
     async recordFailureEvidence({ claimId, error, authority, reason, ruleSnapshot }: AnyRecord) {
+      const { error: approvalErr } = await admin
+        .from('awaiting_signature')
+        .update({ status: 'send_failed', resolved_at: nowIso() })
+        .eq('id', row.id)
+        .eq('user_id', userId)
+        .eq('status', 'dispatching')
+      if (approvalErr) throw approvalErr
+
       const { error: evErr } = await admin.from('events').insert({
         user_id: userId,
         event_type: 'reminder_send_failed',
@@ -540,6 +581,14 @@ function buildApprovalIo({ admin, userId, row }: ApprovalIoArgs) {
       if (evErr) throw evErr
     },
     async recordUncertainEvidence({ claimId, error, authority, reason, ruleSnapshot }: AnyRecord) {
+      const { error: approvalErr } = await admin
+        .from('awaiting_signature')
+        .update({ status: 'uncertain', resolved_at: nowIso() })
+        .eq('id', row.id)
+        .eq('user_id', userId)
+        .eq('status', 'dispatching')
+      if (approvalErr) throw approvalErr
+
       const { error: evErr } = await admin.from('events').insert({
         user_id: userId,
         event_type: 'reminder_send_uncertain',
