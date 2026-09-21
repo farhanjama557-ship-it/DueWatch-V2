@@ -987,6 +987,7 @@ test('Astra provider receipt: HTTP-success-shaped response without provider id s
 test('Astra authority: guarded claim stale reason blocks provider call', async () => {
   const calls = []
   const { io, sendEmailCalls } = makeIo({
+    fetchAuthorityInputs: approvalFetchInputs(),
     acquireClaim: async (args) => {
       calls.push(args)
       return { acquired: false, staleReason: 'approval_state_changed' }
