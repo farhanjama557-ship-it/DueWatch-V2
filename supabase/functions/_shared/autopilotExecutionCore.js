@@ -419,6 +419,10 @@ export async function executeApprovalSend({
     return { outcome: SEND_OUTCOME.STALE_AUTHORITY, detail: revalidation.outcome }
   }
 
+  if (inputs.autopilotSettings?.approval_required !== true) {
+    return { outcome: SEND_OUTCOME.STALE_AUTHORITY, detail: 'approval_policy_changed' }
+  }
+
   const ruleId = revalidation.checkedRuleId
   const currentRule = inputs.rules.find((r) => r.id === ruleId)
   if (!ruleSnapshotsMatch(priorRuleSnapshot, buildRuleSnapshot(currentRule))) {
@@ -448,7 +452,7 @@ export async function executeApprovalSend({
     authority: revalidation.authority,
     factualBasis: currentFactualBasis,
     ruleSnapshot: buildRuleSnapshot(currentRule),
-    expectedApprovalRequired: inputs.autopilotSettings?.approval_required === true,
+    expectedApprovalRequired: true,
     approvalId,
     io,
   })
