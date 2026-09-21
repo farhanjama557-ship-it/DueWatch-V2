@@ -56,6 +56,12 @@ import {
 } from '../lib/format'
 import { SUPPORTED_CURRENCIES } from '../lib/import/money'
 import { buildCashFlowReadModel } from '../lib/cashFlowReadModel'
+import {
+  formatMoneySummary,
+  formatMoneyTruth,
+  summarizeInvoiceBalances,
+  summarizeMoney,
+} from '../lib/moneyTruth'
 import { OverhaulIcon } from './OverhaulIconSystem'
 import { useWorkspacePreferences } from './WorkspacePreferencesContext'
 import './overhaul-pages.css'
@@ -404,7 +410,7 @@ export function OverhaulPromises() {
 
   useEffect(() => {
     reloadPromises()
-  }, [user?.id])
+  }, [user?.id, lastSyncedAt])
 
   useEffect(() => {
     if (!showRecord || recordInvoiceId) return
@@ -443,6 +449,14 @@ export function OverhaulPromises() {
   const pastDueUnresolved = rows.filter((row) => row.operational?.state === 'past_due_unresolved')
   const fulfilled = rows.filter((row) => row.operational?.state === 'fulfilled')
   const proposed = rows.filter((row) => row.operational?.state === 'proposed')
+  const promiseMoney = (promiseRows) =>
+    formatMoneySummary(
+      summarizeMoney(promiseRows, {
+        amountOf: (row) => row.promised_amount,
+        currencyOf: (row) => row.currency,
+      }),
+      { compact: true }
+    )
 
   async function handleRecord(event) {
     event.preventDefault()
@@ -515,16 +529,16 @@ export function OverhaulPromises() {
           <span>Needs confirmation</span><strong>{proposed.length}</strong><small>proposed promises</small>
         </button>
         <button type="button" onClick={() => setTab('due_today')}>
-          <span>Due today</span><strong>{dueToday.length}</strong><small>{moneyCompact(dueToday.reduce((s, r) => s + Number(r.promised_amount || 0), 0))}</small>
+          <span>Due today</span><strong>{dueToday.length}</strong><small>{promiseMoney(dueToday)}</small>
         </button>
         <button type="button" onClick={() => setTab('due_soon')}>
-          <span>Due soon</span><strong>{dueSoon.length}</strong><small>{moneyCompact(dueSoon.reduce((s, r) => s + Number(r.promised_amount || 0), 0))}</small>
+          <span>Due soon</span><strong>{dueSoon.length}</strong><small>{promiseMoney(dueSoon)}</small>
         </button>
         <button type="button" onClick={() => setTab('past_due_unresolved')}>
-          <span>Past due · unresolved</span><strong className="ov2-danger">{pastDueUnresolved.length}</strong><small>{moneyCompact(pastDueUnresolved.reduce((s, r) => s + Number(r.promised_amount || 0), 0))}</small>
+          <span>Past due · unresolved</span><strong className="ov2-danger">{pastDueUnresolved.length}</strong><small>{promiseMoney(pastDueUnresolved)}</small>
         </button>
         <button type="button" onClick={() => setTab('fulfilled')}>
-          <span>Fulfilled</span><strong className="ov2-positive">{fulfilled.length}</strong><small>{moneyCompact(fulfilled.reduce((s, r) => s + Number(r.promised_amount || 0), 0))}</small>
+          <span>Fulfilled</span><strong className="ov2-positive">{fulfilled.length}</strong><small>{promiseMoney(fulfilled)}</small>
         </button>
       </div>
 
@@ -569,10 +583,10 @@ export function OverhaulPromises() {
                   </span>
                   <span>
                     <Pill tone={promiseStateTone(state)}>{promiseStateLabel(state)}</Pill>
-                    {state === 'fulfilled' ? <small>{formatMoney(row.operational.fulfilledAmount)} verified by payment allocations</small> : null}
+                    {state === 'fulfilled' ? <small>{formatMoneyTruth(row.operational.fulfilledAmount, row.currency)} verified by payment allocations</small> : null}
                   </span>
                   <span>{formatShortDate(row.promised_date)}</span>
-                  <span className="ov2-money">{formatMoney(row.promised_amount)}</span>
+                  <span className="ov2-money">{formatMoneyTruth(row.promised_amount, row.currency)}</span>
                   <span className="ov2-row-actions">
                     {canConfirm ? (
                       <button type="button" disabled={busyId === row.id} onClick={() => handlePromiseAction(row, 'confirm')}>Confirm</button>
@@ -664,7 +678,15 @@ function agingBucket(invoice) {
 
 export function OverhaulCashFlow() {
   const { user } = useAuth()
-  const { invoices, collectedThisMonth, collectedLastMonth } = useData()
+  const {
+    invoices,
+    collectedThisMonth,
+    collectedLastMonth,
+    collectedThisMonthSummary,
+    collectedLastMonthSummary,
+    collectionDataAvailable,
+    lastSyncedAt,
+  } = useData()
   const [promises, setPromises] = useState([])
   const [promiseError, setPromiseError] = useState('')
 
@@ -694,11 +716,25 @@ export function OverhaulCashFlow() {
 
   const open = useMemo(() => invoices.filter(isOutstanding), [invoices])
   const buckets = ['Current','1–30 days','31–60 days','61–90 days','90+ days'].map((label) => {
-    const amount = open.filter((invoice) => agingBucket(invoice) === label).reduce((sum, invoice) => sum + balanceOf(invoice), 0)
-    return { label, amount }
+    const bucketInvoices = open.filter((invoice) => agingBucket(invoice) === label)
+    const summary = summarizeInvoiceBalances(bucketInvoices, balanceOf)
+    const amount = summary.canRepresentAsSingleMoney ? (summary.byCurrency[0]?.amount ?? 0) : null
+    return { label, amount, summary }
   })
-  const maxWeek = Math.max(...model.weeks.map((week) => week.amount), 1)
-  const maxAging = Math.max(...buckets.map((bucket) => bucket.amount), 1)
+  const maxWeek = Math.max(...model.weeks.map((week) => Number.isFinite(week.amount) ? week.amount : 0), 1)
+  const maxAging = Math.max(...buckets.map((bucket) => Number.isFinite(bucket.amount) ? bucket.amount : 0), 1)
+
+  const collectionTrend =
+    collectionDataAvailable &&
+    collectedThisMonthSummary?.canRepresentAsSingleMoney &&
+    collectedLastMonthSummary?.canRepresentAsSingleMoney &&
+    collectedThisMonthSummary.byCurrency[0]?.currency === collectedLastMonthSummary.byCurrency[0]?.currency &&
+    Number.isFinite(collectedThisMonth) &&
+    Number.isFinite(collectedLastMonth)
+      ? `${collectedThisMonth >= collectedLastMonth ? '↑' : '↓'} vs last month`
+      : collectionDataAvailable
+        ? 'Currency-separated ledger totals'
+        : 'Payment evidence unavailable'
 
   return (
     <div className="ov2-page">
@@ -714,27 +750,27 @@ export function OverhaulCashFlow() {
       <div className="ov2-summary-strip">
         <div>
           <span>Collected this month</span>
-          <strong>{formatMoney(collectedThisMonth)}</strong>
-          <small>{collectedLastMonth ? `${collectedThisMonth >= collectedLastMonth ? '↑' : '↓'} vs last month` : 'No prior-month baseline'}</small>
+          <strong>{collectionDataAvailable && collectedThisMonthSummary ? formatMoneySummary(collectedThisMonthSummary) : 'Unavailable'}</strong>
+          <small>{collectionTrend}</small>
         </div>
         <div>
           <span>Scheduled next 7 days</span>
-          <strong>{formatMoney(model.scheduled7Amount)}</strong>
+          <strong>{formatMoneySummary(model.scheduled7Summary)}</strong>
           <small>invoice + confirmed promise timing</small>
         </div>
         <div>
           <span>Scheduled next 30 days</span>
-          <strong>{formatMoney(model.scheduled30Amount)}</strong>
+          <strong>{formatMoneySummary(model.scheduled30Summary)}</strong>
           <small>no probability weighting</small>
         </div>
         <div>
           <span>Confirmed promises ≤30d</span>
-          <strong>{formatMoney(model.committedPromiseAmount30)}</strong>
+          <strong>{formatMoneySummary(model.committedPromise30Summary)}</strong>
           <small>customer commitments only</small>
         </div>
         <div>
           <span>Overdue exposure</span>
-          <strong className="ov2-danger">{formatMoney(model.overdueExposure)}</strong>
+          <strong className="ov2-danger">{formatMoneySummary(model.overdueExposureSummary)}</strong>
           <small>{model.openInvoiceCount} open invoices total</small>
         </div>
       </div>
@@ -752,15 +788,15 @@ export function OverhaulCashFlow() {
           <div className="ov2-timing-chart">
             {model.weeks.map((week) => (
               <div className="ov2-timing-column" key={week.index}>
-                <strong>{moneyCompact(week.amount)}</strong>
+                <strong>{formatMoneySummary(week.amountSummary, { compact: true })}</strong>
                 <div className="ov2-timing-track">
                   <span
                     className="ov2-timing-invoice"
-                    style={{ height: `${Math.max(week.invoiceAmount ? 3 : 0, (week.invoiceAmount / maxWeek) * 100)}%` }}
+                    style={{ height: `${Math.max(Number.isFinite(week.invoiceAmount) && week.invoiceAmount ? 3 : 0, ((Number.isFinite(week.invoiceAmount) ? week.invoiceAmount : 0) / maxWeek) * 100)}%` }}
                   />
                   <span
                     className="ov2-timing-promise"
-                    style={{ height: `${Math.max(week.promiseAmount ? 3 : 0, (week.promiseAmount / maxWeek) * 100)}%` }}
+                    style={{ height: `${Math.max(Number.isFinite(week.promiseAmount) && week.promiseAmount ? 3 : 0, ((Number.isFinite(week.promiseAmount) ? week.promiseAmount : 0) / maxWeek) * 100)}%` }}
                   />
                 </div>
                 <small>{formatShortDate(week.startDate)}–{formatShortDate(week.endDate)}</small>
@@ -777,15 +813,15 @@ export function OverhaulCashFlow() {
           <div className="ov2-card-head"><div><span>DW cash awareness</span><h2>What is changing timing</h2></div></div>
           <div className="ov2-cash-driver">
             <span className="ov2-driver-icon green"><OverhaulIcon name="promise" size={17} /></span>
-            <div><b>Confirmed promise timing</b><small>{formatMoney(model.committedPromiseAmount30)} committed within 30 days</small></div>
+            <div><b>Confirmed promise timing</b><small>{formatMoneySummary(model.committedPromise30Summary)} committed within 30 days</small></div>
           </div>
           <div className="ov2-cash-driver">
             <span className="ov2-driver-icon red"><CircleAlert size={17} /></span>
-            <div><b>Overdue exposure</b><small>{formatMoney(model.overdueExposure)} is already past invoice due dates</small></div>
+            <div><b>Overdue exposure</b><small>{formatMoneySummary(model.overdueExposureSummary)} is already past invoice due dates</small></div>
           </div>
           <div className="ov2-cash-driver">
             <span className="ov2-driver-icon amber"><Clock3 size={17} /></span>
-            <div><b>Past-due promises</b><small>{formatMoney(model.pastDuePromiseExposure)} of confirmed commitments are past promised date without enough verified payment evidence</small></div>
+            <div><b>Past-due promises</b><small>{formatMoneySummary(model.pastDuePromiseExposureSummary)} of confirmed commitments are past promised date without enough verified payment evidence</small></div>
           </div>
           <div className="ov2-cash-driver">
             <span className="ov2-driver-icon blue"><ShieldCheck size={17} /></span>
@@ -807,7 +843,7 @@ export function OverhaulCashFlow() {
                   <OverhaulIcon name={event.type === 'confirmed_promise' ? 'promise' : 'invoices'} size={15} />
                 </span>
                 <span><b>{event.clientName}</b><small>{event.invoiceNumber || 'Invoice'} · {event.type === 'confirmed_promise' ? 'confirmed promise' : 'invoice due'} · {formatShortDate(event.date)}</small></span>
-                <strong>{formatMoney(event.amount)}</strong>
+                <strong>{formatMoneyTruth(event.amount, event.currency)}</strong>
                 <Link className="ov2-mini-link" to={`/invoices?invoice=${event.invoiceId}`}>Open</Link>
               </div>
             ))}
@@ -821,8 +857,8 @@ export function OverhaulCashFlow() {
             {buckets.map((bucket) => (
               <div key={bucket.label}>
                 <span>{bucket.label}</span>
-                <div><i style={{ width: `${Math.max(bucket.amount ? 2 : 0, (bucket.amount / maxAging) * 100)}%` }} /></div>
-                <strong>{moneyCompact(bucket.amount)}</strong>
+                <div><i style={{ width: `${Math.max(Number.isFinite(bucket.amount) && bucket.amount ? 2 : 0, ((Number.isFinite(bucket.amount) ? bucket.amount : 0) / maxAging) * 100)}%` }} /></div>
+                <strong>{formatMoneySummary(bucket.summary, { compact: true })}</strong>
               </div>
             ))}
           </div>
