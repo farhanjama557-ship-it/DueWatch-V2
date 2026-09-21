@@ -62,7 +62,7 @@ test('Integrations never claim unsupported providers are connected', () => {
 test('Pulse and product pages use real data seams rather than static financial fixtures', () => {
   assert.ok(pulse.includes('useData()'))
   assert.ok(pulse.includes('formatMoney(outstanding)'))
-  assert.ok(pages.includes("from('promises')"))
+  assert.ok(pages.includes('loadPromiseWorkspace'))
   assert.ok(pages.includes('fetchAutopilotRules'))
   assert.ok(pages.includes('InvoiceDetailPanel'))
   assert.ok(pages.includes('AddInvoiceModal'))
