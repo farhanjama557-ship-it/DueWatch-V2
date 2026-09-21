@@ -917,3 +917,97 @@ test('T10c: acquireClaim adapters route a real query error through resolveExisti
   assert.equal(outcome, EXISTING_CLAIM_STATUS_UNKNOWN)
   assert.equal(claimLostMessage(outcome), "Duewatch found an existing execution record but couldn't verify its status. No new reminder was sent.")
 })
+
+
+test('Astra currency: auto-send fails closed when invoice currency is unknown', async () => {
+  const { io, sendEmailCalls } = makeIo({
+    fetchAuthorityInputs: () => ({
+      invoice: baseInvoice({ currency: null }),
+      rules: [baseRule()],
+      autopilotSettings: autopilotSettings(),
+      handledKeys: new Set(),
+      pendingInvoiceIds: new Set(),
+    }),
+  })
+  const result = await executeAutoSend({
+    userId: USER_A,
+    invoiceId: INVOICE_X,
+    ruleId: RULE_A,
+    buildMessage,
+    now: NOW,
+    io,
+  })
+  assert.equal(result.outcome, SEND_OUTCOME.STALE_AUTHORITY)
+  assert.equal(result.detail, 'invoice_currency_unavailable')
+  assert.equal(sendEmailCalls.length, 0)
+})
+
+test('Astra currency: approval stales when invoice currency changes', async () => {
+  const fixture = validApprovalFixture()
+  const { io, sendEmailCalls } = makeIo({
+    fetchAuthorityInputs: approvalFetchInputs({
+      invoice: baseInvoice({ currency: 'EUR' }),
+    }),
+  })
+  const result = await executeApprovalSend({
+    userId: USER_A,
+    ...fixture,
+    invoiceId: INVOICE_X,
+    text: 'Founder reviewed',
+    reason: 'reviewed',
+    now: NOW,
+    approvalId: '99999999-9999-4999-8999-999999999999',
+    io,
+  })
+  assert.equal(result.outcome, SEND_OUTCOME.STALE_AUTHORITY)
+  assert.equal(result.detail, 'material_facts_changed')
+  assert.equal(sendEmailCalls.length, 0)
+})
+
+test('Astra provider receipt: HTTP-success-shaped response without provider id stays uncertain', async () => {
+  const { io, store, recordUncertainCalls } = makeIo({
+    sendEmail: async () => ({ status: 'sent', ambiguous: false }),
+  })
+  await assert.rejects(
+    () => executeAutoSend({
+      userId: USER_A,
+      invoiceId: INVOICE_X,
+      ruleId: RULE_A,
+      buildMessage,
+      now: NOW,
+      io,
+    }),
+    /without a verifiable message receipt/
+  )
+  const claim = [...store.claims.values()][0]
+  assert.equal(claim.status, 'uncertain')
+  assert.equal(recordUncertainCalls.length, 1)
+})
+
+test('Astra authority: guarded claim stale reason blocks provider call', async () => {
+  const calls = []
+  const { io, sendEmailCalls } = makeIo({
+    acquireClaim: async (args) => {
+      calls.push(args)
+      return { acquired: false, staleReason: 'approval_state_changed' }
+    },
+  })
+  const fixture = validApprovalFixture()
+  const result = await executeApprovalSend({
+    userId: USER_A,
+    ...fixture,
+    invoiceId: INVOICE_X,
+    text: 'Founder reviewed',
+    reason: 'reviewed',
+    now: NOW,
+    approvalId: '99999999-9999-4999-8999-999999999999',
+    io,
+  })
+  assert.equal(result.outcome, SEND_OUTCOME.STALE_AUTHORITY)
+  assert.equal(result.detail, 'approval_state_changed')
+  assert.equal(sendEmailCalls.length, 0)
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].approvalId, '99999999-9999-4999-8999-999999999999')
+  assert.equal(calls[0].expectedApprovalRequired, true)
+  assert.deepEqual(calls[0].ruleSnapshot, fixture.priorRuleSnapshot)
+})
