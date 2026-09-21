@@ -41,8 +41,7 @@ export async function saveWorkspacePreferences({ database, userId, preferences }
     throw new Error('Choose a supported date format.')
   }
 
-  const payload={
-    user_id:userId,
+  const mutable={
     workspace_name:cleanText(preferences?.workspace_name),
     timezone:cleanText(preferences?.timezone),
     date_format:dateFormat,
@@ -54,12 +53,50 @@ export async function saveWorkspacePreferences({ database, userId, preferences }
     updated_at:new Date().toISOString(),
   }
 
+  const selection='user_id,workspace_name,timezone,date_format,weekly_digest,overdue_summary,product_updates,promise_notifications,escalation_alerts,updated_at'
+
+  const { data: existing, error: readError } = await database
+    .from('workspace_preferences')
+    .select('user_id')
+    .eq('user_id', userId)
+    .maybeSingle()
+
+  if (readError) throw new Error(readError.message || 'Could not verify workspace preferences.')
+
+  if (existing) {
+    const { data, error } = await database
+      .from('workspace_preferences')
+      .update(mutable)
+      .eq('user_id', userId)
+      .select(selection)
+      .single()
+
+    if (error) throw new Error(error.message || 'Could not save workspace preferences.')
+    return data
+  }
+
   const { data, error } = await database
     .from('workspace_preferences')
-    .upsert(payload, { onConflict:'user_id' })
-    .select('user_id,workspace_name,timezone,date_format,weekly_digest,overdue_summary,product_updates,promise_notifications,escalation_alerts,updated_at')
+    .insert({ user_id:userId, ...mutable })
+    .select(selection)
     .single()
 
-  if (error) throw new Error(error.message || 'Could not save workspace preferences.')
-  return data
+  if (!error) return data
+
+  // Two same-user first saves can race between the existence check and insert.
+  // A duplicate-key outcome is safe to reconcile by retrying the tenant-scoped
+  // update; any other failure remains fail-closed.
+  if (error.code === '23505') {
+    const { data: reconciled, error: reconcileError } = await database
+      .from('workspace_preferences')
+      .update(mutable)
+      .eq('user_id', userId)
+      .select(selection)
+      .single()
+
+    if (reconcileError) throw new Error(reconcileError.message || 'Could not reconcile workspace preferences.')
+    return reconciled
+  }
+
+  throw new Error(error.message || 'Could not save workspace preferences.')
 }
