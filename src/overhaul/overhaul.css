@@ -1476,3 +1476,97 @@ button[aria-disabled="true"] {
     scroll-behavior: auto !important;
   }
 }
+
+
+.ov-ask-row .ov-send:disabled {
+  opacity: .45;
+  box-shadow: none;
+}
+
+.ov-ask-response {
+  margin: 8px 0 1px 37px;
+  padding: 10px 12px;
+  border: 1px solid #e6e9ee;
+  border-radius: 8px;
+  background: #fbfcfd;
+}
+
+.ov-ask-response-loading,
+.ov-ask-response-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #667287;
+  font-size: 9px;
+}
+
+.ov-ask-response-error {
+  color: #b44d3b;
+}
+
+.ov-ask-response-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ov-ask-response-head small {
+  color: #8b94a3;
+  font-size: 7.8px;
+}
+
+.ov-ask-response-conclusion {
+  margin: 8px 0 0;
+  color: #2a3448;
+  font-size: 9.5px;
+  line-height: 1.5;
+}
+
+.ov-ask-response-next {
+  margin: 7px 0 0;
+  color: #5c687d;
+  font-size: 8.5px;
+  line-height: 1.45;
+}
+
+.ov-ask-response-next strong {
+  color: #313b50;
+}
+
+.ov-ask-response-limit {
+  margin-top: 8px;
+  display: grid;
+  gap: 4px;
+}
+
+.ov-ask-response-limit span {
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: #fff6ec;
+  color: #9a6427;
+  font-size: 7.8px;
+  line-height: 1.4;
+}
+
+.ov-ask-response-evidence {
+  margin-top: 8px;
+  color: #647084;
+  font-size: 8px;
+}
+
+.ov-ask-response-evidence summary {
+  cursor: pointer;
+  color: #46546d;
+  font-weight: 700;
+}
+
+.ov-ask-response-evidence ul {
+  margin: 6px 0 0 16px;
+  padding: 0;
+}
+
+.ov-ask-response-evidence li {
+  margin: 3px 0;
+  line-height: 1.35;
+}
