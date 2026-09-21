@@ -1,3 +1,5 @@
+import { SUPPORTED_CURRENCIES } from './import/money.js'
+
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 const MONEY_RE = /^(?:0|[1-9]\d*)(?:\.\d{1,2})?$/
 
@@ -129,12 +131,68 @@ export async function loadPromiseWorkspace({ database, userId } = {}) {
   }))
 }
 
+export async function ensureInvoiceCurrency({
+  database,
+  userId,
+  invoiceId,
+  currency,
+} = {}) {
+  if (!database?.from) throw new Error('Invoice currency update requires a database client.')
+  if (!userId || !invoiceId) throw new Error('A tenant and invoice are required.')
+  const normalized = String(currency || '').trim().toUpperCase()
+  if (!SUPPORTED_CURRENCIES.includes(normalized)) {
+    throw new Error('Choose a supported invoice currency.')
+  }
+
+  const { data: invoice, error: readError } = await database
+    .from('invoices')
+    .select('id,user_id,currency')
+    .eq('user_id', userId)
+    .eq('id', invoiceId)
+    .maybeSingle()
+
+  if (readError) throw new Error(readError.message || 'Could not load invoice currency.')
+  if (!invoice) throw new Error('Invoice not found.')
+  if (invoice.currency) {
+    if (String(invoice.currency).toUpperCase() !== normalized) {
+      throw new Error('The selected currency does not match the invoice currency.')
+    }
+    return normalized
+  }
+
+  const { data: updated, error: updateError } = await database
+    .from('invoices')
+    .update({ currency: normalized })
+    .eq('user_id', userId)
+    .eq('id', invoiceId)
+    .is('currency', null)
+    .select('id,currency')
+    .maybeSingle()
+
+  if (updateError) throw new Error(updateError.message || 'Could not save invoice currency.')
+  if (updated?.currency === normalized) return normalized
+
+  const { data: reread, error: rereadError } = await database
+    .from('invoices')
+    .select('id,currency')
+    .eq('user_id', userId)
+    .eq('id', invoiceId)
+    .maybeSingle()
+
+  if (rereadError) throw new Error(rereadError.message || 'Could not verify invoice currency.')
+  if (String(reread?.currency || '').toUpperCase() !== normalized) {
+    throw new Error('Invoice currency changed before the promise could be recorded. Refresh and review it.')
+  }
+  return normalized
+}
+
 export async function recordPromise({
   database,
   userId,
   invoiceId,
   amount,
   promisedDate,
+  currency = null,
   note = null,
   source = 'founder_manual',
 } = {}) {
@@ -153,7 +211,9 @@ export async function recordPromise({
 
   if (invoiceError) throw new Error(invoiceError.message || 'Could not load the invoice.')
   if (!invoice) throw new Error('Invoice not found.')
-  if (!invoice.currency) throw new Error('Set the invoice currency before recording a promise.')
+  const resolvedCurrency = invoice.currency
+    ? await ensureInvoiceCurrency({ database, userId, invoiceId, currency: invoice.currency })
+    : await ensureInvoiceCurrency({ database, userId, invoiceId, currency })
 
   const balance = Math.max((Number(invoice.amount) || 0) - (Number(invoice.amount_paid) || 0), 0)
   if (Number(normalizedAmount) > balance + 0.000001) {
@@ -167,7 +227,7 @@ export async function recordPromise({
       invoice_id: invoiceId,
       promised_amount: normalizedAmount,
       promised_date: normalizedDate,
-      currency: invoice.currency,
+      currency: resolvedCurrency,
       source: String(source || 'founder_manual').trim() || 'founder_manual',
       note: String(note || '').trim() || null,
     })
