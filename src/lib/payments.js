@@ -25,8 +25,12 @@ export function summarizeCollectedPaymentRows(...rowGroups) {
   }
 }
 
-export function buildInvoicePaymentRequest({ invoiceId, amount, currency, paymentDate, method, note }) {
+export function buildInvoicePaymentRequest({ invoiceId, amount, currency, paymentDate, operationKey, method, note }) {
   if (!invoiceId) throw new Error('An invoice is required.')
+  const normalizedOperationKey = String(operationKey ?? '').trim()
+  if (!normalizedOperationKey || normalizedOperationKey.length > 200) {
+    throw new Error('A stable payment operation key is required.')
+  }
   const normalizedAmount = normalizePaymentAmount(amount)
   const normalizedCurrency = String(currency ?? '').trim()
   if (!CURRENCY_PATTERN.test(normalizedCurrency)) {
@@ -40,6 +44,7 @@ export function buildInvoicePaymentRequest({ invoiceId, amount, currency, paymen
     p_total_amount: normalizedAmount,
     p_currency: normalizedCurrency,
     p_allocations: [{ invoice_id: invoiceId, amount: normalizedAmount }],
+    p_operation_key: normalizedOperationKey,
     p_method: String(method ?? '').trim() || null,
     p_note: String(note ?? '').trim() || null,
   }
