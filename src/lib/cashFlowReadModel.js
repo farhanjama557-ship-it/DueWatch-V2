@@ -1,3 +1,5 @@
+import { summarizeMoney } from './moneyTruth.js'
+
 function balanceOf(invoice) {
   return Math.max((Number(invoice?.amount) || 0) - (Number(invoice?.amount_paid) || 0), 0)
 }
@@ -51,9 +53,27 @@ function event({ type, date, amount, invoice, promise = null }) {
     invoiceId: invoice.id,
     invoiceNumber: invoice.invoice_number || invoice.inv_num || null,
     clientName: invoice.clients?.name || 'Client',
-    currency: invoice.currency || null,
+    currency: promise?.currency || invoice.currency || null,
     promiseId: promise?.id || null,
   }
+}
+
+function moneySummary(rows, amountOf = (row) => row.amount, currencyOf = (row) => row.currency) {
+  return summarizeMoney(rows, { amountOf, currencyOf })
+}
+
+function singleAmount(summary) {
+  if (!summary) return null
+  if (summary.rowCount === 0) return 0
+  if (!summary.canRepresentAsSingleMoney) return null
+  return summary.byCurrency[0]?.amount ?? 0
+}
+
+function remainingPromiseAmount(promise, invoiceBalance) {
+  if (!promise) return 0
+  const promised = Math.max(Number(promise.promised_amount) || 0, 0)
+  const fulfilled = Math.max(Number(promise.operational?.fulfilledAmount) || 0, 0)
+  return Math.min(Math.max(promised - fulfilled, 0), invoiceBalance)
 }
 
 export function buildCashFlowReadModel({
@@ -67,8 +87,8 @@ export function buildCashFlowReadModel({
 
   const open = safeArray(invoices).filter(isOutstanding)
   const events = []
-  let overdueExposure = 0
-  let pastDuePromiseExposure = 0
+  const overdueRows = []
+  const pastDuePromiseRows = []
   let missingCurrencyCount = 0
   let missingDueDateCount = 0
 
@@ -78,24 +98,41 @@ export function buildCashFlowReadModel({
     if (!validDate(invoice.due_date)) missingDueDateCount += 1
 
     const overdue = diffDays(invoice.due_date, today)
-    if (overdue !== null && overdue > 0) overdueExposure += balance
+    if (overdue !== null && overdue > 0) {
+      overdueRows.push({ amount: balance, currency: invoice.currency || null })
+    }
 
     const promise = activePromiseForInvoice(promises, invoice.id)
     const pState = stateOf(promise)
+    const remainingPromise = remainingPromiseAmount(promise, balance)
 
-    if (promise && pState === 'past_due_unresolved') {
-      pastDuePromiseExposure += Math.min(Number(promise.promised_amount) || 0, balance)
+    if (promise && pState === 'past_due_unresolved' && remainingPromise > 0) {
+      pastDuePromiseRows.push({
+        amount: remainingPromise,
+        currency: promise.currency || invoice.currency || null,
+      })
     }
 
     if (promise && ['confirmed','due_soon','due_today'].includes(pState)) {
       const promiseDate = validDate(promise.promised_date)
-      const promised = Math.min(Number(promise.promised_amount) || 0, balance)
       const promiseDelta = diffDays(today, promiseDate)
-      if (promiseDate && promiseDelta !== null && promiseDelta >= 0 && promiseDelta <= horizonDays && promised > 0) {
-        events.push(event({ type:'confirmed_promise', date:promiseDate, amount:promised, invoice, promise }))
+      if (
+        promiseDate &&
+        promiseDelta !== null &&
+        promiseDelta >= 0 &&
+        promiseDelta <= horizonDays &&
+        remainingPromise > 0
+      ) {
+        events.push(event({
+          type:'confirmed_promise',
+          date:promiseDate,
+          amount:remainingPromise,
+          invoice,
+          promise,
+        }))
       }
 
-      const remainder = Math.max(balance - promised, 0)
+      const remainder = Math.max(balance - remainingPromise, 0)
       const dueDate = validDate(invoice.due_date)
       const dueDelta = diffDays(today, dueDate)
       if (remainder > 0 && dueDate && dueDelta !== null && dueDelta >= 0 && dueDelta <= horizonDays) {
@@ -121,6 +158,22 @@ export function buildCashFlowReadModel({
     const d=diffDays(today,item.date)
     return d !== null && d >= 0 && d <= 30
   })
+  const committedPromises = events.filter((item)=>item.type==='confirmed_promise')
+    .filter((item)=>{
+      const d=diffDays(today,item.date)
+      return d !== null && d <= 30
+    })
+
+  const outstandingRows = open.map((invoice) => ({
+    amount: balanceOf(invoice),
+    currency: invoice.currency || null,
+  }))
+  const outstandingSummary = moneySummary(outstandingRows)
+  const overdueExposureSummary = moneySummary(overdueRows)
+  const pastDuePromiseExposureSummary = moneySummary(pastDuePromiseRows)
+  const scheduled7Summary = moneySummary(scheduled7)
+  const scheduled30Summary = moneySummary(scheduled30)
+  const committedPromise30Summary = moneySummary(committedPromises)
 
   const weeks = Array.from({length:5},(_,index)=>{
     const start=index*7
@@ -129,40 +182,52 @@ export function buildCashFlowReadModel({
       const d=diffDays(today,item.date)
       return d !== null && d >= start && d <= end
     })
+    const promiseRows=rows.filter((row)=>row.type==='confirmed_promise')
+    const invoiceRows=rows.filter((row)=>row.type==='invoice_due')
+    const amountSummary=moneySummary(rows)
+    const promiseSummary=moneySummary(promiseRows)
+    const invoiceSummary=moneySummary(invoiceRows)
     return {
       index,
       startDate:addDays(today,start),
       endDate:addDays(today,end),
-      amount:rows.reduce((sum,row)=>sum+row.amount,0),
-      promiseAmount:rows.filter((row)=>row.type==='confirmed_promise').reduce((sum,row)=>sum+row.amount,0),
-      invoiceAmount:rows.filter((row)=>row.type==='invoice_due').reduce((sum,row)=>sum+row.amount,0),
+      amount:singleAmount(amountSummary),
+      promiseAmount:singleAmount(promiseSummary),
+      invoiceAmount:singleAmount(invoiceSummary),
+      amountSummary,
+      promiseSummary,
+      invoiceSummary,
       eventCount:rows.length,
     }
   })
-
-  const committedPromises = events.filter((item)=>item.type==='confirmed_promise')
 
   return {
     asOf: today,
     horizonDays,
     openInvoiceCount: open.length,
-    outstanding: open.reduce((sum,invoice)=>sum+balanceOf(invoice),0),
-    overdueExposure,
-    pastDuePromiseExposure,
-    scheduled7Amount: scheduled7.reduce((sum,item)=>sum+item.amount,0),
-    scheduled30Amount: scheduled30.reduce((sum,item)=>sum+item.amount,0),
-    committedPromiseAmount30: committedPromises
-      .filter((item)=>{
-        const d=diffDays(today,item.date)
-        return d !== null && d <= 30
-      })
-      .reduce((sum,item)=>sum+item.amount,0),
+    outstanding: singleAmount(outstandingSummary),
+    outstandingSummary,
+    overdueExposure: singleAmount(overdueExposureSummary),
+    overdueExposureSummary,
+    pastDuePromiseExposure: singleAmount(pastDuePromiseExposureSummary),
+    pastDuePromiseExposureSummary,
+    scheduled7Amount: singleAmount(scheduled7Summary),
+    scheduled7Summary,
+    scheduled30Amount: singleAmount(scheduled30Summary),
+    scheduled30Summary,
+    committedPromiseAmount30: singleAmount(committedPromise30Summary),
+    committedPromise30Summary,
+    timingCurrency: scheduled30Summary.canRepresentAsSingleMoney
+      ? scheduled30Summary.byCurrency[0]?.currency || null
+      : null,
     events,
     weeks,
     topUpcoming: events.slice().sort((a,b)=>b.amount-a.amount).slice(0,5),
     dataQuality: {
       missingCurrencyCount,
       missingDueDateCount,
+      mixedCurrencyTiming: scheduled30Summary.knownCurrencyCount > 1,
+      incompleteEvidence: false,
     },
     capabilities: {
       invoiceDueTiming:true,
