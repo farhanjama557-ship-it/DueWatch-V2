@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown, Mic, MoreHorizontal } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import { balanceOf, isOutstanding, useData } from '../context/DataContext'
@@ -66,6 +66,7 @@ function OrbitCard({ title, value, note, icon, tone, className }) {
 }
 
 function PulseCore({
+  state = 'resting',
   outstanding,
   paymentCount,
   totalEventsCount,
@@ -74,7 +75,7 @@ function PulseCore({
   recentEventsCount,
 }) {
   return (
-    <div className="ov-pulse-stage">
+    <div className={`ov-pulse-stage ov-pulse-state-${state}`} data-pulse-state={state}>
       <svg className="ov-pulse-lines" viewBox="0 0 780 340" preserveAspectRatio="none" aria-hidden="true">
         <path d="M390 172 C315 142 258 82 186 58" />
         <path d="M390 172 C315 166 245 168 171 170" />
@@ -375,7 +376,11 @@ export default function LockedPulse() {
     awaitingSignature,
     totalEventsCount,
     autopilotErrorCount,
+    refresh,
   } = useData()
+
+  const [pulseState, setPulseState] = useState('resting')
+  const observedEventRef = useRef(null)
 
   const outstandingInvoices = useMemo(
     () => invoices.filter(isOutstanding),
@@ -406,6 +411,43 @@ export default function LockedPulse() {
     [events]
   )
   const reminderCount = dwActions.length
+
+  useEffect(() => {
+    function refreshCurrentData() {
+      if (document.visibilityState === 'visible') refresh()
+    }
+
+    window.addEventListener('focus', refreshCurrentData)
+    document.addEventListener('visibilitychange', refreshCurrentData)
+    const interval = window.setInterval(refreshCurrentData, 60000)
+
+    return () => {
+      window.removeEventListener('focus', refreshCurrentData)
+      document.removeEventListener('visibilitychange', refreshCurrentData)
+      window.clearInterval(interval)
+    }
+  }, [refresh])
+
+  useEffect(() => {
+    const newestId = events[0]?.id || null
+    if (!newestId) return
+    if (observedEventRef.current === null) {
+      observedEventRef.current = newestId
+      return
+    }
+    if (observedEventRef.current === newestId) return
+
+    observedEventRef.current = newestId
+    setPulseState('observing')
+    const timers = [
+      window.setTimeout(() => setPulseState('processing'), 550),
+      window.setTimeout(() => setPulseState('reacting'), 1200),
+      window.setTimeout(() => setPulseState(awaitingSignature.length ? 'attention' : 'settle'), 1950),
+      window.setTimeout(() => setPulseState('settle'), 2800),
+      window.setTimeout(() => setPulseState('resting'), 3600),
+    ]
+    return () => timers.forEach((timer) => window.clearTimeout(timer))
+  }, [events, awaitingSignature.length])
 
   const fullName = (user?.user_metadata?.full_name || '').trim()
   const greetingName = fullName ? fullName.split(/\s+/)[0] : name || 'there'
@@ -496,8 +538,8 @@ export default function LockedPulse() {
           </div>
 
           <div className="ov-live-mode-wrap">
-            <button className="ov-live-mode-button" type="button" aria-disabled="true">
-              <span className="ov-live-dot" /> Live mode
+            <button className="ov-live-mode-button" type="button" onClick={refresh}>
+              <span className="ov-live-dot" /> Current data
             </button>
             <span className="ov-sun-symbol">☼</span>
           </div>
@@ -566,6 +608,7 @@ export default function LockedPulse() {
         <div className="ov-main-grid">
           <section className="ov-command">
             <PulseCore
+              state={pulseState}
               outstanding={outstanding}
               paymentCount={paymentEvents.length}
               totalEventsCount={totalEventsCount}
