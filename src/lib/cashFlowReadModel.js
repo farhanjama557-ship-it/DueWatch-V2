@@ -39,7 +39,7 @@ function stateOf(promise) {
 function activePromiseForInvoice(promises, invoiceId) {
   return safeArray(promises)
     .filter((promise) => promise.invoice_id === invoiceId)
-    .filter((promise) => ['confirmed','due_soon','due_today','broken'].includes(stateOf(promise)))
+    .filter((promise) => ['confirmed','due_soon','due_today','past_due_unresolved'].includes(stateOf(promise)))
     .sort((a,b) => String(b.confirmed_at || b.created_at || '').localeCompare(String(a.confirmed_at || a.created_at || '')))[0] || null
 }
 
@@ -68,7 +68,7 @@ export function buildCashFlowReadModel({
   const open = safeArray(invoices).filter(isOutstanding)
   const events = []
   let overdueExposure = 0
-  let brokenPromiseExposure = 0
+  let pastDuePromiseExposure = 0
   let missingCurrencyCount = 0
   let missingDueDateCount = 0
 
@@ -83,8 +83,8 @@ export function buildCashFlowReadModel({
     const promise = activePromiseForInvoice(promises, invoice.id)
     const pState = stateOf(promise)
 
-    if (promise && pState === 'broken') {
-      brokenPromiseExposure += Math.min(Number(promise.promised_amount) || 0, balance)
+    if (promise && pState === 'past_due_unresolved') {
+      pastDuePromiseExposure += Math.min(Number(promise.promised_amount) || 0, balance)
     }
 
     if (promise && ['confirmed','due_soon','due_today'].includes(pState)) {
@@ -148,7 +148,7 @@ export function buildCashFlowReadModel({
     openInvoiceCount: open.length,
     outstanding: open.reduce((sum,invoice)=>sum+balanceOf(invoice),0),
     overdueExposure,
-    brokenPromiseExposure,
+    pastDuePromiseExposure,
     scheduled7Amount: scheduled7.reduce((sum,item)=>sum+item.amount,0),
     scheduled30Amount: scheduled30.reduce((sum,item)=>sum+item.amount,0),
     committedPromiseAmount30: committedPromises
@@ -168,7 +168,7 @@ export function buildCashFlowReadModel({
       invoiceDueTiming:true,
       confirmedPromiseTiming:true,
       overdueExposure:true,
-      brokenPromiseExposure:true,
+      pastDuePromiseExposure:true,
       paymentProbability:false,
       operatingOutflows:false,
       predictiveForecast:false,
