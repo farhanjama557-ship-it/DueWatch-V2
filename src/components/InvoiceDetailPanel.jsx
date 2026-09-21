@@ -90,6 +90,7 @@ export default function InvoiceDetailPanel({
   const [payAmount, setPayAmount] = useState('')
   const [paymentDate, setPaymentDate] = useState('')
   const [paymentCurrency, setPaymentCurrency] = useState('')
+  const [paymentOperationKey, setPaymentOperationKey] = useState('')
   const [tone, setTone] = useState('friendly')
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
@@ -110,6 +111,7 @@ export default function InvoiceDetailPanel({
       setPayAmount('')
       setPaymentDate('')
       setPaymentCurrency(invoice?.currency || '')
+      setPaymentOperationKey('')
       if (signatureContext) {
         setTone(signatureContext.recommended_tone || 'friendly')
         setDraft(signatureContext.draft_content || '')
@@ -209,6 +211,11 @@ export default function InvoiceDetailPanel({
     setPayAmount(Number(balance).toFixed(2))
     setPaymentDate('')
     setPaymentCurrency(data.currency || '')
+    if (!globalThis.crypto?.randomUUID) {
+      setActionError('This browser cannot create a safe payment operation identity.')
+      return
+    }
+    setPaymentOperationKey(globalThis.crypto.randomUUID())
     setMode('payment')
   }
 
@@ -222,6 +229,7 @@ export default function InvoiceDetailPanel({
         amount: payAmount,
         currency: paymentCurrency,
         paymentDate,
+        operationKey: paymentOperationKey,
       })
       const allocation = result?.allocations?.[0]
       if (!allocation) throw new Error('The payment was recorded but its invoice result was unavailable. Refresh before retrying.')
@@ -235,6 +243,7 @@ export default function InvoiceDetailPanel({
       setPayAmount('')
       setPaymentDate('')
       setPaymentCurrency(allocation.invoice_currency || '')
+      setPaymentOperationKey('')
       setMode('none')
       const paymentLabel = formatPaymentAmount(allocation.amount, allocation.invoice_currency)
       setPaymentConfirmation(`Payment of ${paymentLabel} recorded`)
