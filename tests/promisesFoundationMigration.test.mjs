@@ -6,6 +6,10 @@ const sql = await readFile(
   new URL('../supabase/migrations/20260921130000_promises_foundation.sql', import.meta.url),
   'utf8'
 )
+const hardening = await readFile(
+  new URL('../supabase/migrations/20260921135000_promises_v1_lifecycle_hardening.sql', import.meta.url),
+  'utf8'
+)
 
 test('promise foundation is tenant-scoped with RLS and explicit grants', () => {
   assert.match(sql, /alter table public\.promises enable row level security/i)
@@ -40,4 +44,21 @@ test('promise trigger validates tenant, currency, and current invoice balance', 
 test('resolved promise records are immutable and confirmed terms cannot be silently rewritten', () => {
   assert.match(sql, /Resolved promises are immutable/i)
   assert.match(sql, /Confirmed promise terms are immutable; supersede the promise instead/i)
+})
+
+
+test('final V1 lifecycle removes the unreachable superseded state', () => {
+  assert.match(hardening, /status in \('proposed', 'confirmed', 'cancelled'\)/i)
+  assert.match(hardening, /drop column if exists superseded_by/i)
+  assert.match(hardening, /drop column if exists superseded_at/i)
+  assert.doesNotMatch(hardening, /new\.status = 'superseded'/i)
+  assert.match(hardening, /cancel and record a new promise instead/i)
+})
+
+test('final V1 validation remains security invoker and rechecks tenant currency and balance', () => {
+  assert.match(hardening, /security invoker/i)
+  assert.doesNotMatch(hardening, /security definer/i)
+  assert.match(hardening, /where id = new\.invoice_id[\s\S]*user_id = new\.user_id/i)
+  assert.match(hardening, /Promise currency must match invoice currency/i)
+  assert.match(hardening, /Promise amount cannot exceed the current invoice balance/i)
 })
