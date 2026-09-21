@@ -382,7 +382,7 @@ test('10b: the later rule becomes the real winner once the earlier one is durabl
   const result = await executeAutoSend({ userId: USER_A, invoiceId: INVOICE_X, ruleId: RULE_B, buildMessage, now: NOW, io })
   assert.equal(result.outcome, SEND_OUTCOME.SENT)
   assert.equal(sendEmailCalls.length, 1)
-  assert.match(sendEmailCalls[0].text, /\$500\.00/)
+  assert.match(sendEmailCalls[0].text, /USD[\s\u00a0]+500\.00/)
   assert.match(sendEmailCalls[0].text, /firm/) // RULE_B's tone, not RULE_A's "friendly"
 })
 
@@ -401,8 +401,8 @@ test('fresh auto-send draft reflects a CURRENT balance/tone the caller could not
   const { io, sendEmailCalls } = makeIo({ fetchAuthorityInputs })
   const result = await executeAutoSend({ userId: USER_A, invoiceId: INVOICE_X, ruleId: RULE_A, buildMessage, now: NOW, io })
   assert.equal(result.outcome, SEND_OUTCOME.SENT)
-  assert.match(sendEmailCalls[0].text, /\$3,000\.00/)
-  assert.doesNotMatch(sendEmailCalls[0].text, /\$5,000\.00/)
+  assert.match(sendEmailCalls[0].text, /USD[\s\u00a0]+3,000\.00/)
+  assert.doesNotMatch(sendEmailCalls[0].text, /USD[\s\u00a0]+5,000\.00/)
   assert.match(sendEmailCalls[0].text, /firm/)
 })
 
@@ -582,7 +582,7 @@ test('deterministic idempotency key is identical across two evaluations of the s
 // deriveFactualBasis / factualBasisMatches / ruleSnapshotsMatch unit coverage
 test('deriveFactualBasis captures balance/due date/client name as the exact strings a draft would use', () => {
   const basis = deriveFactualBasis(baseInvoice({ amount: 250.5, amount_paid: 50.5 }))
-  assert.equal(basis.balance, '$200.00')
+  assert.match(basis.balance, /^USD[\s\u00a0]+200\.00$/)
   assert.equal(basis.clientName, 'Acme')
 })
 
