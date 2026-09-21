@@ -1237,3 +1237,222 @@ button.ov2-grid-row.is-selected {
     border-bottom: 0;
   }
 }
+
+
+.ov2-summary-strip > button {
+  min-height: 79px;
+  padding: 13px 14px;
+  border: 0;
+  border-right: 1px solid #eaecf0;
+  background: #fff;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ov2-summary-strip > button:last-child {
+  border-right: 0;
+}
+
+.ov2-summary-strip > button:hover {
+  background: #fffaf7;
+}
+
+.ov2-summary-strip > button span,
+.ov2-summary-strip > button strong,
+.ov2-summary-strip > button small {
+  display: block;
+}
+
+.ov2-summary-strip > button span {
+  color: #6f798b;
+  font-size: 8px;
+  font-weight: 650;
+}
+
+.ov2-summary-strip > button strong {
+  margin-top: 7px;
+  color: #182237;
+  font-size: 20px;
+  line-height: 1;
+  letter-spacing: -.035em;
+}
+
+.ov2-summary-strip > button small {
+  margin-top: 5px;
+  color: #8a93a0;
+  font-size: 7.4px;
+}
+
+.ov2-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.ov2-row-actions button {
+  min-height: 24px;
+  padding: 0 7px;
+  border: 1px solid #dde2e8;
+  border-radius: 6px;
+  background: #fff;
+  color: #46536a;
+  font: inherit;
+  font-size: 7.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.ov2-row-actions button:first-child {
+  border-color: #f1b292;
+  color: #df5620;
+  background: #fff8f4;
+}
+
+.ov2-row-actions button:disabled {
+  opacity: .5;
+  cursor: wait;
+}
+
+.ov2-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(17, 24, 39, .24);
+  backdrop-filter: blur(2px);
+}
+
+.ov2-modal {
+  width: min(480px, 100%);
+  border: 1px solid #e1e4e8;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 28px 70px rgba(24, 34, 55, .18);
+  overflow: hidden;
+}
+
+.ov2-modal-head {
+  min-height: 68px;
+  padding: 14px 16px;
+  border-bottom: 1px solid #eceef1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.ov2-modal-head span {
+  display: block;
+  color: #ec5a22;
+  font-size: 7.5px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+
+.ov2-modal-head h2 {
+  margin: 4px 0 0;
+  color: #1e283c;
+  font-size: 15px;
+  letter-spacing: -.02em;
+}
+
+.ov2-modal-head > button {
+  width: 29px;
+  height: 29px;
+  border: 1px solid #e2e5e9;
+  border-radius: 7px;
+  background: #fff;
+  color: #657187;
+  font-size: 17px;
+  cursor: pointer;
+}
+
+.ov2-field {
+  margin: 13px 16px 0;
+  display: grid;
+  gap: 6px;
+}
+
+.ov2-field > span {
+  color: #4e5a70;
+  font-size: 8px;
+  font-weight: 700;
+}
+
+.ov2-field > span small {
+  color: #969daa;
+  font-weight: 500;
+}
+
+.ov2-field input,
+.ov2-field select,
+.ov2-field textarea {
+  width: 100%;
+  border: 1px solid #dde1e6;
+  border-radius: 7px;
+  background: #fff;
+  color: #273249;
+  font: inherit;
+  font-size: 9px;
+  outline: 0;
+}
+
+.ov2-field input,
+.ov2-field select {
+  height: 35px;
+  padding: 0 9px;
+}
+
+.ov2-field textarea {
+  padding: 9px;
+  resize: vertical;
+}
+
+.ov2-field input:focus,
+.ov2-field select:focus,
+.ov2-field textarea:focus {
+  border-color: #f29a70;
+  box-shadow: 0 0 0 3px rgba(242, 90, 34, .08);
+}
+
+.ov2-field-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+.ov2-modal-truth {
+  margin: 13px 16px 0;
+  padding: 9px 10px;
+  border: 1px solid #dce8f5;
+  border-radius: 7px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  background: #f6faff;
+  color: #59718e;
+  font-size: 7.7px;
+  line-height: 1.45;
+}
+
+.ov2-modal-truth svg {
+  flex: 0 0 auto;
+  color: #3d7abd;
+}
+
+.ov2-modal-actions {
+  padding: 14px 16px 16px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+@media (max-width: 520px) {
+  .ov2-field-grid {
+    grid-template-columns: 1fr;
+  }
+}
