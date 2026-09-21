@@ -43,6 +43,11 @@ import {
   governingClaims,
 } from '../src/lib/integrations/providerContract.js'
 import {
+  decimalStringToMinorUnits,
+  minorUnitsToDecimalString,
+  normalizeProviderMoney,
+} from '../src/lib/integrations/providerMoney.js'
+import {
   COLLECTION_ELIGIBILITY,
   COLLECTION_POLICY_DECISION,
   createCollectionDecisionContext,
@@ -304,4 +309,22 @@ test('provider kernel structurally refuses direct canonical-money mutation claim
     () => assertProviderCannotWriteCanonicalMoney({ writesCanonicalMoney: true }),
     /cannot write canonical money truth/i,
   )
+})
+
+
+test('provider money never assumes two decimal places', () => {
+  assert.equal(minorUnitsToDecimalString({ amountMinor: '10000', exponent: 0 }), '10000')
+  assert.equal(minorUnitsToDecimalString({ amountMinor: '10000', exponent: 2 }), '100.00')
+  assert.equal(minorUnitsToDecimalString({ amountMinor: '1234', exponent: 3 }), '1.234')
+  assert.equal(decimalStringToMinorUnits({ amount: '10000', exponent: 0 }), 10000n)
+  assert.equal(decimalStringToMinorUnits({ amount: '100.00', exponent: 2 }), 10000n)
+})
+
+test('provider money fails closed when the currency exponent is unknown', () => {
+  assert.throws(() => normalizeProviderMoney({
+    currency: 'JPY',
+    amountMinor: '10000',
+    minorUnitExponent: null,
+  }), /minor-unit exponent/i)
+  assert.throws(() => decimalStringToMinorUnits({ amount: '1.23', exponent: 0 }), /more decimal places/i)
 })
