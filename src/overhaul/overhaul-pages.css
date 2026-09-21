@@ -1456,3 +1456,262 @@ button.ov2-grid-row.is-selected {
     grid-template-columns: 1fr;
   }
 }
+
+
+.ov2-field-help {
+  color: #8b6b4e;
+  font-size: 7.2px;
+  line-height: 1.4;
+}
+
+.ov2-cash-intel-layout {
+  display: grid;
+  grid-template-columns: minmax(0,1fr) 330px;
+  gap: 11px;
+}
+
+.ov2-cash-timing-card {
+  min-height: 330px;
+}
+
+.ov2-cash-legend {
+  min-height: 35px;
+  padding: 0 14px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  color: #778195;
+  font-size: 7.8px;
+}
+
+.ov2-cash-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ov2-cash-legend i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.ov2-cash-legend i.promise { background: #20b979; }
+.ov2-cash-legend i.invoice { background: #3985df; }
+
+.ov2-timing-chart {
+  height: 205px;
+  padding: 8px 22px 13px;
+  display: grid;
+  grid-template-columns: repeat(5,1fr);
+  gap: 20px;
+  align-items: end;
+}
+
+.ov2-timing-column {
+  height: 100%;
+  display: grid;
+  grid-template-rows: 20px 1fr 30px;
+  align-items: end;
+  text-align: center;
+}
+
+.ov2-timing-column > strong {
+  color: #657086;
+  font-size: 7.8px;
+}
+
+.ov2-timing-column > small {
+  align-self: center;
+  color: #818a99;
+  font-size: 6.9px;
+}
+
+.ov2-timing-track {
+  position: relative;
+  width: 38px;
+  height: 100%;
+  margin: 0 auto;
+  border-radius: 5px 5px 2px 2px;
+  background: #f4f5f7;
+  overflow: hidden;
+}
+
+.ov2-timing-track > span {
+  position: absolute;
+  inset: auto 0 0;
+}
+
+.ov2-timing-invoice {
+  background: #91bdf0;
+}
+
+.ov2-timing-promise {
+  width: 55%;
+  left: 22.5% !important;
+  background: #35c883;
+  border-radius: 4px 4px 0 0;
+}
+
+.ov2-cash-disclosure {
+  margin: 0 13px 13px;
+  padding: 8px 10px;
+  border-radius: 7px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  background: #f6f9fc;
+  color: #65758c;
+  font-size: 7.5px;
+  line-height: 1.45;
+}
+
+.ov2-cash-disclosure svg {
+  flex: 0 0 auto;
+  color: #3979bd;
+}
+
+.ov2-cash-intelligence {
+  min-height: 330px;
+}
+
+.ov2-cash-driver {
+  min-height: 59px;
+  padding: 9px 12px;
+  border-bottom: 1px solid #eff0f2;
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+}
+
+.ov2-cash-driver:last-child {
+  border-bottom: 0;
+}
+
+.ov2-driver-icon {
+  width: 31px;
+  height: 31px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+}
+
+.ov2-driver-icon.green { background:#ebfaf2; color:#18a960; }
+.ov2-driver-icon.red { background:#fff0ed; color:#df4d38; }
+.ov2-driver-icon.amber { background:#fff6e8; color:#df8a16; }
+.ov2-driver-icon.blue { background:#eef5ff; color:#3979bd; }
+
+.ov2-cash-driver b,
+.ov2-cash-driver small {
+  display: block;
+}
+
+.ov2-cash-driver b {
+  color: #344057;
+  font-size: 8.5px;
+}
+
+.ov2-cash-driver small {
+  margin-top: 3px;
+  color: #818b9b;
+  font-size: 7.3px;
+  line-height: 1.35;
+}
+
+.ov2-cash-bottom-layout {
+  margin-top: 11px;
+  display: grid;
+  grid-template-columns: 1.15fr .85fr;
+  gap: 11px;
+}
+
+.ov2-cash-events > div {
+  min-height: 47px;
+  padding: 7px 12px;
+  border-bottom: 1px solid #eff0f2;
+  display: grid;
+  grid-template-columns: 30px minmax(0,1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.ov2-cash-events > div:last-child {
+  border-bottom: 0;
+}
+
+.ov2-cash-event-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+}
+
+.ov2-cash-event-icon.promise { background:#ebfaf2; color:#18aa61; }
+.ov2-cash-event-icon.invoice { background:#eef5ff; color:#3578c7; }
+
+.ov2-cash-events b,
+.ov2-cash-events small {
+  display: block;
+}
+
+.ov2-cash-events b {
+  color:#354056;
+  font-size:8.4px;
+}
+
+.ov2-cash-events small {
+  margin-top:2px;
+  color:#8992a0;
+  font-size:7.2px;
+}
+
+.ov2-cash-events strong {
+  color:#28334a;
+  font-size:8.7px;
+}
+
+.ov2-aging-bars {
+  padding: 8px 12px 11px;
+}
+
+.ov2-aging-bars > div {
+  min-height: 35px;
+  display: grid;
+  grid-template-columns: 64px minmax(0,1fr) 62px;
+  align-items:center;
+  gap:9px;
+}
+
+.ov2-aging-bars span {
+  color:#697589;
+  font-size:7.6px;
+}
+
+.ov2-aging-bars > div > div {
+  height:7px;
+  border-radius:999px;
+  background:#f0f2f4;
+  overflow:hidden;
+}
+
+.ov2-aging-bars i {
+  display:block;
+  height:100%;
+  border-radius:999px;
+  background:#f06a36;
+}
+
+.ov2-aging-bars strong {
+  color:#344057;
+  font-size:7.8px;
+  text-align:right;
+}
+
+@media (max-width: 1050px) {
+  .ov2-cash-intel-layout,
+  .ov2-cash-bottom-layout {
+    grid-template-columns: 1fr;
+  }
+}
