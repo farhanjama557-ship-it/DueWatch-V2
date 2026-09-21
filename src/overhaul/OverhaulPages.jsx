@@ -440,7 +440,7 @@ export function OverhaulPromises() {
 
   const dueToday = rows.filter((row) => row.operational?.state === 'due_today')
   const dueSoon = rows.filter((row) => row.operational?.state === 'due_soon')
-  const broken = rows.filter((row) => row.operational?.state === 'broken')
+  const pastDueUnresolved = rows.filter((row) => row.operational?.state === 'past_due_unresolved')
   const fulfilled = rows.filter((row) => row.operational?.state === 'fulfilled')
   const proposed = rows.filter((row) => row.operational?.state === 'proposed')
 
@@ -520,8 +520,8 @@ export function OverhaulPromises() {
         <button type="button" onClick={() => setTab('due_soon')}>
           <span>Due soon</span><strong>{dueSoon.length}</strong><small>{moneyCompact(dueSoon.reduce((s, r) => s + Number(r.promised_amount || 0), 0))}</small>
         </button>
-        <button type="button" onClick={() => setTab('broken')}>
-          <span>Broken</span><strong className="ov2-danger">{broken.length}</strong><small>{moneyCompact(broken.reduce((s, r) => s + Number(r.promised_amount || 0), 0))}</small>
+        <button type="button" onClick={() => setTab('past_due_unresolved')}>
+          <span>Past due · unresolved</span><strong className="ov2-danger">{pastDueUnresolved.length}</strong><small>{moneyCompact(pastDueUnresolved.reduce((s, r) => s + Number(r.promised_amount || 0), 0))}</small>
         </button>
         <button type="button" onClick={() => setTab('fulfilled')}>
           <span>Fulfilled</span><strong className="ov2-positive">{fulfilled.length}</strong><small>{moneyCompact(fulfilled.reduce((s, r) => s + Number(r.promised_amount || 0), 0))}</small>
@@ -534,7 +534,7 @@ export function OverhaulPromises() {
             ['all','All promises'],
             ['proposed','Needs confirmation'],
             ['confirmed','Confirmed'],
-            ['broken','Broken'],
+            ['past_due_unresolved','Past due unresolved'],
             ['fulfilled','Fulfilled'],
             ['cancelled','Cancelled'],
           ].map(([key,label]) => (
@@ -785,7 +785,7 @@ export function OverhaulCashFlow() {
           </div>
           <div className="ov2-cash-driver">
             <span className="ov2-driver-icon amber"><Clock3 size={17} /></span>
-            <div><b>Broken promises</b><small>{formatMoney(model.brokenPromiseExposure)} of confirmed commitments are past promised date without enough verified payment</small></div>
+            <div><b>Past-due promises</b><small>{formatMoney(model.pastDuePromiseExposure)} of confirmed commitments are past promised date without enough verified payment evidence</small></div>
           </div>
           <div className="ov2-cash-driver">
             <span className="ov2-driver-icon blue"><ShieldCheck size={17} /></span>
@@ -1069,7 +1069,7 @@ export function OverhaulSettings() {
             {[
               ['weekly_digest','Weekly performance digest','Receive a periodic receivables summary.'],
               ['overdue_summary','Overdue summary','Surface new overdue invoices in summaries.'],
-              ['promise_notifications','Promise-to-Pay notifications','Surface promise due/broken changes.'],
+              ['promise_notifications','Promise-to-Pay notifications','Surface promise due and past-due unresolved changes.'],
               ['escalation_alerts','Escalation alerts','Surface items that require founder judgment.'],
               ['product_updates','Product updates','Receive DueWatch product update notices.'],
             ].map(([key,label,help]) => (
