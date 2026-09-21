@@ -42,6 +42,7 @@ import {
   enableAutopilot,
   fetchAutopilotRules,
   ruleTiming,
+  setAutopilotApprovalRequired,
   toggleRule,
 } from '../lib/autopilot'
 import {
@@ -55,6 +56,11 @@ import {
 } from '../lib/format'
 import { SUPPORTED_CURRENCIES } from '../lib/import/money'
 import { buildCashFlowReadModel } from '../lib/cashFlowReadModel'
+import {
+  DEFAULT_WORKSPACE_PREFERENCES,
+  loadWorkspacePreferences,
+  saveWorkspacePreferences,
+} from '../lib/workspacePreferences'
 import { OverhaulIcon } from './OverhaulIconSystem'
 import './overhaul-pages.css'
 
@@ -912,40 +918,183 @@ export function OverhaulIntegrations() {
 
 export function OverhaulSettings() {
   const { user, signOut } = useAuth()
-  const { autopilotEnabled, autopilotApprovalRequired, lastSyncedAt } = useData()
-  const workspace =
+  const {
+    autopilotEnabled,
+    autopilotApprovalRequired,
+    lastSyncedAt,
+    refresh,
+  } = useData()
+  const fallbackWorkspace =
     user?.user_metadata?.company ||
     user?.user_metadata?.organization ||
     user?.user_metadata?.workspace ||
     'Workspace'
+  const browserTimezone = (() => {
+    try { return Intl.DateTimeFormat().resolvedOptions().timeZone || '' } catch { return '' }
+  })()
+
+  const [prefs, setPrefs] = useState({
+    ...DEFAULT_WORKSPACE_PREFERENCES,
+    workspace_name: fallbackWorkspace,
+    timezone: browserTimezone || null,
+  })
+  const [loadingPrefs, setLoadingPrefs] = useState(true)
+  const [savingPrefs, setSavingPrefs] = useState(false)
+  const [settingsError, setSettingsError] = useState('')
+  const [savedMessage, setSavedMessage] = useState('')
+
+  useEffect(() => {
+    if (!user?.id) return
+    let cancelled = false
+    setLoadingPrefs(true)
+    loadWorkspacePreferences({ database: supabase, userId: user.id })
+      .then((loaded) => {
+        if (cancelled) return
+        setPrefs({
+          ...loaded,
+          workspace_name: loaded.workspace_name || fallbackWorkspace,
+          timezone: loaded.timezone || browserTimezone || null,
+        })
+        setSettingsError('')
+      })
+      .catch((loadError) => {
+        if (!cancelled) setSettingsError(loadError?.message || 'Could not load workspace preferences.')
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingPrefs(false)
+      })
+    return () => { cancelled = true }
+  }, [user?.id])
+
+  function patchPref(key, value) {
+    setPrefs((current) => ({ ...current, [key]: value }))
+    setSavedMessage('')
+  }
+
+  async function savePreferences() {
+    if (!user?.id || savingPrefs) return
+    setSavingPrefs(true)
+    setSettingsError('')
+    setSavedMessage('')
+    try {
+      const saved = await saveWorkspacePreferences({
+        database: supabase,
+        userId: user.id,
+        preferences: prefs,
+      })
+      setPrefs((current) => ({ ...current, ...saved, exists: true }))
+      setSavedMessage('Settings saved')
+    } catch (saveError) {
+      setSettingsError(saveError?.message || 'Could not save settings.')
+    } finally {
+      setSavingPrefs(false)
+    }
+  }
+
+  async function changeApprovalMode(next) {
+    if (!user?.id || savingPrefs) return
+    setSavingPrefs(true)
+    setSettingsError('')
+    const result = await setAutopilotApprovalRequired(user.id, next)
+    if (result?.error) {
+      setSettingsError(result.error.message || 'Could not update Autopilot approval mode.')
+      setSavingPrefs(false)
+      return
+    }
+    await refresh()
+    setSavingPrefs(false)
+    setSavedMessage('Autopilot approval mode updated')
+  }
 
   return (
     <div className="ov2-page">
-      <PageHeader title="Settings" subtitle="Account, workspace, and control-plane visibility." />
+      <PageHeader
+        title="Settings"
+        subtitle="Persist workspace preferences while keeping automation authority in the Autopilot control plane."
+        actions={
+          <button className="ov2-button ov2-button--primary" type="button" onClick={savePreferences} disabled={savingPrefs || loadingPrefs}>
+            {savingPrefs ? 'Saving…' : 'Save changes'}
+          </button>
+        }
+      />
+
+      {settingsError ? <div className="ov2-error"><CircleAlert size={15} />{settingsError}</div> : null}
+      {savedMessage ? <div className="ov2-success"><Check size={15} />{savedMessage}</div> : null}
+
       <div className="ov2-settings-layout">
         <nav className="ov2-card ov2-settings-nav">
-          <button className="is-active">General</button>
+          <button className="is-active">Workspace</button>
           <button aria-disabled="true">Notifications</button>
-          <button aria-disabled="true">Security</button>
-          <button aria-disabled="true">Billing</button>
+          <button aria-disabled="true">Automation</button>
+          <button aria-disabled="true">Account</button>
         </nav>
+
         <div className="ov2-settings-main">
           <section className="ov2-card ov2-settings-section">
-            <div className="ov2-card-head"><div><span>Account</span><h2>Profile</h2></div></div>
+            <div className="ov2-card-head"><div><span>Workspace</span><h2>Organization & display</h2></div><Pill tone={prefs.exists ? 'green' : 'neutral'}>{prefs.exists ? 'Saved' : 'Using local defaults'}</Pill></div>
+            {loadingPrefs ? <TableEmpty>Loading settings…</TableEmpty> : (
+              <div className="ov2-settings-form">
+                <label className="ov2-field">
+                  <span>Workspace name</span>
+                  <input value={prefs.workspace_name || ''} onChange={(event) => patchPref('workspace_name', event.target.value)} maxLength={80} />
+                </label>
+                <div className="ov2-field-grid">
+                  <label className="ov2-field">
+                    <span>Timezone</span>
+                    <input value={prefs.timezone || ''} onChange={(event) => patchPref('timezone', event.target.value)} placeholder="America/New_York" maxLength={80} />
+                  </label>
+                  <label className="ov2-field">
+                    <span>Date format</span>
+                    <select value={prefs.date_format} onChange={(event) => patchPref('date_format', event.target.value)}>
+                      <option value="MM/DD/YYYY">MM/DD/YYYY</option>
+                      <option value="DD/MM/YYYY">DD/MM/YYYY</option>
+                      <option value="YYYY-MM-DD">YYYY-MM-DD</option>
+                    </select>
+                  </label>
+                </div>
+                <div className="ov2-settings-note">
+                  <ShieldCheck size={15} />
+                  <span>The browser timezone is only used as an unsaved starting value. DueWatch does not claim it is your workspace timezone until you save it.</span>
+                </div>
+              </div>
+            )}
+          </section>
+
+          <section className="ov2-card ov2-settings-section">
+            <div className="ov2-card-head"><div><span>Notifications</span><h2>Founder preferences</h2></div></div>
+            {[
+              ['weekly_digest','Weekly performance digest','Receive a periodic receivables summary.'],
+              ['overdue_summary','Overdue summary','Surface new overdue invoices in summaries.'],
+              ['promise_notifications','Promise-to-Pay notifications','Surface promise due/broken changes.'],
+              ['escalation_alerts','Escalation alerts','Surface items that require founder judgment.'],
+              ['product_updates','Product updates','Receive DueWatch product update notices.'],
+            ].map(([key,label,help]) => (
+              <div className="ov2-setting-toggle-row" key={key}>
+                <span><b>{label}</b><small>{help}</small></span>
+                <Toggle checked={prefs[key] !== false} onChange={(next) => patchPref(key, next)} disabled={loadingPrefs} />
+              </div>
+            ))}
+          </section>
+
+          <section className="ov2-card ov2-settings-section">
+            <div className="ov2-card-head"><div><span>Automation authority</span><h2>Autopilot approval boundary</h2></div><Pill tone={autopilotEnabled ? 'green' : 'neutral'}>{autopilotEnabled ? 'Autopilot on' : 'Autopilot off'}</Pill></div>
+            <div className="ov2-setting-toggle-row">
+              <span>
+                <b>Require approval before reminder send</b>
+                <small>Stored in the hardened Autopilot authority settings—not workspace preferences.</small>
+              </span>
+              <Toggle checked={autopilotApprovalRequired} onChange={changeApprovalMode} disabled={savingPrefs} />
+            </div>
+            <div className="ov2-settings-row"><span>Current behavior</span><strong>{autopilotApprovalRequired ? 'Founder signature required' : 'Automatic within enabled rules'}</strong></div>
+            <div className="ov2-settings-row"><span>Data last refreshed</span><strong>{lastSyncedAt ? timeAgo(lastSyncedAt) : 'Not available'}</strong></div>
+            <Link className="ov2-inline-link" to="/autopilot">Open Autopilot authority & rules <ArrowRight size={13} /></Link>
+          </section>
+
+          <section className="ov2-card ov2-settings-section">
+            <div className="ov2-card-head"><div><span>Account</span><h2>Session</h2></div></div>
             <div className="ov2-settings-row"><span>Name</span><strong>{user?.user_metadata?.full_name || 'Not set'}</strong></div>
             <div className="ov2-settings-row"><span>Email</span><strong>{user?.email || '—'}</strong></div>
-            <div className="ov2-settings-row"><span>Workspace</span><strong>{workspace}</strong></div>
-          </section>
-          <section className="ov2-card ov2-settings-section">
-            <div className="ov2-card-head"><div><span>Automation</span><h2>Current controls</h2></div></div>
-            <div className="ov2-settings-row"><span>Autopilot</span><Pill tone={autopilotEnabled ? 'green' : 'neutral'}>{autopilotEnabled ? 'Enabled' : 'Off'}</Pill></div>
-            <div className="ov2-settings-row"><span>Reminder approval</span><strong>{autopilotApprovalRequired ? 'Required' : 'Automatic within rules'}</strong></div>
-            <div className="ov2-settings-row"><span>Data last refreshed</span><strong>{lastSyncedAt ? timeAgo(lastSyncedAt) : 'Not available'}</strong></div>
-            <Link className="ov2-inline-link" to="/autopilot">Open Autopilot controls <ArrowRight size={13} /></Link>
-          </section>
-          <section className="ov2-card ov2-settings-section">
-            <div className="ov2-card-head"><div><span>Session</span><h2>Account access</h2></div></div>
-            <button className="ov2-button ov2-button--ghost" onClick={signOut}>Log out</button>
+            <div className="ov2-settings-session-action"><button className="ov2-button ov2-button--ghost" onClick={signOut}>Log out</button></div>
           </section>
         </div>
       </div>
