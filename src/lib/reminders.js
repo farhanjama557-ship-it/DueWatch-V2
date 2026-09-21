@@ -1,5 +1,64 @@
 import { supabase } from './supabase'
 
+const MANUAL_OPERATION_STORAGE_PREFIX = 'duewatch:manual-reminder-operation:'
+
+function manualOperationFingerprint(invoiceId, subject, draft) {
+  const text = `${invoiceId}\n${subject || ''}\n${draft}`
+  let hash = 2166136261
+  for (let i = 0; i < text.length; i += 1) {
+    hash ^= text.charCodeAt(i)
+    hash = Math.imul(hash, 16777619)
+  }
+  return `${text.length}:${(hash >>> 0).toString(16)}`
+}
+
+function newOperationId() {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID()
+  throw new Error('This browser cannot create a safe reminder operation identity.')
+}
+
+function manualOperationStorageKey(invoiceId) {
+  return `${MANUAL_OPERATION_STORAGE_PREFIX}${invoiceId}`
+}
+
+export function getManualReminderOperationId({ invoiceId, subject = '', draft }) {
+  if (!invoiceId) throw new Error('An invoice is required for reminder delivery.')
+  const fingerprint = manualOperationFingerprint(invoiceId, subject, draft)
+  const key = manualOperationStorageKey(invoiceId)
+
+  try {
+    const stored = JSON.parse(globalThis.localStorage?.getItem(key) || 'null')
+    if (stored?.fingerprint === fingerprint && typeof stored?.operationId === 'string') {
+      return stored.operationId
+    }
+  } catch {
+    // Corrupt/unavailable storage must never invent success; create a fresh
+    // operation identity below and let the server's unresolved-message guard
+    // block a duplicate if an earlier provider outcome is still unknown.
+  }
+
+  const operationId = newOperationId()
+  try {
+    globalThis.localStorage?.setItem(key, JSON.stringify({ fingerprint, operationId }))
+  } catch {
+    // The current in-memory send still has a stable operationId. If storage
+    // is unavailable, the server's same-message unresolved guard remains the
+    // fail-closed protection across a reload.
+  }
+  return operationId
+}
+
+export function clearManualReminderOperationId(invoiceId, operationId) {
+  const key = manualOperationStorageKey(invoiceId)
+  try {
+    const stored = JSON.parse(globalThis.localStorage?.getItem(key) || 'null')
+    if (!operationId || stored?.operationId === operationId) globalThis.localStorage?.removeItem(key)
+  } catch {
+    // Nothing else to do: deleting a browser convenience receipt is not a
+    // prerequisite for server-side idempotency.
+  }
+}
+
 export const TONES = ['friendly', 'professional', 'firm']
 
 export function reminderDraft(tone, { clientName, invoiceNumber, balance, dueDate }) {
@@ -68,13 +127,22 @@ export async function sendReminderNow({ userId, invoice, draft, signatureContext
     return { sendResult: result, nowIso: new Date().toISOString(), draft: trimmed }
   }
 
+  const operationId = getManualReminderOperationId({
+    invoiceId: invoice.id,
+    draft: trimmed,
+  })
   const { data: sendResult, error: sendErr } = await supabase.functions.invoke(
     'send-reminder-email',
-    { body: { invoiceId: invoice.id, body: trimmed } }
+    { body: { invoiceId: invoice.id, body: trimmed, operationId } }
   )
   if (sendErr || sendResult?.error) {
+    if (sendResult?.code === 'SEND_FAILED' || sendResult?.code === 'OPERATION_CONFLICT') {
+      clearManualReminderOperationId(invoice.id, operationId)
+    }
     return { error: sendResult?.error || sendErr.message }
   }
+
+  clearManualReminderOperationId(invoice.id, operationId)
 
   // The Edge Function now owns the canonical execution receipt AND the
   // reminder/invoice/activity projections. The browser must never perform
