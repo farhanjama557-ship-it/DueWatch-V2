@@ -135,7 +135,7 @@ function PulseCore({
         note="recent events"
       />
 
-      <div className="ov-orb-wrap" aria-label="DW Pulse resting">
+      <div className="ov-orb-wrap" aria-label={`DW Pulse ${state}`}>
         <div className="ov-orb-ring ov-orb-ring-one" />
         <div className="ov-orb-ring ov-orb-ring-two" />
         <div className="ov-orb-ring ov-orb-ring-three" />
@@ -145,23 +145,23 @@ function PulseCore({
         </div>
         <div className="ov-orb-copy">
           <strong>DW PULSE</strong>
-          <span>Monitoring. Analyzing. Taking action.</span>
+          <span>{state === 'resting' ? 'Watching current receivables state.' : 'Processing a newly observed DueWatch event.'}</span>
         </div>
       </div>
     </div>
   )
 }
 
-function LiveMonitor({ invoicesCount, evidenceCount, paymentCount, actionCount }) {
+function CurrentMonitor({ invoicesCount, evidenceCount, paymentCount, actionCount }) {
   return (
     <section className="ov-panel ov-live-panel">
       <div className="ov-rail-title">
         <div className="ov-live-title">
           <span className="ov-live-dot" />
-          <strong>Live Monitor</strong>
+          <strong>Current Monitor</strong>
           <span className="ov-live-pip" />
         </div>
-        <StatusChip tone="green"><span className="ov-live-dot" />Live</StatusChip>
+        <StatusChip tone="green"><span className="ov-live-dot" />Current</StatusChip>
       </div>
       <div className="ov-monitor-grid">
         <div>
@@ -227,7 +227,7 @@ function RightRail({
 
   return (
     <aside className="ov-right-rail">
-      <LiveMonitor
+      <CurrentMonitor
         invoicesCount={invoices.length}
         evidenceCount={evidenceCount}
         paymentCount={paymentCount}
