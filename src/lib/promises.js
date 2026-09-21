@@ -26,13 +26,6 @@ function decimal(value) {
   return `${c / 100n}.${String(c % 100n).padStart(2, '0')}`
 }
 
-function compareDate(a, b) {
-  const left = dateOnly(a)
-  const right = dateOnly(b)
-  if (!left || !right) return null
-  return left.localeCompare(right)
-}
-
 function daysBetween(a, b) {
   const left = dateOnly(a)
   const right = dateOnly(b)
@@ -47,6 +40,13 @@ function paymentMap(payments) {
   return new Map(safeArray(payments).map((payment) => [payment.id, payment]))
 }
 
+function instantMs(value) {
+  const parsed = Date.parse(String(value || ''))
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+export const PROMISE_DUE_SOON_DAYS = 2
+
 export function derivePromiseOperationalState(
   promise,
   { payments = [], allocations = [], asOf = new Date() } = {}
@@ -54,8 +54,8 @@ export function derivePromiseOperationalState(
   if (!promise) return { state: 'unknown', fulfilledAmount: 0 }
 
   const stored = String(promise.status || '').toLowerCase()
-  if (stored === 'cancelled' || stored === 'superseded') {
-    return { state: stored, fulfilledAmount: 0 }
+  if (stored === 'cancelled') {
+    return { state: 'cancelled', fulfilledAmount: 0 }
   }
   if (stored === 'proposed') {
     return { state: 'proposed', fulfilledAmount: 0 }
@@ -65,22 +65,40 @@ export function derivePromiseOperationalState(
   }
 
   const byPayment = paymentMap(payments)
-  const startDate = dateOnly(promise.confirmed_at) || dateOnly(promise.created_at)
-  let fulfilledAmount = 0
+  const confirmationDate = dateOnly(promise.confirmed_at)
+  const confirmationInstant = instantMs(promise.confirmed_at)
+  const promisedMinor = cents(promise.promised_amount) ?? 0n
+  let fulfilledMinor = 0n
+  const seenAllocations = new Set()
 
   for (const allocation of safeArray(allocations)) {
     if (allocation?.invoice_id !== promise.invoice_id) continue
+    if (allocation?.id && seenAllocations.has(allocation.id)) continue
+    if (allocation?.id) seenAllocations.add(allocation.id)
+
     const payment = byPayment.get(allocation.payment_id)
     if (!payment) continue
     if (payment.origin !== 'founder_manual') continue
     if (payment.reversed_at) continue
     if (String(payment.currency || '').toUpperCase() !== String(promise.currency || '').toUpperCase()) continue
+
     const paymentDate = dateOnly(payment.payment_date)
-    if (!paymentDate || (startDate && paymentDate < startDate)) continue
-    fulfilledAmount += Number(allocation.amount) || 0
+    const recordedInstant = instantMs(payment.recorded_at)
+
+    // Fulfillment must be evidence that happened after the promise became
+    // confirmed. A back-dated payment or a payment recorded earlier on the
+    // same day cannot retroactively satisfy a later promise.
+    if (!confirmationDate || confirmationInstant == null) continue
+    if (!paymentDate || paymentDate < confirmationDate) continue
+    if (recordedInstant == null || recordedInstant < confirmationInstant) continue
+
+    const allocationMinor = cents(allocation.amount)
+    if (allocationMinor == null || allocationMinor <= 0n) continue
+    fulfilledMinor += allocationMinor
   }
 
-  if (fulfilledAmount + 0.000001 >= Number(promise.promised_amount || 0)) {
+  const fulfilledAmount = Number(fulfilledMinor) / 100
+  if (promisedMinor > 0n && fulfilledMinor >= promisedMinor) {
     return { state: 'fulfilled', fulfilledAmount }
   }
 
@@ -90,9 +108,9 @@ export function derivePromiseOperationalState(
 
   const delta = daysBetween(today, promisedDate)
   if (delta === null) return { state: 'confirmed', fulfilledAmount }
-  if (delta < 0) return { state: 'broken', fulfilledAmount }
+  if (delta < 0) return { state: 'past_due_unresolved', fulfilledAmount }
   if (delta === 0) return { state: 'due_today', fulfilledAmount }
-  if (delta <= 7) return { state: 'due_soon', fulfilledAmount }
+  if (delta <= PROMISE_DUE_SOON_DAYS) return { state: 'due_soon', fulfilledAmount }
   return { state: 'confirmed', fulfilledAmount }
 }
 
@@ -103,7 +121,7 @@ export async function loadPromiseWorkspace({ database, userId } = {}) {
   const [promiseResult, paymentResult, allocationResult] = await Promise.all([
     database
       .from('promises')
-      .select('id,user_id,invoice_id,status,promised_amount,promised_date,currency,source,note,confirmed_at,cancelled_at,superseded_at,superseded_by,created_at,updated_at,invoices(id,inv_num,amount,amount_paid,due_date,currency,clients(id,name,email,phone))')
+      .select('id,user_id,invoice_id,status,promised_amount,promised_date,currency,source,note,confirmed_at,cancelled_at,created_at,updated_at,invoices(id,inv_num,amount,amount_paid,due_date,currency,clients(id,name,email,phone))')
       .eq('user_id', userId)
       .order('promised_date', { ascending: true }),
     database
@@ -285,17 +303,16 @@ export function promiseStateLabel(state) {
     confirmed: 'Confirmed',
     due_soon: 'Due soon',
     due_today: 'Due today',
-    broken: 'Broken',
+    past_due_unresolved: 'Past due · unresolved',
     fulfilled: 'Fulfilled',
     cancelled: 'Cancelled',
-    superseded: 'Superseded',
   }
   return labels[state] || 'Unknown'
 }
 
 export function promiseStateTone(state) {
   if (state === 'fulfilled') return 'green'
-  if (state === 'broken') return 'red'
+  if (state === 'past_due_unresolved') return 'red'
   if (state === 'due_today' || state === 'due_soon') return 'amber'
   if (state === 'confirmed') return 'blue'
   return 'neutral'
