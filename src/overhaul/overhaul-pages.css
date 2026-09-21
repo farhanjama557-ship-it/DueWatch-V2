@@ -1715,3 +1715,82 @@ button.ov2-grid-row.is-selected {
     grid-template-columns: 1fr;
   }
 }
+
+
+.ov2-success {
+  margin-bottom: 11px;
+  padding: 9px 11px;
+  border: 1px solid #cfe9da;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #f1fbf5;
+  color: #277549;
+  font-size: 8.5px;
+}
+
+.ov2-settings-form {
+  padding: 0 0 14px;
+}
+
+.ov2-settings-form .ov2-field-grid {
+  padding-right: 16px;
+}
+
+.ov2-settings-note {
+  margin: 13px 16px 0;
+  padding: 9px 10px;
+  border-radius: 7px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  background: #f6f9fc;
+  color: #66768d;
+  font-size: 7.5px;
+  line-height: 1.45;
+}
+
+.ov2-settings-note svg {
+  flex: 0 0 auto;
+  color: #3978b8;
+}
+
+.ov2-setting-toggle-row {
+  min-height: 55px;
+  margin: 0 13px;
+  border-bottom: 1px solid #eff0f2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.ov2-setting-toggle-row:last-child {
+  border-bottom: 0;
+}
+
+.ov2-setting-toggle-row > span {
+  min-width: 0;
+}
+
+.ov2-setting-toggle-row b,
+.ov2-setting-toggle-row small {
+  display: block;
+}
+
+.ov2-setting-toggle-row b {
+  color: #344057;
+  font-size: 8.7px;
+}
+
+.ov2-setting-toggle-row small {
+  margin-top: 3px;
+  color: #8992a1;
+  font-size: 7.4px;
+  line-height: 1.35;
+}
+
+.ov2-settings-session-action {
+  padding: 12px 13px 0;
+}
