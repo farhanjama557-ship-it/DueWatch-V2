@@ -1,5 +1,10 @@
-import { balanceOf, isOutstanding } from '../context/DataContext'
-import { daysOverdue, daysUntil } from './format'
+function balanceOf(invoice) {
+  return Math.max((Number(invoice?.amount) || 0) - (Number(invoice?.amount_paid) || 0), 0)
+}
+
+function isOutstanding(invoice) {
+  return invoice?.paid !== true && balanceOf(invoice) > 0
+}
 
 function safeArray(value) {
   return Array.isArray(value) ? value : []
@@ -72,8 +77,8 @@ export function buildCashFlowReadModel({
     if (!invoice.currency) missingCurrencyCount += 1
     if (!validDate(invoice.due_date)) missingDueDateCount += 1
 
-    const overdue = daysOverdue(invoice.due_date, new Date(today + 'T12:00:00Z'))
-    if (overdue > 0) overdueExposure += balance
+    const overdue = diffDays(invoice.due_date, today)
+    if (overdue !== null && overdue > 0) overdueExposure += balance
 
     const promise = activePromiseForInvoice(promises, invoice.id)
     const pState = stateOf(promise)
