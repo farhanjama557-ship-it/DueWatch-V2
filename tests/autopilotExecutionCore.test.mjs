@@ -36,6 +36,7 @@ function baseInvoice(overrides = {}) {
     client_id: CLIENT_A,
     amount: 100,
     amount_paid: 0,
+    currency: 'USD',
     due_date: '2026-08-01', // 12 days before NOW
     paid: false,
     autopilot_paused: false,
