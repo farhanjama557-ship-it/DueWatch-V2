@@ -34,8 +34,21 @@ export const SEND_OUTCOME = Object.freeze({
 // a draft's text, so the persisted factual-basis snapshot (below) can
 // never drift from what the draft actually says: both are derived from
 // this exact function, never computed twice independently.
-function formatMoney(n) {
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(Number(n) || 0)
+function normalizeCurrency(raw) {
+  const code = String(raw || '').trim().toUpperCase()
+  return /^[A-Z]{3}$/.test(code) ? code : null
+}
+
+function formatMoney(n, currency) {
+  const amount = Number(n)
+  const safeAmount = Number.isFinite(amount) ? amount : 0
+  const code = normalizeCurrency(currency)
+  if (!code) return `${safeAmount.toFixed(2)} · currency unknown`
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: code,
+    currencyDisplay: 'code',
+  }).format(safeAmount)
 }
 
 function formatShortDate(value) {
@@ -62,10 +75,14 @@ function formatShortDate(value) {
 // NOT part of the execution identity (see executionClaim.js): they gate
 // whether a queued draft may still be sent, not which claim row it maps to.
 export function deriveFactualBasis(invoice) {
+  const balanceAmount = Math.max((Number(invoice.amount) || 0) - (Number(invoice.amount_paid) || 0), 0)
+  const currency = normalizeCurrency(invoice.currency)
   return {
     invoiceId: invoice.id,
     invNum: invoice.inv_num ?? null,
-    balance: formatMoney((Number(invoice.amount) || 0) - (Number(invoice.amount_paid) || 0)),
+    balanceAmount,
+    currency,
+    balance: formatMoney(balanceAmount, currency),
     dueDate: formatShortDate(invoice.due_date),
     clientName: invoice.clients?.name || 'No client',
     clientId: invoice.client_id ?? null,
@@ -78,6 +95,8 @@ export function factualBasisMatches(prior, current) {
   return (
     prior.invoiceId === current.invoiceId &&
     prior.invNum === current.invNum &&
+    prior.balanceAmount === current.balanceAmount &&
+    prior.currency === current.currency &&
     prior.balance === current.balance &&
     prior.dueDate === current.dueDate &&
     prior.clientName === current.clientName &&
@@ -143,6 +162,8 @@ async function runClaimedSend({
   authority,
   factualBasis,
   ruleSnapshot,
+  expectedApprovalRequired,
+  approvalId = null,
   io,
 }) {
   const resolvedFactualBasis = factualBasis ?? deriveFactualBasis(invoice)
@@ -208,7 +229,13 @@ async function runClaimedSend({
     actionType: ACTION_TYPE_SEND_REMINDER,
     idempotencyKey,
     receipt,
+    ruleSnapshot,
+    expectedApprovalRequired,
+    approvalId,
   })
+  if (claim?.staleReason) {
+    return { outcome: SEND_OUTCOME.STALE_AUTHORITY, detail: claim.staleReason }
+  }
   if (!claim?.acquired) {
     // Lost the race, or already durably handled. Zero provider-send calls
     // below — sendEmail is never referenced on this path. existingStatus
@@ -269,15 +296,33 @@ async function runClaimedSend({
     throw new Error(sendResult.error)
   }
 
+  if (!sendResult?.id) {
+    const message = 'Email provider returned success without a verifiable message receipt.'
+    await io.resolveClaim({
+      claimId: claim.claimId,
+      status: 'uncertain',
+      evidence: { error: message },
+    })
+    await io.recordUncertainEvidence({
+      claimId: claim.claimId,
+      error: message,
+      authority,
+      reason,
+      text,
+      ruleSnapshot,
+    })
+    throw new Error(message)
+  }
+
   await io.resolveClaim({
     claimId: claim.claimId,
     status: 'sent',
-    providerMessageId: sendResult.id || null,
-    evidence: { resend_id: sendResult.id || null },
+    providerMessageId: sendResult.id,
+    evidence: { resend_id: sendResult.id },
   })
   await io.recordSentEvidence({ claimId: claim.claimId, sendResult, authority, reason, text, ruleSnapshot })
 
-  return { outcome: SEND_OUTCOME.SENT, claimId: claim.claimId, providerMessageId: sendResult.id || null }
+  return { outcome: SEND_OUTCOME.SENT, claimId: claim.claimId, providerMessageId: sendResult.id }
 }
 
 /**
@@ -326,6 +371,7 @@ export async function executeAutoSend({ userId, invoiceId, ruleId, buildMessage,
     authority: evaluation.authority,
     factualBasis,
     ruleSnapshot: buildRuleSnapshot(rule),
+    expectedApprovalRequired: inputs.autopilotSettings?.approval_required === true,
     io,
   })
 }
@@ -351,6 +397,7 @@ export async function executeApprovalSend({
   text,
   reason,
   now,
+  approvalId = null,
   io,
 }) {
   const inputs = await io.fetchAuthorityInputs({ invoiceId })
@@ -395,6 +442,8 @@ export async function executeApprovalSend({
     authority: revalidation.authority,
     factualBasis: currentFactualBasis,
     ruleSnapshot: buildRuleSnapshot(currentRule),
+    expectedApprovalRequired: inputs.autopilotSettings?.approval_required === true,
+    approvalId,
     io,
   })
 }
