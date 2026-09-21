@@ -54,6 +54,7 @@ import {
   timeAgo,
 } from '../lib/format'
 import { SUPPORTED_CURRENCIES } from '../lib/import/money'
+import { buildCashFlowReadModel } from '../lib/cashFlowReadModel'
 import { OverhaulIcon } from './OverhaulIconSystem'
 import './overhaul-pages.css'
 
@@ -627,70 +628,170 @@ function agingBucket(invoice) {
 }
 
 export function OverhaulCashFlow() {
+  const { user } = useAuth()
   const { invoices, collectedThisMonth, collectedLastMonth } = useData()
-  const open = useMemo(() => invoices.filter(isOutstanding), [invoices])
-  const outstanding = open.reduce((sum, invoice) => sum + balanceOf(invoice), 0)
-  const overdueTotal = open.filter((invoice) => daysOverdue(invoice.due_date) > 0).reduce((sum, invoice) => sum + balanceOf(invoice), 0)
-  const next30 = open.filter((invoice) => {
-    const days = daysUntil(invoice.due_date)
-    return days !== null && days >= 0 && days <= 30
-  }).reduce((sum, invoice) => sum + balanceOf(invoice), 0)
+  const [promises, setPromises] = useState([])
+  const [promiseError, setPromiseError] = useState('')
 
+  useEffect(() => {
+    if (!user?.id) return
+    let cancelled = false
+    loadPromiseWorkspace({ database: supabase, userId: user.id })
+      .then((result) => {
+        if (!cancelled) {
+          setPromises(result)
+          setPromiseError('')
+        }
+      })
+      .catch((loadError) => {
+        if (!cancelled) {
+          setPromises([])
+          setPromiseError(loadError?.message || 'Promise timing is unavailable.')
+        }
+      })
+    return () => { cancelled = true }
+  }, [user?.id])
+
+  const model = useMemo(
+    () => buildCashFlowReadModel({ invoices, promises, asOf: new Date() }),
+    [invoices, promises]
+  )
+
+  const open = useMemo(() => invoices.filter(isOutstanding), [invoices])
   const buckets = ['Current','1–30 days','31–60 days','61–90 days','90+ days'].map((label) => {
     const amount = open.filter((invoice) => agingBucket(invoice) === label).reduce((sum, invoice) => sum + balanceOf(invoice), 0)
     return { label, amount }
   })
-  const maxBucket = Math.max(...buckets.map((b) => b.amount), 1)
-  const topOverdue = open.filter((invoice) => daysOverdue(invoice.due_date) > 0)
-    .sort((a,b) => daysOverdue(b.due_date) - daysOverdue(a.due_date))
-    .slice(0,5)
+  const maxWeek = Math.max(...model.weeks.map((week) => week.amount), 1)
+  const maxAging = Math.max(...buckets.map((bucket) => bucket.amount), 1)
 
   return (
     <div className="ov2-page">
-      <PageHeader title="Cash Flow" subtitle="Track collected cash and the timing of open receivables." />
+      <PageHeader
+        title="Cash Flow"
+        subtitle="Receivables timing from invoice due dates, verified payments, and confirmed customer promises."
+      />
 
-      <div className="ov2-summary-strip ov2-summary-strip--four">
-        <div><span>Collected this month</span><strong>{formatMoney(collectedThisMonth)}</strong><small>{collectedLastMonth ? `${collectedThisMonth >= collectedLastMonth ? '↑' : '↓'} vs last month` : 'No prior-month baseline'}</small></div>
-        <div><span>Due next 30 days</span><strong>{formatMoney(next30)}</strong><small>invoice due dates only</small></div>
-        <div><span>Outstanding</span><strong>{formatMoney(outstanding)}</strong><small>{open.length} open invoices</small></div>
-        <div><span>Overdue</span><strong className="ov2-danger">{formatMoney(overdueTotal)}</strong><small>past due now</small></div>
+      {promiseError ? (
+        <div className="ov2-error"><CircleAlert size={15} />Promise timing unavailable: {promiseError}</div>
+      ) : null}
+
+      <div className="ov2-summary-strip">
+        <div>
+          <span>Collected this month</span>
+          <strong>{formatMoney(collectedThisMonth)}</strong>
+          <small>{collectedLastMonth ? `${collectedThisMonth >= collectedLastMonth ? '↑' : '↓'} vs last month` : 'No prior-month baseline'}</small>
+        </div>
+        <div>
+          <span>Scheduled next 7 days</span>
+          <strong>{formatMoney(model.scheduled7Amount)}</strong>
+          <small>invoice + confirmed promise timing</small>
+        </div>
+        <div>
+          <span>Scheduled next 30 days</span>
+          <strong>{formatMoney(model.scheduled30Amount)}</strong>
+          <small>no probability weighting</small>
+        </div>
+        <div>
+          <span>Confirmed promises ≤30d</span>
+          <strong>{formatMoney(model.committedPromiseAmount30)}</strong>
+          <small>customer commitments only</small>
+        </div>
+        <div>
+          <span>Overdue exposure</span>
+          <strong className="ov2-danger">{formatMoney(model.overdueExposure)}</strong>
+          <small>{model.openInvoiceCount} open invoices total</small>
+        </div>
       </div>
 
-      <div className="ov2-cash-layout">
-        <section className="ov2-card ov2-chart-card">
-          <div className="ov2-card-head"><div><span>Portfolio timing</span><h2>Outstanding by aging</h2></div><Pill tone="neutral">Invoice truth</Pill></div>
-          <div className="ov2-bar-chart">
+      <div className="ov2-cash-intel-layout">
+        <section className="ov2-card ov2-cash-timing-card">
+          <div className="ov2-card-head">
+            <div><span>Next 35 days</span><h2>Receivables timing</h2></div>
+            <Pill tone="blue">Factual schedule</Pill>
+          </div>
+          <div className="ov2-cash-legend">
+            <span><i className="promise" />Confirmed promises</span>
+            <span><i className="invoice" />Invoice due timing</span>
+          </div>
+          <div className="ov2-timing-chart">
+            {model.weeks.map((week) => (
+              <div className="ov2-timing-column" key={week.index}>
+                <strong>{moneyCompact(week.amount)}</strong>
+                <div className="ov2-timing-track">
+                  <span
+                    className="ov2-timing-invoice"
+                    style={{ height: `${Math.max(week.invoiceAmount ? 3 : 0, (week.invoiceAmount / maxWeek) * 100)}%` }}
+                  />
+                  <span
+                    className="ov2-timing-promise"
+                    style={{ height: `${Math.max(week.promiseAmount ? 3 : 0, (week.promiseAmount / maxWeek) * 100)}%` }}
+                  />
+                </div>
+                <small>{formatShortDate(week.startDate)}–{formatShortDate(week.endDate)}</small>
+              </div>
+            ))}
+          </div>
+          <div className="ov2-cash-disclosure">
+            <ShieldCheck size={15} />
+            <span>This is scheduled receivables timing, not a predictive cash forecast. DueWatch is not assigning payment probabilities or inventing operating outflows.</span>
+          </div>
+        </section>
+
+        <aside className="ov2-card ov2-cash-intelligence">
+          <div className="ov2-card-head"><div><span>DW cash awareness</span><h2>What is changing timing</h2></div></div>
+          <div className="ov2-cash-driver">
+            <span className="ov2-driver-icon green"><OverhaulIcon name="promise" size={17} /></span>
+            <div><b>Confirmed promise timing</b><small>{formatMoney(model.committedPromiseAmount30)} committed within 30 days</small></div>
+          </div>
+          <div className="ov2-cash-driver">
+            <span className="ov2-driver-icon red"><CircleAlert size={17} /></span>
+            <div><b>Overdue exposure</b><small>{formatMoney(model.overdueExposure)} is already past invoice due dates</small></div>
+          </div>
+          <div className="ov2-cash-driver">
+            <span className="ov2-driver-icon amber"><Clock3 size={17} /></span>
+            <div><b>Broken promises</b><small>{formatMoney(model.brokenPromiseExposure)} of confirmed commitments are past promised date without enough verified payment</small></div>
+          </div>
+          <div className="ov2-cash-driver">
+            <span className="ov2-driver-icon blue"><ShieldCheck size={17} /></span>
+            <div>
+              <b>Data quality</b>
+              <small>{model.dataQuality.missingCurrencyCount} open invoice{model.dataQuality.missingCurrencyCount === 1 ? '' : 's'} missing currency · {model.dataQuality.missingDueDateCount} missing due date</small>
+            </div>
+          </div>
+        </aside>
+      </div>
+
+      <div className="ov2-cash-bottom-layout">
+        <section className="ov2-card">
+          <div className="ov2-card-head"><div><span>Upcoming</span><h2>Cash events</h2></div><span className="ov2-head-count">{model.events.length}</span></div>
+          <div className="ov2-cash-events">
+            {model.events.slice(0, 8).map((event) => (
+              <div key={`${event.type}:${event.invoiceId}:${event.date}`}>
+                <span className={`ov2-cash-event-icon ${event.type === 'confirmed_promise' ? 'promise' : 'invoice'}`}>
+                  <OverhaulIcon name={event.type === 'confirmed_promise' ? 'promise' : 'invoices'} size={15} />
+                </span>
+                <span><b>{event.clientName}</b><small>{event.invoiceNumber || 'Invoice'} · {event.type === 'confirmed_promise' ? 'confirmed promise' : 'invoice due'} · {formatShortDate(event.date)}</small></span>
+                <strong>{formatMoney(event.amount)}</strong>
+              </div>
+            ))}
+            {model.events.length === 0 ? <TableEmpty>No future receivables events in the next 35 days.</TableEmpty> : null}
+          </div>
+        </section>
+
+        <section className="ov2-card">
+          <div className="ov2-card-head"><div><span>Portfolio risk</span><h2>Aging summary</h2></div></div>
+          <div className="ov2-aging-bars">
             {buckets.map((bucket) => (
-              <div className="ov2-bar-column" key={bucket.label}>
-                <div className="ov2-bar-value">{moneyCompact(bucket.amount)}</div>
-                <div className="ov2-bar-track"><span style={{ height: `${Math.max(4, (bucket.amount / maxBucket) * 100)}%` }} /></div>
-                <small>{bucket.label}</small>
+              <div key={bucket.label}>
+                <span>{bucket.label}</span>
+                <div><i style={{ width: `${Math.max(bucket.amount ? 2 : 0, (bucket.amount / maxAging) * 100)}%` }} /></div>
+                <strong>{moneyCompact(bucket.amount)}</strong>
               </div>
             ))}
           </div>
         </section>
-
-        <section className="ov2-card ov2-top-overdue">
-          <div className="ov2-card-head"><div><span>Priority</span><h2>Top overdue</h2></div></div>
-          {topOverdue.map((invoice) => (
-            <div className="ov2-overdue-row" key={invoice.id}>
-              <InitialBadge name={invoice.clients?.name} />
-              <span><b>{invoice.clients?.name || 'Client'}</b><small>{invoice.invoice_number || 'Invoice'} · {daysOverdue(invoice.due_date)} days</small></span>
-              <strong>{formatMoney(balanceOf(invoice))}</strong>
-            </div>
-          ))}
-          {topOverdue.length === 0 ? <TableEmpty>No overdue invoices.</TableEmpty> : null}
-        </section>
       </div>
-
-      <section className="ov2-card ov2-aging-table">
-        <div className="ov2-card-head"><div><span>Receivables</span><h2>Aging summary</h2></div></div>
-        <div className="ov2-aging-grid">
-          {buckets.map((bucket) => (
-            <div key={bucket.label}><span>{bucket.label}</span><strong>{formatMoney(bucket.amount)}</strong></div>
-          ))}
-        </div>
-      </section>
     </div>
   )
 }
