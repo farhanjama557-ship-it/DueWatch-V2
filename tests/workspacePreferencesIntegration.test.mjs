@@ -6,6 +6,8 @@ const sql=await readFile(new URL('../supabase/migrations/20260921131500_workspac
 const service=await readFile(new URL('../src/lib/workspacePreferences.js',import.meta.url),'utf8')
 const autopilot=await readFile(new URL('../src/lib/autopilot.js',import.meta.url),'utf8')
 const pages=await readFile(new URL('../src/overhaul/OverhaulPages.jsx',import.meta.url),'utf8')
+const context=await readFile(new URL('../src/overhaul/WorkspacePreferencesContext.jsx',import.meta.url),'utf8')
+const shell=await readFile(new URL('../src/overhaul/OverhaulShell.jsx',import.meta.url),'utf8')
 
 test('workspace preferences are tenant-owned and RLS protected',()=>{
   assert.match(sql,/alter table public\.workspace_preferences enable row level security/i)
@@ -29,7 +31,10 @@ test('settings save through persisted preference service and Autopilot approval 
   assert.match(service,/\.upsert\(payload/)
   assert.match(autopilot,/setAutopilotApprovalRequired/)
   assert.match(autopilot,/\.from\('autopilot_settings'\)/)
-  assert.match(pages,/saveWorkspacePreferences/)
+  assert.match(context,/saveWorkspacePreferences/)
+  assert.match(context,/WorkspacePreferencesProvider/)
+  assert.match(shell,/WorkspacePreferencesProvider/)
+  assert.match(pages,/saveShellPreferences/)
   assert.match(pages,/setAutopilotApprovalRequired/)
 })
 
