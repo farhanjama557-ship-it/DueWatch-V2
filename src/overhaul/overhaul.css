@@ -1570,3 +1570,85 @@ button[aria-disabled="true"] {
   margin: 3px 0;
   line-height: 1.35;
 }
+
+
+.ov-pulse-stage,
+.ov-pulse-stage .ov-orb,
+.ov-pulse-stage .ov-orb-ring,
+.ov-pulse-stage .ov-pulse-lines path,
+.ov-pulse-stage .ov-orbit-card {
+  transition:
+    transform 420ms cubic-bezier(.2,.8,.2,1),
+    opacity 420ms ease,
+    filter 420ms ease,
+    box-shadow 420ms ease,
+    border-color 420ms ease;
+}
+
+.ov-pulse-state-resting .ov-orb {
+  transform: scale(1);
+}
+
+.ov-pulse-state-observing .ov-orb {
+  transform: scale(1.025);
+  filter: brightness(1.05);
+  box-shadow:
+    0 0 16px rgba(255,107,10,.54),
+    0 0 40px rgba(255,136,32,.28),
+    inset -13px -14px 21px rgba(181,59,0,.18),
+    inset 12px 10px 19px rgba(255,255,255,.40);
+}
+
+.ov-pulse-state-observing .ov-pulse-lines path {
+  opacity: .92;
+}
+
+.ov-pulse-state-processing .ov-orb {
+  transform: scale(1.045);
+  filter: brightness(1.11);
+  box-shadow:
+    0 0 20px rgba(255,107,10,.62),
+    0 0 49px rgba(255,136,32,.32),
+    inset -13px -14px 21px rgba(181,59,0,.16),
+    inset 12px 10px 19px rgba(255,255,255,.46);
+}
+
+.ov-pulse-state-processing .ov-orb-ring-one,
+.ov-pulse-state-processing .ov-orb-ring-two {
+  transform: scale(1.035);
+  opacity: .82;
+}
+
+.ov-pulse-state-reacting .ov-orb {
+  transform: scale(1.03);
+  filter: brightness(1.08);
+}
+
+.ov-pulse-state-reacting .ov-orbit-card {
+  border-color: #efd8ca;
+  box-shadow: 0 7px 18px rgba(240,103,39,.08);
+}
+
+.ov-pulse-state-reacting .ov-pulse-lines path {
+  opacity: 1;
+  stroke-width: 1.35;
+}
+
+.ov-pulse-state-attention .ov-orb {
+  transform: scale(1.055);
+  filter: brightness(1.12);
+  box-shadow:
+    0 0 22px rgba(255,91,14,.68),
+    0 0 56px rgba(255,118,18,.34),
+    inset -13px -14px 21px rgba(181,59,0,.15),
+    inset 12px 10px 19px rgba(255,255,255,.5);
+}
+
+.ov-pulse-state-attention .ov-orbit-card {
+  border-color: #efb99d;
+}
+
+.ov-pulse-state-settle .ov-orb {
+  transform: scale(1.015);
+  filter: brightness(1.03);
+}
