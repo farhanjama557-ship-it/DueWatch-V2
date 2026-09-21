@@ -1,3 +1,4 @@
+import { fetchAllPages } from './supabasePaging.js'
 import { SUPPORTED_CURRENCIES } from './import/money.js'
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
@@ -119,26 +120,44 @@ export async function loadPromiseWorkspace({ database, userId } = {}) {
   if (!userId) throw new Error('Promise workspace requires a user id.')
 
   const [promiseResult, paymentResult, allocationResult] = await Promise.all([
-    database
-      .from('promises')
-      .select('id,user_id,invoice_id,status,promised_amount,promised_date,currency,source,note,confirmed_at,cancelled_at,created_at,updated_at,invoices(id,inv_num,amount,amount_paid,due_date,currency,clients(id,name,email,phone))')
-      .eq('user_id', userId)
-      .order('promised_date', { ascending: true }),
-    database
-      .from('payments')
-      .select('id,user_id,payment_date,total_amount,currency,origin,reversed_at,recorded_at')
-      .eq('user_id', userId)
-      .order('recorded_at', { ascending: false }),
-    database
-      .from('payment_allocations')
-      .select('id,payment_id,invoice_id,amount,created_at,invoices!inner(user_id)')
-      .eq('invoices.user_id', userId)
-      .order('created_at', { ascending: false }),
+    fetchAllPages((from, to) =>
+      database
+        .from('promises')
+        .select('id,user_id,invoice_id,status,promised_amount,promised_date,currency,source,note,confirmed_at,cancelled_at,created_at,updated_at,invoices(id,inv_num,amount,amount_paid,due_date,currency,clients(id,name,email,phone))')
+        .eq('user_id', userId)
+        .order('promised_date', { ascending: true })
+        .order('id', { ascending: true })
+        .range(from, to)
+    ),
+    fetchAllPages((from, to) =>
+      database
+        .from('payments')
+        .select('id,user_id,payment_date,total_amount,currency,origin,reversed_at,recorded_at')
+        .eq('user_id', userId)
+        .order('recorded_at', { ascending: false })
+        .order('id', { ascending: true })
+        .range(from, to)
+    ),
+    fetchAllPages((from, to) =>
+      database
+        .from('payment_allocations')
+        .select('id,payment_id,invoice_id,amount,created_at,invoices!inner(user_id)')
+        .eq('invoices.user_id', userId)
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: true })
+        .range(from, to)
+    ),
   ])
 
-  if (promiseResult.error) throw new Error(promiseResult.error.message || 'Could not load promises.')
-  if (paymentResult.error) throw new Error(paymentResult.error.message || 'Could not load promise payment evidence.')
-  if (allocationResult.error) throw new Error(allocationResult.error.message || 'Could not load promise payment allocations.')
+  if (promiseResult.error || !promiseResult.complete) {
+    throw new Error(promiseResult.error?.message || 'Promise data is incomplete.')
+  }
+  if (paymentResult.error || !paymentResult.complete) {
+    throw new Error(paymentResult.error?.message || 'Promise payment evidence is incomplete.')
+  }
+  if (allocationResult.error || !allocationResult.complete) {
+    throw new Error(allocationResult.error?.message || 'Promise payment allocations are incomplete.')
+  }
 
   const payments = paymentResult.data || []
   const allocations = allocationResult.data || []
@@ -147,6 +166,27 @@ export async function loadPromiseWorkspace({ database, userId } = {}) {
     ...promise,
     operational: derivePromiseOperationalState(promise, { payments, allocations }),
   }))
+}
+
+export async function replacePromise({
+  database,
+  promiseId,
+  promisedAmount,
+  promisedDate,
+  source = 'founder_manual',
+  note = null,
+} = {}) {
+  if (!database?.rpc) throw new Error('Promise replacement requires a database client.')
+  if (!promiseId) throw new Error('Choose a promise to replace.')
+  const { data, error } = await database.rpc('replace_promise', {
+    p_existing_id: promiseId,
+    p_promised_amount: promisedAmount,
+    p_promised_date: promisedDate,
+    p_source: source,
+    p_note: note,
+  })
+  if (error) throw new Error(error.message || 'Could not replace promise.')
+  return data
 }
 
 export async function ensureInvoiceCurrency({
