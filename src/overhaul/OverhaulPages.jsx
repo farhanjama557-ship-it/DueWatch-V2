@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import {
   ArrowRight,
   CalendarDays,
@@ -145,10 +145,28 @@ function invoiceStatusLabel(invoice) {
 
 export function OverhaulInvoices() {
   const { invoices, loading, error, refresh } = useData()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [tab, setTab] = useState('all')
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState(null)
   const [showAdd, setShowAdd] = useState(false)
+
+  useEffect(() => {
+    const ref = searchParams.get('invoice')
+    if (!ref || invoices.length === 0) return
+    const match = invoices.find((invoice) => invoice.id === ref || invoice.invoice_number === ref)
+    if (match) setSelected(match)
+  }, [invoices, searchParams])
+
+  function openInvoice(invoice) {
+    setSelected(invoice)
+    setSearchParams({ invoice: invoice.id }, { replace: true })
+  }
+
+  function closeInvoice() {
+    setSelected(null)
+    setSearchParams({}, { replace: true })
+  }
 
   const rows = useMemo(() => {
     const q = search.trim().toLowerCase()
@@ -199,7 +217,7 @@ export function OverhaulInvoices() {
               <span>Invoice</span><span>Client</span><span>Issue date</span><span>Due date</span><span>Amount</span><span>Balance</span><span>Status</span><span />
             </div>
             {rows.map((invoice) => (
-              <button key={invoice.id} className="ov2-invoice-grid ov2-grid-row" onClick={() => setSelected(invoice)}>
+              <button key={invoice.id} className="ov2-invoice-grid ov2-grid-row" onClick={() => openInvoice(invoice)}>
                 <span className="ov2-strong">{invoice.invoice_number || '—'}</span>
                 <span className="ov2-person"><InitialBadge name={invoice.clients?.name} /><b>{invoice.clients?.name || 'No client'}</b></span>
                 <span>{formatShortDate(invoice.issue_date)}</span>
@@ -214,7 +232,7 @@ export function OverhaulInvoices() {
         )}
       </section>
 
-      <InvoiceDetailPanel invoice={selected} onClose={() => setSelected(null)} onMutated={refresh} />
+      <InvoiceDetailPanel invoice={selected} onClose={closeInvoice} onMutated={refresh} />
       <AddInvoiceModal open={showAdd} onClose={() => setShowAdd(false)} />
     </div>
   )
@@ -222,6 +240,7 @@ export function OverhaulInvoices() {
 
 export function OverhaulClients() {
   const { clients, invoices, events, loading, error } = useData()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [search, setSearch] = useState('')
   const [selectedId, setSelectedId] = useState(null)
 
@@ -246,6 +265,18 @@ export function OverhaulClients() {
         .filter(Boolean).join(' ').toLowerCase().includes(q))
       .sort((a, b) => b.outstanding - a.outstanding)
   }, [clients, invoices, search])
+
+  useEffect(() => {
+    const ref = searchParams.get('client')
+    if (!ref || clients.length === 0) return
+    const match = clients.find((client) => client.id === ref)
+    if (match) setSelectedId(match.id)
+  }, [clients, searchParams])
+
+  function openClient(clientId) {
+    setSelectedId(clientId)
+    setSearchParams({ client: clientId }, { replace: true })
+  }
 
   const selected = rows.find((row) => row.client.id === selectedId) || rows[0] || null
   const selectedEvents = selected
@@ -277,7 +308,7 @@ export function OverhaulClients() {
                 <button
                   key={row.client.id}
                   className={`ov2-client-grid ov2-grid-row ${selected?.client.id === row.client.id ? 'is-selected' : ''}`}
-                  onClick={() => setSelectedId(row.client.id)}
+                  onClick={() => openClient(row.client.id)}
                 >
                   <span className="ov2-person"><InitialBadge name={row.client.name} /><b>{row.client.name || 'Unnamed client'}</b></span>
                   <span className="ov2-money">{formatMoney(row.outstanding)}</span>
@@ -313,6 +344,7 @@ export function OverhaulClients() {
                   <div className="ov2-mini-row" key={invoice.id}>
                     <span><b>{invoice.invoice_number || 'Invoice'}</b><small>Due {formatShortDate(invoice.due_date)}</small></span>
                     <strong>{formatMoney(balanceOf(invoice))}</strong>
+                    <Link className="ov2-mini-link" to={`/invoices?invoice=${invoice.id}`}>Open</Link>
                   </div>
                 ))}
                 {selected.clientInvoices.length === 0 ? <p className="ov2-muted">No invoices recorded.</p> : null}
@@ -553,6 +585,7 @@ export function OverhaulPromises() {
                       <button type="button" disabled={busyId === row.id} onClick={() => handlePromiseAction(row, 'cancel')}>Cancel</button>
                     ) : null}
                     {!canConfirm && !canCancel ? <span className="ov2-muted">Read only</span> : null}
+                    <Link className="ov2-mini-link" to={`/invoices?invoice=${row.invoice_id}`}>Invoice</Link>
                   </span>
                 </div>
               )
@@ -779,6 +812,7 @@ export function OverhaulCashFlow() {
                 </span>
                 <span><b>{event.clientName}</b><small>{event.invoiceNumber || 'Invoice'} · {event.type === 'confirmed_promise' ? 'confirmed promise' : 'invoice due'} · {formatShortDate(event.date)}</small></span>
                 <strong>{formatMoney(event.amount)}</strong>
+                <Link className="ov2-mini-link" to={`/invoices?invoice=${event.invoiceId}`}>Open</Link>
               </div>
             ))}
             {model.events.length === 0 ? <TableEmpty>No future receivables events in the next 35 days.</TableEmpty> : null}
@@ -869,7 +903,7 @@ export function OverhaulActivity() {
                   <span><Pill tone={event.lifecycle_state === 'error' ? 'red' : 'blue'}>{String(event.event_type || 'event').replaceAll('_',' ')}</Pill></span>
                   <span>{event.lifecycle_state ? `Lifecycle: ${event.lifecycle_state}` : 'Recorded operational event'}</span>
                   <span>{event.invoices?.clients?.name || '—'}</span>
-                  <span>{event.invoices?.inv_num || '—'}</span>
+                  <span>{event.invoice_id ? <Link className="ov2-entity-link" to={`/invoices?invoice=${event.invoice_id}`}>{event.invoices?.inv_num || 'Open invoice'}</Link> : '—'}</span>
                   <span>{evidenceCount ? `${evidenceCount} field${evidenceCount === 1 ? '' : 's'}` : '—'}</span>
                 </div>
               )
