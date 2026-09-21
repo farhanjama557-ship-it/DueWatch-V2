@@ -130,5 +130,15 @@ export async function sendEmail({
       statusCode: res.status,
     }
   }
-  return { id: data.id, status: 'sent', ambiguous: false }
+  const providerMessageId =
+    typeof data?.id === 'string' && data.id.trim() ? data.id.trim() : null
+  if (!providerMessageId) {
+    return {
+      error: 'Email provider returned success without a verifiable message receipt.',
+      ambiguous: true,
+      statusCode: res.status,
+    }
+  }
+
+  return { id: providerMessageId, status: 'sent', ambiguous: false }
 }
