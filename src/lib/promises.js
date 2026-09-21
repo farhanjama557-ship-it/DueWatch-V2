@@ -160,6 +160,17 @@ export async function ensureInvoiceCurrency({
     return normalized
   }
 
+  const { data: allocations, error: allocationError } = await database
+    .from('payment_allocations')
+    .select('id')
+    .eq('invoice_id', invoiceId)
+    .limit(1)
+
+  if (allocationError) throw new Error(allocationError.message || 'Could not verify invoice payment history.')
+  if ((allocations || []).length > 0) {
+    throw new Error('This legacy invoice already has payment history but no established currency. Review the invoice before recording a promise; DueWatch will not infer its currency.')
+  }
+
   const { data: updated, error: updateError } = await database
     .from('invoices')
     .update({ currency: normalized })
