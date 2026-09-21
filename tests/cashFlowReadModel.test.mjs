@@ -18,7 +18,7 @@ test('confirmed promise moves promised portion to promise timing without double 
   const model=buildCashFlowReadModel({
     invoices:[invoice()],
     promises:[{
-      id:'p1',invoice_id:'i1',status:'confirmed',promised_amount:600,promised_date:'2026-09-25',
+      id:'p1',invoice_id:'i1',status:'confirmed',promised_amount:600,promised_date:'2026-09-23',
       operational:{state:'due_soon'}
     }],
     asOf:new Date('2026-09-21T12:00:00Z'),
@@ -29,16 +29,16 @@ test('confirmed promise moves promised portion to promise timing without double 
   assert.equal(model.events.filter(e=>e.type==='invoice_due')[0].amount,400)
 })
 
-test('broken promise is exposure, never counted as future scheduled cash', () => {
+test('past-due unresolved promise is exposure, never counted as future scheduled cash', () => {
   const model=buildCashFlowReadModel({
     invoices:[invoice({due_date:'2026-09-10'})],
     promises:[{
       id:'p1',invoice_id:'i1',status:'confirmed',promised_amount:700,promised_date:'2026-09-20',
-      operational:{state:'broken'}
+      operational:{state:'past_due_unresolved'}
     }],
     asOf:new Date('2026-09-21T12:00:00Z'),
   })
-  assert.equal(model.brokenPromiseExposure,700)
+  assert.equal(model.pastDuePromiseExposure,700)
   assert.equal(model.scheduled30Amount,0)
   assert.equal(model.overdueExposure,1000)
 })
@@ -57,4 +57,17 @@ test('missing invoice currency is surfaced as data quality, never defaulted', ()
     asOf:new Date('2026-09-21T12:00:00Z'),
   })
   assert.equal(model.dataQuality.missingCurrencyCount,1)
+})
+
+test('promise amount is capped at current invoice balance in the timing model', () => {
+  const model=buildCashFlowReadModel({
+    invoices:[invoice({amount:500})],
+    promises:[{
+      id:'p1',invoice_id:'i1',status:'confirmed',promised_amount:900,promised_date:'2026-09-23',
+      operational:{state:'due_soon'}
+    }],
+    asOf:new Date('2026-09-21T12:00:00Z'),
+  })
+  assert.equal(model.scheduled30Amount,500)
+  assert.equal(model.committedPromiseAmount30,500)
 })
