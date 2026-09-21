@@ -3,7 +3,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown, Mic, MoreHorizontal } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import { balanceOf, isOutstanding, useData } from '../context/DataContext'
-import { daysOverdue, formatLongDate, formatMoney, timeAgo } from '../lib/format'
+import { daysOverdue, formatLongDate, timeAgo } from '../lib/format'
+import { formatMoneySummary, formatMoneyTruth, summarizeInvoiceBalances } from '../lib/moneyTruth'
 import { supabase } from '../lib/supabase'
 import { OverhaulIcon } from './OverhaulIconSystem'
 import { createPulseAskDwRuntime } from './integration/pulseAskDw'
@@ -68,7 +69,7 @@ function OrbitCard({ title, value, note, icon, tone, className }) {
 
 function PulseCore({
   state = 'resting',
-  outstanding,
+  outstandingDisplay,
   paymentCount,
   totalEventsCount,
   reminderCount,
@@ -91,7 +92,7 @@ function PulseCore({
         icon="cashAwareness"
         tone="green"
         title="Cash awareness"
-        value={formatMoney(outstanding)}
+        value={outstandingDisplay}
         note="open receivables"
       />
       <OrbitCard
@@ -259,7 +260,7 @@ function RightRail({
           {overdue ? (
             <NoticeRow
               title={`${clientNameOf(overdue)} — overdue invoice`}
-              body={`${overdue.invoice_number || 'Invoice'} is ${daysOverdue(overdue.due_date)} days overdue with ${formatMoney(balanceOf(overdue))} outstanding.`}
+              body={`${overdue.invoice_number || 'Invoice'} is ${daysOverdue(overdue.due_date)} days overdue with ${formatMoneyTruth(balanceOf(overdue), overdue.currency)} outstanding.`}
               meta="Based on current invoice data"
             />
           ) : null}
@@ -318,7 +319,7 @@ function PriorityInvoices({ rows }) {
             <div className="ov-focus-row" key={invoice.id}>
               <span className="ov-focus-invoice">{invoice.invoice_number || '—'}</span>
               <span>{clientNameOf(invoice)}</span>
-              <span>{formatMoney(balanceOf(invoice))}</span>
+              <span>{formatMoneyTruth(balanceOf(invoice), invoice.currency)}</span>
               <span className={overdueBy > 0 ? 'ov-danger-text' : ''}>{overdueBy > 0 ? overdueBy : '—'}</span>
               <span>{overdueBy >= 30 ? 'Severely overdue' : overdueBy > 0 ? 'Follow-up overdue' : 'Upcoming balance'}</span>
               <span><Link className="ov-row-action" to={`/invoices?invoice=${invoice.id}`}>{overdueBy >= 30 ? 'Review' : 'Follow up'}</Link></span>
@@ -388,14 +389,22 @@ export default function LockedPulse() {
     () => invoices.filter(isOutstanding),
     [invoices]
   )
-  const outstanding = useMemo(
-    () => outstandingInvoices.reduce((sum, invoice) => sum + balanceOf(invoice), 0),
+  const outstandingSummary = useMemo(
+    () => summarizeInvoiceBalances(outstandingInvoices, balanceOf),
     [outstandingInvoices]
+  )
+  const outstandingDisplay = useMemo(
+    () => formatMoneySummary(outstandingSummary, { compact: true }),
+    [outstandingSummary]
   )
   const priorityRows = useMemo(
     () => outstandingInvoices
       .slice()
-      .sort((a, b) => daysOverdue(b.due_date) - daysOverdue(a.due_date) || balanceOf(b) - balanceOf(a))
+      .sort((a, b) => {
+        const overdueDiff = daysOverdue(b.due_date) - daysOverdue(a.due_date)
+        if (overdueDiff !== 0) return overdueDiff
+        return String(a.invoice_number || a.id).localeCompare(String(b.invoice_number || b.id))
+      })
       .slice(0, 5),
     [outstandingInvoices]
   )
@@ -612,7 +621,7 @@ export default function LockedPulse() {
           <section className="ov-command">
             <PulseCore
               state={pulseState}
-              outstanding={outstanding}
+              outstandingDisplay={outstandingDisplay}
               paymentCount={paymentEvents.length}
               totalEventsCount={totalEventsCount}
               reminderCount={reminderCount}
@@ -642,7 +651,7 @@ export default function LockedPulse() {
                   </div>
                   <div>
                     <span className="ov-metric-icon ov-metric-icon--green"><OverhaulIcon name="cash" size={19} /></span>
-                    <p><strong>{formatMoney(outstanding)}</strong><span>open receivables</span><small>current balance under watch</small></p>
+                    <p><strong>{formatMoneySummary(outstandingSummary)}</strong><span>open receivables</span><small>kept separate by currency</small></p>
                   </div>
                 </div>
               </section>
