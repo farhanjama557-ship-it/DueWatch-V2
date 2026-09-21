@@ -231,17 +231,32 @@ function buildIo({ userId, invoiceId }: { userId: string; invoiceId: string }) {
       return fetchAuthorityInputsTyped(admin, { userId, invoiceId: id })
     },
     isProviderConfigured,
-    async acquireClaim({ userId: uid, invoiceId: iid, ruleId, actionType, idempotencyKey, receipt }: AnyRecord) {
-      const { data, error } = await admin.rpc('acquire_autopilot_execution_claim', {
+    async acquireClaim({
+      userId: uid,
+      invoiceId: iid,
+      ruleId,
+      actionType,
+      idempotencyKey,
+      receipt,
+      ruleSnapshot,
+      expectedApprovalRequired,
+    }: AnyRecord) {
+      const { data, error } = await admin.rpc('acquire_guarded_autopilot_execution_claim', {
         p_user_id: uid,
         p_invoice_id: iid,
         p_rule_id: ruleId,
         p_action_type: actionType,
         p_idempotency_key: idempotencyKey,
         p_receipt: receipt ?? {},
+        p_expected_rule_snapshot: ruleSnapshot ?? {},
+        p_expected_approval_required: expectedApprovalRequired === true,
+        p_approval_id: null,
       })
       if (error) throw error
       const row = data?.[0]
+      if (row?.stale_reason) {
+        return { claimId: null, acquired: false, staleReason: row.stale_reason }
+      }
       if (row?.acquired) {
         return { claimId: row.claim_id, acquired: true }
       }
