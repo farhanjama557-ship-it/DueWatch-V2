@@ -357,6 +357,9 @@ export async function executeAutoSend({ userId, invoiceId, ruleId, buildMessage,
 
   const rule = inputs.rules.find((r) => r.id === evaluation.authority.basis.ruleId)
   const factualBasis = deriveFactualBasis(inputs.invoice)
+  if (!factualBasis.currency) {
+    return { outcome: SEND_OUTCOME.STALE_AUTHORITY, detail: 'invoice_currency_unavailable' }
+  }
   const { subject, text, reason } = buildMessage(inputs.invoice, rule, factualBasis)
 
   return runClaimedSend({
@@ -423,6 +426,9 @@ export async function executeApprovalSend({
   }
 
   const currentFactualBasis = deriveFactualBasis(inputs.invoice)
+  if (!currentFactualBasis.currency) {
+    return { outcome: SEND_OUTCOME.STALE_AUTHORITY, detail: 'invoice_currency_unavailable' }
+  }
   if (!factualBasisMatches(priorFactualBasis, currentFactualBasis)) {
     // BLOCKER: covers clientId/recipientEmail drift (invoice reassigned to
     // a different client, or the client's email changed) exactly the same
