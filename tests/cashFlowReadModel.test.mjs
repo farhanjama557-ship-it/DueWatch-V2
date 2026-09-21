@@ -71,3 +71,62 @@ test('promise amount is capped at current invoice balance in the timing model', 
   assert.equal(model.scheduled30Amount,500)
   assert.equal(model.committedPromiseAmount30,500)
 })
+
+
+test('partially fulfilled promise schedules only its unpaid remainder and never double counts', () => {
+  const model=buildCashFlowReadModel({
+    invoices:[invoice({amount:1000, amount_paid:200})],
+    promises:[{
+      id:'p1',
+      invoice_id:'i1',
+      status:'confirmed',
+      promised_amount:600,
+      promised_date:'2026-09-23',
+      currency:'USD',
+      operational:{state:'due_soon', fulfilledAmount:200},
+    }],
+    asOf:new Date('2026-09-21T12:00:00Z'),
+  })
+  assert.equal(model.scheduled30Amount,800)
+  assert.equal(model.committedPromiseAmount30,400)
+  assert.equal(model.events.find((e)=>e.type==='confirmed_promise').amount,400)
+  assert.equal(model.events.find((e)=>e.type==='invoice_due').amount,400)
+})
+
+test('mixed and unknown currencies never collapse into one numeric cash total', () => {
+  const model=buildCashFlowReadModel({
+    invoices:[
+      invoice({id:'usd',amount:100,currency:'USD'}),
+      invoice({id:'eur',amount:100,currency:'EUR'}),
+      invoice({id:'unknown',amount:100,currency:null}),
+    ],
+    promises:[],
+    asOf:new Date('2026-09-21T12:00:00Z'),
+  })
+  assert.equal(model.scheduled30Amount,null)
+  assert.equal(model.scheduled30Summary.knownCurrencyCount,2)
+  assert.equal(model.scheduled30Summary.unknownCount,1)
+  assert.deepEqual(
+    model.scheduled30Summary.byCurrency.map((entry)=>[entry.currency,entry.amount]),
+    [['EUR',100],['USD',100]]
+  )
+  assert.equal(model.dataQuality.missingCurrencyCount,1)
+  assert.equal(model.dataQuality.mixedCurrencyTiming,true)
+})
+
+test('past-due promise exposure uses only the remaining attributable commitment', () => {
+  const model=buildCashFlowReadModel({
+    invoices:[invoice({amount:1000, amount_paid:200, due_date:'2026-09-10'})],
+    promises:[{
+      id:'p1',
+      invoice_id:'i1',
+      status:'confirmed',
+      promised_amount:600,
+      promised_date:'2026-09-20',
+      currency:'USD',
+      operational:{state:'past_due_unresolved', fulfilledAmount:200},
+    }],
+    asOf:new Date('2026-09-21T12:00:00Z'),
+  })
+  assert.equal(model.pastDuePromiseExposure,400)
+})
