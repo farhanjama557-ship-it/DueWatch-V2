@@ -7,6 +7,7 @@ import { daysOverdue, formatLongDate, formatMoney, timeAgo } from '../lib/format
 import { supabase } from '../lib/supabase'
 import { OverhaulIcon } from './OverhaulIconSystem'
 import { createPulseAskDwRuntime } from './integration/pulseAskDw'
+import { useWorkspacePreferences } from './WorkspacePreferencesContext'
 
 function TinySpark({ tone = 'green', variant = 'up' }) {
   const d = variant === 'flat'
@@ -360,6 +361,7 @@ function AttentionQueue({ rows }) {
 
 export default function LockedPulse() {
   const { user } = useAuth()
+  const { preferences } = useWorkspacePreferences()
   const askDwRuntime = useMemo(() => createPulseAskDwRuntime({ supabase }), [])
   const [askQuestion, setAskQuestion] = useState('')
   const [askResult, setAskResult] = useState(null)
@@ -452,6 +454,7 @@ export default function LockedPulse() {
   const fullName = (user?.user_metadata?.full_name || '').trim()
   const greetingName = fullName ? fullName.split(/\s+/)[0] : name || 'there'
   const company =
+    preferences?.workspace_name ||
     user?.user_metadata?.company ||
     user?.user_metadata?.organization ||
     user?.user_metadata?.workspace ||
