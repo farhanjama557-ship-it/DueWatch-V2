@@ -1,3 +1,5 @@
+import { summarizeMoney } from './moneyTruth.js'
+
 const MONEY_PATTERN = /^(?:0|[1-9]\d*)(?:\.\d{1,2})?$/
 const CURRENCY_PATTERN = /^[A-Z]{3}$/
 
@@ -23,6 +25,25 @@ export function summarizeCollectedPaymentRows(...rowGroups) {
     sum: rows.reduce((total, row) => total + (Number(row.total_amount) || 0), 0),
     count: rows.length,
   }
+}
+
+export function summarizeCollectedPaymentMoney(...rowGroups) {
+  const unique = new Map()
+  for (const row of rowGroups.flat()) {
+    if (!row) continue
+    const key = row.id || JSON.stringify([
+      row.total_amount,
+      row.currency,
+      row.payment_date,
+      row.recorded_at,
+      row.source_event_id,
+    ])
+    if (!unique.has(key)) unique.set(key, row)
+  }
+  return summarizeMoney([...unique.values()], {
+    amountOf: (row) => row.total_amount,
+    currencyOf: (row) => row.currency,
+  })
 }
 
 export function buildInvoicePaymentRequest({ invoiceId, amount, currency, paymentDate, operationKey, method, note }) {
