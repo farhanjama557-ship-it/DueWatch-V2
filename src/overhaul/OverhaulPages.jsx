@@ -791,8 +791,9 @@ export function OverhaulCashFlow() {
         }
       })
     return () => { cancelled = true }
-  }, [user?.id])
+  }, [user?.id, lastSyncedAt])
 
+  const promiseDataAvailable = !promiseError
   const model = useMemo(
     () => buildCashFlowReadModel({ invoices, promises, asOf: new Date() }),
     [invoices, promises]
@@ -839,18 +840,18 @@ export function OverhaulCashFlow() {
         </div>
         <div>
           <span>Scheduled next 7 days</span>
-          <strong>{formatMoneySummary(model.scheduled7Summary)}</strong>
-          <small>invoice + confirmed promise timing</small>
+          <strong>{promiseDataAvailable ? formatMoneySummary(model.scheduled7Summary) : 'Unavailable'}</strong>
+          <small>{promiseDataAvailable ? 'invoice + confirmed promise timing' : 'promise evidence unavailable'}</small>
         </div>
         <div>
           <span>Scheduled next 30 days</span>
-          <strong>{formatMoneySummary(model.scheduled30Summary)}</strong>
-          <small>no probability weighting</small>
+          <strong>{promiseDataAvailable ? formatMoneySummary(model.scheduled30Summary) : 'Unavailable'}</strong>
+          <small>{promiseDataAvailable ? 'no probability weighting' : 'promise evidence unavailable'}</small>
         </div>
         <div>
           <span>Confirmed promises ≤30d</span>
-          <strong>{formatMoneySummary(model.committedPromise30Summary)}</strong>
-          <small>customer commitments only</small>
+          <strong>{promiseDataAvailable ? formatMoneySummary(model.committedPromise30Summary) : 'Unavailable'}</strong>
+          <small>{promiseDataAvailable ? 'customer commitments only' : 'promise evidence unavailable'}</small>
         </div>
         <div>
           <span>Overdue exposure</span>
