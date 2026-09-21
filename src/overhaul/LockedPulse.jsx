@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom'
 import { useMemo, useState } from 'react'
 import { ChevronDown, Mic, MoreHorizontal } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
@@ -318,7 +319,7 @@ function PriorityInvoices({ rows }) {
               <span>{formatMoney(balanceOf(invoice))}</span>
               <span className={overdueBy > 0 ? 'ov-danger-text' : ''}>{overdueBy > 0 ? overdueBy : '—'}</span>
               <span>{overdueBy >= 30 ? 'Severely overdue' : overdueBy > 0 ? 'Follow-up overdue' : 'Upcoming balance'}</span>
-              <span><button className="ov-row-action" type="button" aria-disabled="true">{overdueBy >= 30 ? 'Review' : 'Follow up'}</button></span>
+              <span><Link className="ov-row-action" to={`/invoices?invoice=${invoice.id}`}>{overdueBy >= 30 ? 'Review' : 'Follow up'}</Link></span>
             </div>
           )
         })}
@@ -346,7 +347,7 @@ function AttentionQueue({ rows }) {
               <span>{clientNameOf(invoice)}</span>
               <span>{invoice.invoice_number || '—'}</span>
               <span>{overdueBy > 0 ? `${overdueBy}d overdue` : invoice.due_date || 'No due date'}</span>
-              <span><StatusChip tone={overdueBy > 0 ? 'orange' : 'blue'}>{overdueBy > 0 ? 'Needs attention' : 'Upcoming'}</StatusChip></span>
+              <span className="ov-attention-action"><StatusChip tone={overdueBy > 0 ? 'orange' : 'blue'}>{overdueBy > 0 ? 'Needs attention' : 'Upcoming'}</StatusChip><Link to={`/invoices?invoice=${invoice.id}`}>Open</Link></span>
             </div>
           )
         })}
