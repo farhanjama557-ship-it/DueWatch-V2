@@ -5,6 +5,7 @@ import { DataProvider, useData } from '../context/DataContext'
 import { PresenceProvider } from '../features/PresenceSystem'
 import { initials } from '../lib/format'
 import { DueWatchMark, OverhaulIcon } from './OverhaulIconSystem'
+import { WorkspacePreferencesProvider, useWorkspacePreferences } from './WorkspacePreferencesContext'
 import './overhaul.css'
 
 const primaryNav = [
@@ -23,11 +24,13 @@ const primaryNav = [
 function Sidebar() {
   const { user, signOut } = useAuth()
   const { name, overdueCount, autopilotEnabled, autopilotErrorCount } = useData()
+  const { preferences } = useWorkspacePreferences()
 
   const fullName = (user?.user_metadata?.full_name || '').trim()
   const email = user?.email || ''
   const displayName = fullName || name || email.split('@')[0] || 'Account'
   const company =
+    preferences?.workspace_name ||
     user?.user_metadata?.company ||
     user?.user_metadata?.organization ||
     user?.user_metadata?.workspace ||
@@ -117,9 +120,11 @@ function ShellInner({ children }) {
 export default function OverhaulShell({ children }) {
   return (
     <DataProvider>
-      <PresenceProvider>
-        <ShellInner>{children ?? <Outlet />}</ShellInner>
-      </PresenceProvider>
+      <WorkspacePreferencesProvider>
+        <PresenceProvider>
+          <ShellInner>{children ?? <Outlet />}</ShellInner>
+        </PresenceProvider>
+      </WorkspacePreferencesProvider>
     </DataProvider>
   )
 }
