@@ -31,6 +31,7 @@ test('single-invoice UI request explicitly allocates the complete payment', () =
     amount: '42.5',
     currency: 'USD',
     paymentDate: '2026-08-16',
+    operationKey: 'payment:test:single-invoice',
   }), {
     p_payment_date: '2026-08-16',
     p_total_amount: '42.50',
@@ -39,13 +40,14 @@ test('single-invoice UI request explicitly allocates the complete payment', () =
       invoice_id: '11111111-1111-4111-8111-111111111111',
       amount: '42.50',
     }],
+    p_operation_key: 'payment:test:single-invoice',
     p_method: null,
     p_note: null,
   })
 })
 
 test('normal payment requests require an explicit normalized currency and date', () => {
-  const base = { invoiceId: 'invoice', amount: '1.00', paymentDate: '2026-08-16' }
+  const base = { invoiceId: 'invoice', amount: '1.00', paymentDate: '2026-08-16', operationKey: 'payment:test:validation' }
   assert.throws(() => buildInvoicePaymentRequest({ ...base, currency: null }), /explicit currency/)
   assert.throws(() => buildInvoicePaymentRequest({ ...base, currency: 'usd' }), /explicit currency/)
   assert.throws(() => buildInvoicePaymentRequest({ ...base, currency: 'USD', paymentDate: '' }), /date is required/)
@@ -69,6 +71,7 @@ test('recordInvoicePayment calls only the hardened RPC and returns stable IDs', 
     amount: '25.00',
     currency: 'EUR',
     paymentDate: '2026-08-15',
+    operationKey: 'payment:test:stable-result',
   })
   assert.equal(actual, expected)
   assert.equal(calls.length, 1)
@@ -86,6 +89,7 @@ test('recordInvoicePayment surfaces RPC failure without a fallback write', async
     amount: '25.00',
     currency: 'USD',
     paymentDate: '2026-08-15',
+    operationKey: 'payment:test:rpc-failure',
   }), /tenant rejected/)
 })
 
