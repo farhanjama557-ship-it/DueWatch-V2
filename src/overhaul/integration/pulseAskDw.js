@@ -1,5 +1,6 @@
 import { balanceOf, isOutstanding } from '../../context/DataContext'
-import { daysOverdue, daysUntil, formatMoney } from '../../lib/format'
+import { daysOverdue, daysUntil } from '../../lib/format'
+import { formatMoneySummary, formatMoneyTruth, summarizeInvoiceBalances } from '../../lib/moneyTruth'
 import {
   ASK_DW_JOB,
   ASK_DW_SCOPE,
@@ -23,15 +24,35 @@ function isPaymentEvent(event) {
   return /payment/i.test(String(event?.event_type || ''))
 }
 
-function total(rows) {
-  return rows.reduce((sum, invoice) => sum + balanceOf(invoice), 0)
+function moneySummary(rows) {
+  return summarizeInvoiceBalances(rows, balanceOf)
+}
+
+function moneyDisplay(rows) {
+  return formatMoneySummary(moneySummary(rows))
+}
+
+function currencyLimitations(rows) {
+  const summary = moneySummary(rows)
+  const limitations = []
+  if (summary.knownCurrencyCount > 1) {
+    limitations.push('Multiple currencies are kept separate; DueWatch does not convert or sum them together.')
+  }
+  if (summary.unknownCount > 0) {
+    limitations.push(`${summary.unknownCount} invoice balance${summary.unknownCount === 1 ? '' : 's'} in this answer lack an established currency and are shown as currency unknown.`)
+  }
+  return limitations
 }
 
 function portfolioSnapshot({ invoices, clients, events, approvals }) {
   const outstanding = safeArray(invoices).filter(isOutstanding)
   const overdue = outstanding
     .filter((invoice) => daysOverdue(invoice.due_date) > 0)
-    .sort((a, b) => daysOverdue(b.due_date) - daysOverdue(a.due_date) || balanceOf(b) - balanceOf(a))
+    .sort((a, b) => {
+      const overdueDiff = daysOverdue(b.due_date) - daysOverdue(a.due_date)
+      if (overdueDiff !== 0) return overdueDiff
+      return String(a.invoice_number || a.id).localeCompare(String(b.invoice_number || b.id))
+    })
   const due7 = outstanding.filter((invoice) => {
     const days = daysUntil(invoice.due_date)
     return days !== null && days >= 0 && days <= 7
@@ -63,7 +84,7 @@ function attentionAnswer(snapshot) {
   if (top.length) {
     lines.push(
       `The highest-priority overdue invoices are ${top.map((invoice) =>
-        `${clientName(invoice)} ${invoice.invoice_number || ''} (${daysOverdue(invoice.due_date)}d, ${formatMoney(balanceOf(invoice))})`
+        `${clientName(invoice)} ${invoice.invoice_number || ''} (${daysOverdue(invoice.due_date)}d, ${formatMoneyTruth(balanceOf(invoice), invoice.currency)})`
       ).join('; ')}.`
     )
   }
@@ -92,34 +113,43 @@ function overdueAnswer(snapshot) {
 
   return {
     conclusion: populated.length
-      ? populated.map((bucket) => `${bucket.label}: ${bucket.rows.length} invoice${bucket.rows.length === 1 ? '' : 's'} totaling ${formatMoney(total(bucket.rows))}`).join('. ') + '.'
+      ? populated.map((bucket) => `${bucket.label}: ${bucket.rows.length} invoice${bucket.rows.length === 1 ? '' : 's'} totaling ${moneyDisplay(bucket.rows)}`).join('. ') + '.'
       : 'No overdue invoices are visible in the current loaded portfolio.',
     evidence: populated.map((bucket) => `${bucket.label} aging bucket derived from canonical invoice due dates and balances.`),
-    limitations: ['DueWatch can group overdue exposure by aging here, but it does not infer an unsupported business-cause “reason” from due dates alone.'],
+    limitations: [
+      'DueWatch can group overdue exposure by aging here, but it does not infer an unsupported business-cause “reason” from due dates alone.',
+      ...currencyLimitations(snapshot.overdue),
+    ],
     nextStep: null,
   }
 }
 
 function cashTimingAnswer(snapshot) {
   return {
-    conclusion: `${formatMoney(total(snapshot.due7))} is scheduled due within 7 days and ${formatMoney(total(snapshot.due30))} within 30 days. ${formatMoney(total(snapshot.overdue))} is already overdue.`,
+    conclusion: `${moneyDisplay(snapshot.due7)} is scheduled due within 7 days and ${moneyDisplay(snapshot.due30)} within 30 days. ${moneyDisplay(snapshot.overdue)} is already overdue.`,
     evidence: [
       `${snapshot.due7.length} open invoice${snapshot.due7.length === 1 ? '' : 's'} due within 7 days.`,
       `${snapshot.due30.length} open invoice${snapshot.due30.length === 1 ? '' : 's'} due within 30 days.`,
     ],
-    limitations: ['This is invoice-date cash timing, not a predictive cash forecast. DueWatch is not assigning payment probabilities in this surface.'],
+    limitations: [
+      'This is invoice-date cash timing, not a predictive cash forecast. DueWatch is not assigning payment probabilities in this surface.',
+      ...currencyLimitations(snapshot.outstanding),
+    ],
     nextStep: null,
   }
 }
 
 function generalPortfolioAnswer(snapshot) {
   return {
-    conclusion: `DueWatch currently sees ${snapshot.invoiceCount} invoices across ${snapshot.clientCount} clients, with ${formatMoney(total(snapshot.outstanding))} outstanding and ${snapshot.overdue.length} overdue invoice${snapshot.overdue.length === 1 ? '' : 's'}.`,
+    conclusion: `DueWatch currently sees ${snapshot.invoiceCount} invoices across ${snapshot.clientCount} clients, with ${moneyDisplay(snapshot.outstanding)} outstanding and ${snapshot.overdue.length} overdue invoice${snapshot.overdue.length === 1 ? '' : 's'}.`,
     evidence: [
       `${snapshot.paymentEvents.length} recent payment event${snapshot.paymentEvents.length === 1 ? '' : 's'} in the loaded activity window.`,
       `${snapshot.approvals.length} approval${snapshot.approvals.length === 1 ? '' : 's'} waiting.`,
     ],
-    limitations: ['Portfolio answers are computed from the data already loaded into Pulse and do not grant execution authority.'],
+    limitations: [
+      'Portfolio answers are computed from the data already loaded into Pulse and do not grant execution authority.',
+      ...currencyLimitations(snapshot.outstanding),
+    ],
     nextStep: null,
   }
 }
