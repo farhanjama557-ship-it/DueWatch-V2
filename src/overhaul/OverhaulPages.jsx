@@ -29,6 +29,14 @@ import InvoiceDetailPanel from '../components/InvoiceDetailPanel'
 import AddInvoiceModal from '../components/AddInvoiceModal'
 import { supabase } from '../lib/supabase'
 import {
+  cancelPromise,
+  confirmPromise,
+  loadPromiseWorkspace,
+  promiseStateLabel,
+  promiseStateTone,
+  recordPromise,
+} from '../lib/promises'
+import {
   DEFAULT_RULES,
   disableAutopilot,
   enableAutopilot,
@@ -321,67 +329,174 @@ export function OverhaulClients() {
 
 export function OverhaulPromises() {
   const { user } = useAuth()
+  const { invoices } = useData()
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [tab, setTab] = useState('all')
   const [search, setSearch] = useState('')
+  const [busyId, setBusyId] = useState('')
+  const [showRecord, setShowRecord] = useState(false)
+  const [recordInvoiceId, setRecordInvoiceId] = useState('')
+  const [recordAmount, setRecordAmount] = useState('')
+  const [recordDate, setRecordDate] = useState('')
+  const [recordNote, setRecordNote] = useState('')
+  const [recordBusy, setRecordBusy] = useState(false)
+
+  const promiseEligibleInvoices = useMemo(
+    () => invoices
+      .filter((invoice) => isOutstanding(invoice) && invoice.currency)
+      .sort((a, b) => String(a.due_date || '9999').localeCompare(String(b.due_date || '9999'))),
+    [invoices]
+  )
+
+  async function reloadPromises() {
+    if (!user?.id) return
+    setLoading(true)
+    setError('')
+    try {
+      const result = await loadPromiseWorkspace({ database: supabase, userId: user.id })
+      setRows(result)
+    } catch (loadError) {
+      setRows([])
+      setError(loadError?.message || 'Could not load promises.')
+    } finally {
+      setLoading(false)
+    }
+  }
 
   useEffect(() => {
-    if (!user?.id) return
-    let cancelled = false
-    setLoading(true)
-    supabase
-      .from('promises')
-      .select('id,user_id,invoice_id,status,promised_amount,promised_date,currency,source,confirmed_at,created_at,invoices(inv_num,due_date,amount,amount_paid,clients(name))')
-      .eq('user_id', user.id)
-      .order('promised_date', { ascending: true })
-      .then(({ data, error: queryError }) => {
-        if (cancelled) return
-        setRows(data || [])
-        setError(queryError?.message || '')
-        setLoading(false)
-      })
-    return () => { cancelled = true }
-  }, [user])
+    reloadPromises()
+  }, [user?.id])
+
+  useEffect(() => {
+    if (!showRecord || recordInvoiceId) return
+    const first = promiseEligibleInvoices[0]
+    if (!first) return
+    setRecordInvoiceId(first.id)
+    setRecordAmount(Number(balanceOf(first)).toFixed(2))
+  }, [showRecord, recordInvoiceId, promiseEligibleInvoices])
+
+  function chooseRecordInvoice(invoiceId) {
+    setRecordInvoiceId(invoiceId)
+    const invoice = promiseEligibleInvoices.find((candidate) => candidate.id === invoiceId)
+    setRecordAmount(invoice ? Number(balanceOf(invoice)).toFixed(2) : '')
+  }
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
     return rows.filter((row) => {
-      const status = String(row.status || '').toLowerCase()
-      if (tab !== 'all' && status !== tab) return false
+      const state = row.operational?.state || 'unknown'
+      const matchesTab =
+        tab === 'all' ||
+        (tab === 'confirmed' && ['confirmed', 'due_soon', 'due_today'].includes(state)) ||
+        state === tab
+
+      if (!matchesTab) return false
       if (!q) return true
-      return [row.id, row.invoices?.inv_num, row.invoices?.clients?.name]
+      return [row.id, row.invoices?.inv_num, row.invoices?.clients?.name, state]
         .filter(Boolean).join(' ').toLowerCase().includes(q)
     })
   }, [rows, tab, search])
 
-  const dueToday = rows.filter((row) => daysUntil(row.promised_date) === 0)
-  const dueSoon = rows.filter((row) => {
-    const days = daysUntil(row.promised_date)
-    return days !== null && days >= 0 && days <= 2
-  })
-  const broken = rows.filter((row) => String(row.status || '').toLowerCase() === 'broken')
-  const fulfilled = rows.filter((row) => String(row.status || '').toLowerCase() === 'fulfilled')
+  const dueToday = rows.filter((row) => row.operational?.state === 'due_today')
+  const dueSoon = rows.filter((row) => row.operational?.state === 'due_soon')
+  const broken = rows.filter((row) => row.operational?.state === 'broken')
+  const fulfilled = rows.filter((row) => row.operational?.state === 'fulfilled')
+  const proposed = rows.filter((row) => row.operational?.state === 'proposed')
+
+  async function handleRecord(event) {
+    event.preventDefault()
+    if (!user?.id || recordBusy) return
+    setRecordBusy(true)
+    setError('')
+    try {
+      await recordPromise({
+        database: supabase,
+        userId: user.id,
+        invoiceId: recordInvoiceId,
+        amount: recordAmount,
+        promisedDate: recordDate,
+        note: recordNote,
+      })
+      setShowRecord(false)
+      setRecordInvoiceId('')
+      setRecordAmount('')
+      setRecordDate('')
+      setRecordNote('')
+      await reloadPromises()
+    } catch (recordError) {
+      setError(recordError?.message || 'Could not record the promise.')
+    } finally {
+      setRecordBusy(false)
+    }
+  }
+
+  async function handlePromiseAction(row, action) {
+    if (!user?.id || busyId) return
+    setBusyId(row.id)
+    setError('')
+    try {
+      if (action === 'confirm') {
+        await confirmPromise({ database: supabase, userId: user.id, promiseId: row.id })
+      } else if (action === 'cancel') {
+        await cancelPromise({ database: supabase, userId: user.id, promiseId: row.id })
+      }
+      await reloadPromises()
+    } catch (actionError) {
+      setError(actionError?.message || 'Could not update the promise.')
+    } finally {
+      setBusyId('')
+    }
+  }
 
   return (
     <div className="ov2-page">
       <PageHeader
         title="Promise-to-Pay"
-        subtitle="Track payment promises from evidence already recorded in DueWatch."
+        subtitle="Track customer commitments separately from payment truth. Fulfillment is verified from the payment ledger."
+        actions={
+          <button
+            className="ov2-button ov2-button--primary"
+            type="button"
+            onClick={() => setShowRecord(true)}
+            disabled={promiseEligibleInvoices.length === 0}
+          >
+            <Plus size={15} /> Record promise
+          </button>
+        }
       />
 
+      {error ? <div className="ov2-error"><CircleAlert size={15} />{error}</div> : null}
+
       <div className="ov2-summary-strip">
-        <div><span>All promises</span><strong>{rows.length}</strong><small>recorded</small></div>
-        <div><span>Due today</span><strong>{dueToday.length}</strong><small>{moneyCompact(dueToday.reduce((s, r) => s + Number(r.promised_amount || 0), 0))}</small></div>
-        <div><span>Due soon ≤48h</span><strong>{dueSoon.length}</strong><small>{moneyCompact(dueSoon.reduce((s, r) => s + Number(r.promised_amount || 0), 0))}</small></div>
-        <div><span>Broken</span><strong className="ov2-danger">{broken.length}</strong><small>{moneyCompact(broken.reduce((s, r) => s + Number(r.promised_amount || 0), 0))}</small></div>
-        <div><span>Fulfilled</span><strong className="ov2-positive">{fulfilled.length}</strong><small>{moneyCompact(fulfilled.reduce((s, r) => s + Number(r.promised_amount || 0), 0))}</small></div>
+        <button type="button" onClick={() => setTab('proposed')}>
+          <span>Needs confirmation</span><strong>{proposed.length}</strong><small>proposed promises</small>
+        </button>
+        <button type="button" onClick={() => setTab('due_today')}>
+          <span>Due today</span><strong>{dueToday.length}</strong><small>{moneyCompact(dueToday.reduce((s, r) => s + Number(r.promised_amount || 0), 0))}</small>
+        </button>
+        <button type="button" onClick={() => setTab('due_soon')}>
+          <span>Due soon</span><strong>{dueSoon.length}</strong><small>{moneyCompact(dueSoon.reduce((s, r) => s + Number(r.promised_amount || 0), 0))}</small>
+        </button>
+        <button type="button" onClick={() => setTab('broken')}>
+          <span>Broken</span><strong className="ov2-danger">{broken.length}</strong><small>{moneyCompact(broken.reduce((s, r) => s + Number(r.promised_amount || 0), 0))}</small>
+        </button>
+        <button type="button" onClick={() => setTab('fulfilled')}>
+          <span>Fulfilled</span><strong className="ov2-positive">{fulfilled.length}</strong><small>{moneyCompact(fulfilled.reduce((s, r) => s + Number(r.promised_amount || 0), 0))}</small>
+        </button>
       </div>
 
       <div className="ov2-toolbar">
         <div className="ov2-tabs">
-          {[['all','All promises'],['confirmed','Confirmed'],['broken','Broken'],['fulfilled','Fulfilled'],['cancelled','Cancelled']].map(([key,label]) => (
+          {[
+            ['all','All promises'],
+            ['proposed','Needs confirmation'],
+            ['confirmed','Confirmed'],
+            ['broken','Broken'],
+            ['fulfilled','Fulfilled'],
+            ['cancelled','Cancelled'],
+          ].map(([key,label]) => (
             <button key={key} className={tab === key ? 'is-active' : ''} onClick={() => setTab(key)}>{label}</button>
           ))}
         </div>
@@ -389,31 +504,94 @@ export function OverhaulPromises() {
       </div>
 
       <section className="ov2-card ov2-table-card">
-        {loading ? <TableEmpty>Loading promises…</TableEmpty> : error ? <TableEmpty>Promise data unavailable: {error}</TableEmpty> : filtered.length === 0 ? (
-          <TableEmpty>No promises match this view.</TableEmpty>
+        {loading ? <TableEmpty>Loading promises…</TableEmpty> : filtered.length === 0 ? (
+          <TableEmpty>{rows.length === 0 ? 'No promises have been recorded yet.' : 'No promises match this view.'}</TableEmpty>
         ) : (
           <div className="ov2-scroll-table">
             <div className="ov2-promise-grid ov2-grid-head">
-              <span>Client</span><span>Promise</span><span>State</span><span>Promised date</span><span>Amount</span><span>Source</span>
+              <span>Client</span><span>Promise</span><span>State</span><span>Promised date</span><span>Amount</span><span>Action</span>
             </div>
             {filtered.map((row) => {
               const client = row.invoices?.clients?.name || 'Client'
-              const state = String(row.status || 'recorded')
-              const tone = state.toLowerCase() === 'fulfilled' ? 'green' : state.toLowerCase() === 'broken' ? 'red' : 'amber'
+              const state = row.operational?.state || 'unknown'
+              const canConfirm = row.status === 'proposed'
+              const canCancel = ['proposed', 'confirmed'].includes(row.status) && state !== 'fulfilled'
               return (
                 <div className="ov2-promise-grid ov2-grid-row" key={row.id}>
-                  <span className="ov2-person"><InitialBadge name={client} /><span><b>{client}</b><small>{row.invoices?.inv_num || 'Invoice'}</small></span></span>
-                  <span><b>{row.id.slice(0, 8)}</b><small>{row.confirmed_at ? 'Confirmed' : 'Recorded'}</small></span>
-                  <span><Pill tone={tone}>{state.replaceAll('_', ' ')}</Pill></span>
+                  <span className="ov2-person">
+                    <InitialBadge name={client} />
+                    <span><b>{client}</b><small>{row.invoices?.inv_num || 'Invoice'}</small></span>
+                  </span>
+                  <span>
+                    <b>{row.id.slice(0, 8)}</b>
+                    <small>{row.source || 'founder_manual'}{row.note ? ` · ${row.note}` : ''}</small>
+                  </span>
+                  <span>
+                    <Pill tone={promiseStateTone(state)}>{promiseStateLabel(state)}</Pill>
+                    {state === 'fulfilled' ? <small>{formatMoney(row.operational.fulfilledAmount)} verified by payment allocations</small> : null}
+                  </span>
                   <span>{formatShortDate(row.promised_date)}</span>
                   <span className="ov2-money">{formatMoney(row.promised_amount)}</span>
-                  <span>{row.source || 'Recorded evidence'}</span>
+                  <span className="ov2-row-actions">
+                    {canConfirm ? (
+                      <button type="button" disabled={busyId === row.id} onClick={() => handlePromiseAction(row, 'confirm')}>Confirm</button>
+                    ) : null}
+                    {canCancel ? (
+                      <button type="button" disabled={busyId === row.id} onClick={() => handlePromiseAction(row, 'cancel')}>Cancel</button>
+                    ) : null}
+                    {!canConfirm && !canCancel ? <span className="ov2-muted">Read only</span> : null}
+                  </span>
                 </div>
               )
             })}
           </div>
         )}
       </section>
+
+      {showRecord ? (
+        <div className="ov2-modal-backdrop" role="presentation" onMouseDown={() => !recordBusy && setShowRecord(false)}>
+          <form className="ov2-modal" onSubmit={handleRecord} onMouseDown={(event) => event.stopPropagation()}>
+            <div className="ov2-modal-head">
+              <div><span>Promise-to-Pay</span><h2>Record a customer commitment</h2></div>
+              <button type="button" onClick={() => setShowRecord(false)} disabled={recordBusy}>×</button>
+            </div>
+            <label className="ov2-field">
+              <span>Invoice</span>
+              <select value={recordInvoiceId} onChange={(event) => chooseRecordInvoice(event.target.value)} required>
+                {promiseEligibleInvoices.map((invoice) => (
+                  <option key={invoice.id} value={invoice.id}>
+                    {invoice.invoice_number || 'Invoice'} · {invoice.clients?.name || 'Client'} · {formatMoney(balanceOf(invoice))}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="ov2-field-grid">
+              <label className="ov2-field">
+                <span>Promised amount</span>
+                <input inputMode="decimal" value={recordAmount} onChange={(event) => setRecordAmount(event.target.value)} required />
+              </label>
+              <label className="ov2-field">
+                <span>Promised date</span>
+                <input type="date" value={recordDate} onChange={(event) => setRecordDate(event.target.value)} required />
+              </label>
+            </div>
+            <label className="ov2-field">
+              <span>Note <small>optional</small></span>
+              <textarea rows={3} value={recordNote} onChange={(event) => setRecordNote(event.target.value)} placeholder="What did the customer commit to?" />
+            </label>
+            <div className="ov2-modal-truth">
+              <ShieldCheck size={16} />
+              <span>This records a promise, not a payment. DueWatch only marks it fulfilled when matching payment evidence exists.</span>
+            </div>
+            <div className="ov2-modal-actions">
+              <button className="ov2-button ov2-button--ghost" type="button" onClick={() => setShowRecord(false)} disabled={recordBusy}>Cancel</button>
+              <button className="ov2-button ov2-button--primary" type="submit" disabled={recordBusy || !recordInvoiceId || !recordAmount || !recordDate}>
+                {recordBusy ? 'Recording…' : 'Record promise'}
+              </button>
+            </div>
+          </form>
+        </div>
+      ) : null}
     </div>
   )
 }
