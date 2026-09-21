@@ -99,3 +99,34 @@ export async function disableAutopilot(userId) {
 export async function toggleRule(ruleId, enabled) {
   return supabase.from('autopilot_rules').update({ enabled }).eq('id', ruleId)
 }
+
+
+export async function setAutopilotApprovalRequired(userId, approvalRequired) {
+  if (!userId) return { error: new Error('A user id is required.') }
+
+  const { data: existing, error: readError } = await supabase
+    .from('autopilot_settings')
+    .select('id,enabled')
+    .eq('user_id', userId)
+    .maybeSingle()
+
+  if (readError) return { error: readError }
+
+  if (existing) {
+    return supabase
+      .from('autopilot_settings')
+      .update({
+        approval_required: approvalRequired === true,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('user_id', userId)
+  }
+
+  return supabase
+    .from('autopilot_settings')
+    .insert({
+      user_id: userId,
+      enabled: false,
+      approval_required: approvalRequired === true,
+    })
+}
