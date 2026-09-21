@@ -38,11 +38,14 @@ test('provider phase 1 creates exactly the seven architecture tables', () => {
 })
 
 test('OAuth state and raw webhook tables have no authenticated grant', () => {
-  const grants = sql.match(/grant[\s\S]*?to authenticated;/gi) || []
-  for (const grant of grants) {
-    assert.doesNotMatch(grant, /provider_oauth_states/i)
-    assert.doesNotMatch(grant, /provider_webhook_events/i)
-  }
+  assert.doesNotMatch(
+    sql,
+    /grant\s+(?:all|select|insert|update|delete)[^;]*provider_oauth_states[^;]*to authenticated;/i,
+  )
+  assert.doesNotMatch(
+    sql,
+    /grant\s+(?:all|select|insert|update|delete)[^;]*provider_webhook_events[^;]*to authenticated;/i,
+  )
   assert.match(sql, /revoke all on table[\s\S]*provider_oauth_states[\s\S]*provider_webhook_events[\s\S]*from public, anon, authenticated;/i)
 })
 
