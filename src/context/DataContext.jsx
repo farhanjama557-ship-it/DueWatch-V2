@@ -3,7 +3,8 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from './AuthContext'
 import { daysOverdue, daysUntil } from '../lib/format'
 import { toPendingInvoiceIds, toHandledKeys } from '../lib/pulseAuthority'
-import { summarizeCollectedPaymentRows } from '../lib/payments'
+import { summarizeCollectedPaymentMoney } from '../lib/payments'
+import { fetchAllPages } from '../lib/supabasePaging'
 
 // Matches supabase/functions/_shared/executionClaim.js's ACTION_TYPE_SEND_REMINDER.
 // Inlined rather than importing that Deno-side module here (out of scope
@@ -139,6 +140,9 @@ export function DataProvider({ children }) {
   // Reversed and preservation-only legacy rows are excluded deliberately.
   const [collectedThisMonth, setCollectedThisMonth] = useState(0)
   const [collectedLastMonth, setCollectedLastMonth] = useState(0)
+  const [collectedThisMonthSummary, setCollectedThisMonthSummary] = useState(null)
+  const [collectedLastMonthSummary, setCollectedLastMonthSummary] = useState(null)
+  const [collectionDataAvailable, setCollectionDataAvailable] = useState(true)
   // How many distinct active founder payment rows made up collectedLastMonth — the
   // Collected KPI's month-over-month trend needs this, not just the sum,
   // to tell a real comparison baseline from a single sparse data point
@@ -193,10 +197,14 @@ export function DataProvider({ children }) {
       .eq('id', user.id)
       .maybeSingle()
 
-    const invoicesPromise = supabase
-      .from('invoices')
-      .select('*, clients(name)')
-      .eq('user_id', user.id)
+    const invoicesPromise = fetchAllPages((from, to) =>
+      supabase
+        .from('invoices')
+        .select('*, clients(name)')
+        .eq('user_id', user.id)
+        .order('id', { ascending: true })
+        .range(from, to)
+    )
 
     const clientsPromise = supabase
       .from('clients')
@@ -254,14 +262,18 @@ export function DataProvider({ children }) {
     // queries that could disagree. `data` is null only on failure/`.catch()`
     // — never on a real "zero rows" result, which is what
     // toPendingInvoiceIds/toHandledKeys below depend on.
-    const awaitingHistoryPromise = supabase
-      .from('awaiting_signature')
-      .select('*, invoices(*, clients(name))')
-      .eq('user_id', user.id)
-      .order('created_at', { ascending: true })
+    const awaitingHistoryPromise = fetchAllPages((from, to) =>
+      supabase
+        .from('awaiting_signature')
+        .select('*, invoices(*, clients(name))')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: true })
+        .order('id', { ascending: true })
+        .range(from, to)
+    )
       .then((r) => {
-        if (r.error) console.warn('awaiting_signature query failed:', r.error.message)
-        return r.error ? null : r.data || []
+        if (r.error || !r.complete) console.warn('awaiting_signature query incomplete:', r.error?.message || 'unknown')
+        return r.error || !r.complete ? null : r.data || []
       })
       .catch((err) => {
         console.warn('awaiting_signature query threw:', err.message)
@@ -272,14 +284,18 @@ export function DataProvider({ children }) {
     // authority contract's handledKeys input. Same fail-closed contract as
     // above: a real (possibly empty) array on success, null only when the
     // query itself failed — never silently collapsed into "no history."
-    const executionClaimsPromise = supabase
-      .from('autopilot_execution_claims')
-      .select('invoice_id, rule_id')
-      .eq('user_id', user.id)
-      .eq('action_type', ACTION_TYPE_SEND_REMINDER)
+    const executionClaimsPromise = fetchAllPages((from, to) =>
+      supabase
+        .from('autopilot_execution_claims')
+        .select('id, invoice_id, rule_id')
+        .eq('user_id', user.id)
+        .eq('action_type', ACTION_TYPE_SEND_REMINDER)
+        .order('id', { ascending: true })
+        .range(from, to)
+    )
       .then((r) => {
-        if (r.error) console.warn('autopilot_execution_claims query failed:', r.error.message)
-        return r.error ? null : r.data || []
+        if (r.error || !r.complete) console.warn('autopilot_execution_claims query incomplete:', r.error?.message || 'unknown')
+        return r.error || !r.complete ? null : r.data || []
       })
       .catch((err) => {
         console.warn('autopilot_execution_claims query threw:', err.message)
@@ -359,64 +375,69 @@ export function DataProvider({ children }) {
     const startOfMonthInstant = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
     const startOfNextMonthInstant = new Date(now.getFullYear(), now.getMonth() + 1, 1).toISOString()
     const startOfLastMonthInstant = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString()
-    const datedCollectedThisMonthPromise = supabase
-      .from('payments')
-      .select('total_amount')
-      .eq('user_id', user.id)
-      .in('origin', ['founder_manual', 'legacy_carry_forward'])
-      .not('payment_date', 'is', null)
-      .is('reversed_at', null)
-      .gte('payment_date', startOfMonth)
-      .lt('payment_date', startOfNextMonth)
-      .then((r) => r.data || [])
-      .catch(() => [])
-    const migratedEvidenceThisMonthPromise = supabase
-      .from('payments')
-      .select('total_amount')
-      .eq('user_id', user.id)
-      .eq('origin', 'legacy_carry_forward')
-      .not('source_event_id', 'is', null)
-      .is('reversed_at', null)
-      .gte('recorded_at', startOfMonthInstant)
-      .lt('recorded_at', startOfNextMonthInstant)
-      .then((r) => r.data || [])
-      .catch(() => [])
-    const collectedPromise = Promise.all([
-      datedCollectedThisMonthPromise,
-      migratedEvidenceThisMonthPromise,
-    ]).then((rows) => summarizeCollectedPaymentRows(...rows).sum)
+    const loadCollectionWindow = async ({
+      startDate,
+      endDate,
+      startInstant,
+      endInstant,
+    }) => {
+      const [dated, migrated] = await Promise.all([
+        fetchAllPages((from, to) =>
+          supabase
+            .from('payments')
+            .select('id,total_amount,currency,payment_date,recorded_at,source_event_id')
+            .eq('user_id', user.id)
+            .in('origin', ['founder_manual', 'legacy_carry_forward'])
+            .not('payment_date', 'is', null)
+            .is('reversed_at', null)
+            .gte('payment_date', startDate)
+            .lt('payment_date', endDate)
+            .order('id', { ascending: true })
+            .range(from, to)
+        ),
+        fetchAllPages((from, to) =>
+          supabase
+            .from('payments')
+            .select('id,total_amount,currency,payment_date,recorded_at,source_event_id')
+            .eq('user_id', user.id)
+            .eq('origin', 'legacy_carry_forward')
+            .not('source_event_id', 'is', null)
+            .is('reversed_at', null)
+            .gte('recorded_at', startInstant)
+            .lt('recorded_at', endInstant)
+            .order('id', { ascending: true })
+            .range(from, to)
+        ),
+      ])
 
-    // Real month-over-month comparison for the Collected KPI card — same
-    // query, prior calendar month's window. (Outstanding/Need Attention
-    // have no equivalent: they're derived from current invoice state, not
-    // logged events, so there's no historical snapshot to diff against
-    // without new schema — omitted rather than faked.)
-    const datedCollectedLastMonthPromise = supabase
-      .from('payments')
-      .select('total_amount')
-      .eq('user_id', user.id)
-      .in('origin', ['founder_manual', 'legacy_carry_forward'])
-      .not('payment_date', 'is', null)
-      .is('reversed_at', null)
-      .gte('payment_date', startOfLastMonth)
-      .lt('payment_date', startOfMonth)
-      .then((r) => r.data || [])
-      .catch(() => [])
-    const migratedEvidenceLastMonthPromise = supabase
-      .from('payments')
-      .select('total_amount')
-      .eq('user_id', user.id)
-      .eq('origin', 'legacy_carry_forward')
-      .not('source_event_id', 'is', null)
-      .is('reversed_at', null)
-      .gte('recorded_at', startOfLastMonthInstant)
-      .lt('recorded_at', startOfMonthInstant)
-      .then((r) => r.data || [])
-      .catch(() => [])
-    const collectedLastMonthPromise = Promise.all([
-      datedCollectedLastMonthPromise,
-      migratedEvidenceLastMonthPromise,
-    ]).then((rows) => summarizeCollectedPaymentRows(...rows))
+      if (dated.error || migrated.error || !dated.complete || !migrated.complete) {
+        return {
+          ok: false,
+          error: dated.error || migrated.error || new Error('Collection evidence is incomplete.'),
+          summary: null,
+        }
+      }
+
+      return {
+        ok: true,
+        error: null,
+        summary: summarizeCollectedPaymentMoney(dated.data || [], migrated.data || []),
+      }
+    }
+
+    const collectedPromise = loadCollectionWindow({
+      startDate: startOfMonth,
+      endDate: startOfNextMonth,
+      startInstant: startOfMonthInstant,
+      endInstant: startOfNextMonthInstant,
+    })
+
+    const collectedLastMonthPromise = loadCollectionWindow({
+      startDate: startOfLastMonth,
+      endDate: startOfMonth,
+      startInstant: startOfLastMonthInstant,
+      endInstant: startOfMonthInstant,
+    })
 
     // Real all-time event count for the sidebar Evidence card.
     const totalEventsPromise = supabase
@@ -516,9 +537,17 @@ export function DataProvider({ children }) {
     // "couldn't check." (`autopilotRules` is used only by Pulse/Dashboard;
     // no other consumer of this context field exists today.)
     setAutopilotRules(rules)
-    setCollectedThisMonth(collected || 0)
-    setCollectedLastMonth(collectedLast?.sum || 0)
-    setCollectedLastMonthCount(collectedLast?.count || 0)
+    const monthSummary = collected?.ok ? collected.summary : null
+    const lastMonthSummary = collectedLast?.ok ? collectedLast.summary : null
+    const scalar = (summary) =>
+      summary?.canRepresentAsSingleMoney ? (summary.byCurrency[0]?.amount ?? 0) : null
+
+    setCollectionDataAvailable(Boolean(collected?.ok && collectedLast?.ok))
+    setCollectedThisMonthSummary(monthSummary)
+    setCollectedLastMonthSummary(lastMonthSummary)
+    setCollectedThisMonth(scalar(monthSummary))
+    setCollectedLastMonth(scalar(lastMonthSummary))
+    setCollectedLastMonthCount(lastMonthSummary?.rowCount || 0)
     setTotalEventsCount(totalEvents || 0)
 
     if (isFirstLoadThisSession) {
@@ -653,6 +682,9 @@ export function DataProvider({ children }) {
     sinceLastVisit,
     collectedThisMonth,
     collectedLastMonth,
+    collectedThisMonthSummary,
+    collectedLastMonthSummary,
+    collectionDataAvailable,
     collectedLastMonthCount,
     totalEventsCount,
     lastSyncedAt,
