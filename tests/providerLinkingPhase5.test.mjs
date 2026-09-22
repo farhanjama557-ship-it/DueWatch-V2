@@ -77,7 +77,7 @@ test('two same-amount invoices stay ambiguous and neither is selected', () => {
     ],
   })
   assert.equal(decision.deterministic, null)
-  assert.deepEqual(decision.proposals.sort(), [A, B].sort())
+  assert.deepEqual([...decision.proposals].sort(), [A, B].sort())
   assert.equal(decision.exceptionReason, 'AMBIGUOUS_INVOICE')
 })
 
