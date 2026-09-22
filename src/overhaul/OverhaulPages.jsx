@@ -1058,11 +1058,16 @@ function stripeStatusTone(status) {
 
 export function OverhaulIntegrations() {
   const { user } = useAuth()
+  const { invoices } = useData()
   const [searchParams] = useSearchParams()
   const [stripeConnections, setStripeConnections] = useState([])
   const [stripeLoading, setStripeLoading] = useState(true)
   const [stripeConnecting, setStripeConnecting] = useState(false)
   const [stripeError, setStripeError] = useState('')
+  const [reconciliationItems, setReconciliationItems] = useState([])
+  const [reconciliationLinks, setReconciliationLinks] = useState([])
+  const [reconciliationLoading, setReconciliationLoading] = useState(true)
+  const [resolvingLinkId, setResolvingLinkId] = useState('')
 
   async function loadStripeConnections() {
     if (!user?.id) return
@@ -1083,8 +1088,62 @@ export function OverhaulIntegrations() {
     setStripeLoading(false)
   }
 
+  async function loadReconciliationQueue() {
+    if (!user?.id) return
+    setReconciliationLoading(true)
+    const [exceptionResult, linkResult] = await Promise.all([
+      supabase
+        .from('provider_reconciliation_exceptions')
+        .select('id,provider_object_id,reason,candidates,opened_at,provider_objects(id,object_type,provider_object_id,object_state,evidence_class)')
+        .is('resolved_at', null)
+        .order('opened_at', { ascending: false }),
+      supabase
+        .from('provider_object_links')
+        .select('id,provider_object_id,entity_type,entity_id,match_basis,confirmed_at')
+        .eq('entity_type', 'invoice')
+        .is('confirmed_at', null),
+    ])
+
+    if (exceptionResult.error || linkResult.error) {
+      setReconciliationItems([])
+      setReconciliationLinks([])
+      setStripeError(
+        exceptionResult.error?.message ||
+        linkResult.error?.message ||
+        'Could not load provider reconciliation items.'
+      )
+    } else {
+      setReconciliationItems(exceptionResult.data || [])
+      setReconciliationLinks(linkResult.data || [])
+    }
+    setReconciliationLoading(false)
+  }
+
+  async function confirmProviderLink(linkId) {
+    if (!linkId || resolvingLinkId) return
+    setResolvingLinkId(linkId)
+    setStripeError('')
+    const { error } = await supabase.rpc('confirm_provider_object_link', {
+      p_link_id: linkId,
+    })
+    if (error) {
+      setStripeError(error.message || 'Could not confirm provider link.')
+      setResolvingLinkId('')
+      return
+    }
+    await loadReconciliationQueue()
+    setResolvingLinkId('')
+  }
+
+  function invoiceLabel(invoiceId) {
+    const invoice = invoices.find((candidate) => candidate.id === invoiceId)
+    if (!invoice) return 'Invoice'
+    return invoice.invoice_number || invoice.inv_num || 'Invoice'
+  }
+
   useEffect(() => {
     loadStripeConnections()
+    loadReconciliationQueue()
   }, [user?.id, searchParams.get('stripe')])
 
   async function connectStripe() {
@@ -1158,6 +1217,59 @@ export function OverhaulIntegrations() {
           </article>
         ))}
       </div>
+      <section className="ov2-card ov2-table-card">
+        <div className="ov2-card-head">
+          <div>
+            <span>Provider reconciliation</span>
+            <h2>Needs your confirmation</h2>
+          </div>
+          <Pill tone={reconciliationItems.length > 0 ? 'amber' : 'green'}>
+            {reconciliationLoading ? 'Checking…' : reconciliationItems.length > 0 ? `${reconciliationItems.length} open` : 'Clear'}
+          </Pill>
+        </div>
+
+        {reconciliationLoading ? <TableEmpty>Loading provider reconciliation…</TableEmpty> : reconciliationItems.length === 0 ? (
+          <TableEmpty>No ambiguous provider matches need review.</TableEmpty>
+        ) : (
+          <div className="ov2-scroll-table">
+            <div className="ov2-activity-list">
+              {reconciliationItems.map((item) => {
+                const object = Array.isArray(item.provider_objects) ? item.provider_objects[0] : item.provider_objects
+                const proposals = reconciliationLinks.filter((link) => link.provider_object_id === item.provider_object_id)
+                return (
+                  <div className="ov2-activity-item" key={item.id}>
+                    <span className="ov2-activity-icon"><CircleAlert size={15} /></span>
+                    <div>
+                      <b>{item.reason.replaceAll('_', ' ')}</b>
+                      <small>
+                        Stripe {object?.object_type || 'object'} {object?.provider_object_id || '—'} · evidence retained, no payment applied
+                      </small>
+                      {proposals.length > 0 ? (
+                        <div className="ov2-row-actions">
+                          {proposals.map((link) => (
+                            <button
+                              className="ov2-button ov2-button--ghost"
+                              type="button"
+                              key={link.id}
+                              disabled={Boolean(resolvingLinkId)}
+                              onClick={() => confirmProviderLink(link.id)}
+                            >
+                              {resolvingLinkId === link.id ? 'Confirming…' : `Confirm ${invoiceLabel(link.entity_id)}`}
+                            </button>
+                          ))}
+                        </div>
+                      ) : (
+                        <small>No deterministic invoice candidate is available. The provider evidence stays unapplied.</small>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
+      </section>
+
       <div className="ov2-truth-note"><ShieldCheck size={17} /><span>A linked provider is not automatically current. DueWatch only upgrades Stripe to current after a complete, fresh sync.</span></div>
     </div>
   )
