@@ -119,7 +119,7 @@ test('provider-sync is service-role only and cannot write the canonical payment 
 
 test('provider-sync records attempts before success and only writes last_success after complete collection', () => {
   const attempt = edge.indexOf('last_attempt_at: nowIso')
-  const collect = edge.indexOf('collectCompleteStripeResource')
+  const collect = edge.indexOf('const collected = await collectCompleteStripeResource')
   const success = edge.indexOf('last_success_at: nowIso')
   assert.ok(attempt >= 0)
   assert.ok(collect > attempt)
