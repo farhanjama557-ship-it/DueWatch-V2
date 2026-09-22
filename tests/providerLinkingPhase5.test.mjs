@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 
 import { deriveStripeInvoiceLinkDecision } from '../src/lib/integrations/providerLinkingCore.js'
+import { deriveStripeInvoiceLinkDecision as deriveServerStripeInvoiceLinkDecision } from '../supabase/functions/_shared/providerLinkingCore.js'
 
 const A = '11111111-1111-4111-8111-111111111111'
 const B = '22222222-2222-4222-8222-222222222222'
@@ -130,4 +131,37 @@ test('confirming a provider link resolves only same-tenant open reconciliation e
     migration,
     /update public\.provider_reconciliation_exceptions[\s\S]*user_id = v_user_id[\s\S]*provider_object_id = v_link\.provider_object_id[\s\S]*resolved_at is null/i,
   )
+})
+
+
+test('browser/library and server linking cores agree on ambiguity decisions', () => {
+  const input = {
+    providerObject: {
+      object_type: 'charge',
+      object_state: { id: 'ch_parity', amount: 50000, currency: 'gbp' },
+    },
+    invoices: [
+      invoice(A, { amount: '500.00', currency: 'GBP', inv_num: 'A' }),
+      invoice(B, { amount: '500.00', currency: 'GBP', inv_num: 'B' }),
+    ],
+  }
+  const clientDecision = deriveStripeInvoiceLinkDecision(input)
+  const serverDecision = deriveServerStripeInvoiceLinkDecision(input)
+  assert.deepEqual(serverDecision, clientDecision)
+})
+
+test('provider processor persists proposals/exceptions only after provider object evidence and still has no ledger path', () => {
+  const source = readFileSync(
+    new URL('../supabase/functions/provider-processor/index.ts', import.meta.url),
+    'utf8',
+  )
+  const objectWrite = source.indexOf("from('provider_objects')")
+  const linkingCall = source.indexOf('syncInvoiceLinkProposals({')
+  assert.ok(objectWrite >= 0)
+  assert.ok(linkingCall > objectWrite)
+  assert.match(source, /from\('provider_object_links'\)/)
+  assert.match(source, /from\('provider_reconciliation_exceptions'\)/)
+  assert.match(source, /match_basis:\s*'proposal'/)
+  assert.doesNotMatch(source, /record_payment|record_payment_for_tenant|payment_allocations/)
+  assert.doesNotMatch(source, /sendEmail|acquire_guarded_autopilot_execution_claim/)
 })
