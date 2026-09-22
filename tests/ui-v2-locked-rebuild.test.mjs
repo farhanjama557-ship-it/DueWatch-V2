@@ -53,9 +53,15 @@ test('Autopilot UI reflects the actual Normal-mode-only authority contract', () 
   assert.equal(pages.includes('Quarter-End</button>'), false)
 })
 
-test('Integrations never claim unsupported providers are connected', () => {
+test('Integrations keep unsupported providers disabled while Stripe uses the real OAuth/status seam', () => {
   assert.ok(pages.includes("state: 'not_configured'"))
-  assert.ok(pages.includes('No user-facing OAuth connection is configured in this build.'))
+  assert.ok(pages.includes('No user-facing Gmail connection is configured in this build.'))
+  assert.ok(pages.includes('No user-facing Drive connection is configured in this build.'))
+  assert.ok(pages.includes('No user-facing CRM connection is configured in this build.'))
+  assert.ok(pages.includes("from('provider_connection_status')"))
+  assert.ok(pages.includes("supabase.functions.invoke('provider-oauth-start'"))
+  assert.ok(pages.includes("if (status === 'never_synced') return 'Never synced'"))
+  assert.ok(pages.includes('It is not considered current until a complete sync succeeds.'))
   assert.ok(pages.includes('No connect action available'))
 })
 
