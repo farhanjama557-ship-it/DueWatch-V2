@@ -141,3 +141,33 @@ test('phase 1 provider runtime has no ledger-write call site yet', () => {
   }
   assert.deepEqual(offenders, [])
 })
+
+
+const providerStatusHardeningPath = path.join(
+  repo,
+  'supabase/migrations/20260922145500_provider_connection_status_invoker.sql',
+)
+const providerStatusHardeningSql = readFileSync(providerStatusHardeningPath, 'utf8')
+
+test('provider connection status view is security-invoker and secret columns stay ungranted', () => {
+  assert.match(
+    providerStatusHardeningSql,
+    /alter view public\.provider_connection_status\s+set \(security_invoker = true\);/i,
+  )
+  assert.match(
+    providerStatusHardeningSql,
+    /create policy provider_connections_select_own[\s\S]*using \(user_id = \(select auth\.uid\(\)\)\);/i,
+  )
+  assert.match(
+    providerStatusHardeningSql,
+    /grant select \([\s\S]*provider_account_id[\s\S]*disconnected_at[\s\S]*\) on public\.provider_connections to authenticated;/i,
+  )
+  assert.match(
+    providerStatusHardeningSql,
+    /revoke select \(webhook_secret_ref, credential_ref\)[\s\S]*from authenticated;/i,
+  )
+  assert.doesNotMatch(
+    providerStatusHardeningSql,
+    /grant select \([^)]*(?:webhook_secret_ref|credential_ref)[^)]*\) on public\.provider_connections to authenticated;/i,
+  )
+})
