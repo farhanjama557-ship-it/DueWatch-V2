@@ -1035,17 +1035,113 @@ export function OverhaulActivity() {
 const integrationCards = [
   { name: 'CSV / Excel imports', icon: 'invoices', state: 'available', detail: 'Native importer is available now.', action: 'Open importer', href: '/import' },
   { name: 'Outbound reminders', icon: 'reminders', state: 'server', detail: 'Uses the hardened server-side reminder pipeline.' },
-  { name: 'Stripe', icon: 'payments', state: 'not_configured', detail: 'No user-facing OAuth connection is configured in this build.' },
   { name: 'Gmail', icon: 'activityStream', state: 'not_configured', detail: 'No user-facing Gmail connection is configured in this build.' },
   { name: 'Google Drive', icon: 'evidence', state: 'not_configured', detail: 'No user-facing Drive connection is configured in this build.' },
   { name: 'CRM', icon: 'clients', state: 'not_configured', detail: 'No user-facing CRM connection is configured in this build.' },
 ]
 
+function stripeStatusLabel(status) {
+  if (status === 'never_synced') return 'Never synced'
+  if (status === 'stale') return 'Stale'
+  if (status === 'needs_reconnect') return 'Needs reconnect'
+  if (status === 'unavailable') return 'Unavailable'
+  if (status === 'disconnected') return 'Disconnected'
+  if (status === 'connected') return 'Current'
+  return 'Not connected'
+}
+
+function stripeStatusTone(status) {
+  if (status === 'connected') return 'green'
+  if (status === 'needs_reconnect' || status === 'unavailable') return 'red'
+  return 'neutral'
+}
+
 export function OverhaulIntegrations() {
+  const { user } = useAuth()
+  const [searchParams] = useSearchParams()
+  const [stripeConnections, setStripeConnections] = useState([])
+  const [stripeLoading, setStripeLoading] = useState(true)
+  const [stripeConnecting, setStripeConnecting] = useState(false)
+  const [stripeError, setStripeError] = useState('')
+
+  async function loadStripeConnections() {
+    if (!user?.id) return
+    setStripeLoading(true)
+    setStripeError('')
+    const { data, error } = await supabase
+      .from('provider_connection_status')
+      .select('id,provider,provider_account_id,environment,granted_scopes,connected_at,disconnected_at,stored_status,last_attempt_at,last_success_at,derived_status')
+      .eq('provider', 'stripe')
+      .order('connected_at', { ascending: false })
+
+    if (error) {
+      setStripeConnections([])
+      setStripeError(error.message || 'Could not load Stripe connection state.')
+    } else {
+      setStripeConnections(data || [])
+    }
+    setStripeLoading(false)
+  }
+
+  useEffect(() => {
+    loadStripeConnections()
+  }, [user?.id, searchParams.get('stripe')])
+
+  async function connectStripe() {
+    if (!user?.id || stripeConnecting) return
+    setStripeConnecting(true)
+    setStripeError('')
+    try {
+      const { data, error } = await supabase.functions.invoke('provider-oauth-start', { body: {} })
+      if (error) throw error
+      const authorizationUrl = String(data?.authorizationUrl || '')
+      if (!authorizationUrl.startsWith('https://connect.stripe.com/oauth/authorize?')) {
+        throw new Error('DueWatch did not receive a verifiable Stripe authorization URL.')
+      }
+      window.location.assign(authorizationUrl)
+    } catch (connectError) {
+      setStripeError(connectError?.message || 'Could not start Stripe connection.')
+      setStripeConnecting(false)
+    }
+  }
+
+  const primaryStripe = stripeConnections[0] || null
+  const stripeStatus = primaryStripe?.derived_status || 'not_connected'
+  const stripeDetail = stripeLoading
+    ? 'Checking Stripe connection state…'
+    : primaryStripe
+      ? `${stripeConnections.length} linked Stripe account${stripeConnections.length === 1 ? '' : 's'} · ${primaryStripe.environment} · ${primaryStripe.provider_account_id}`
+      : 'Connect Stripe through read-only Connect Standard OAuth. No Stripe credential is stored in the browser.'
+
   return (
     <div className="ov2-page">
-      <PageHeader title="Integrations" subtitle="Connect the systems that can supply or receive receivables evidence." />
+      <PageHeader title="Integrations" subtitle="Connect systems as evidence sources without turning read access into action authority." />
+
+      {stripeError ? <div className="ov2-error"><CircleAlert size={15} />{stripeError}</div> : null}
+      {searchParams.get('stripe') === 'connected' ? (
+        <div className="ov2-success"><Check size={15} />Stripe account linked. It is not considered current until a complete sync succeeds.</div>
+      ) : null}
+
       <div className="ov2-integration-grid">
+        <article className="ov2-card ov2-integration-card">
+          <span className="ov2-integration-icon"><OverhaulIcon name="payments" size={21} /></span>
+          <div>
+            <div className="ov2-section-title">
+              <h2>Stripe</h2>
+              <Pill tone={stripeStatusTone(stripeStatus)}>
+                {stripeLoading ? 'Checking…' : stripeStatusLabel(stripeStatus)}
+              </Pill>
+            </div>
+            <p>{stripeDetail}</p>
+            {primaryStripe?.last_success_at ? <small>Last complete sync {timeAgo(primaryStripe.last_success_at)}</small> : null}
+            <div className="ov2-row-actions">
+              <button className="ov2-button ov2-button--ghost" type="button" onClick={connectStripe} disabled={stripeConnecting || stripeLoading}>
+                {stripeConnecting ? 'Opening Stripe…' : primaryStripe ? 'Connect another Stripe account' : 'Connect Stripe'}
+              </button>
+            </div>
+          </div>
+        </article>
+
         {integrationCards.map((item) => (
           <article className="ov2-card ov2-integration-card" key={item.name}>
             <span className="ov2-integration-icon"><OverhaulIcon name={item.icon} size={21} /></span>
@@ -1062,7 +1158,7 @@ export function OverhaulIntegrations() {
           </article>
         ))}
       </div>
-      <div className="ov2-truth-note"><ShieldCheck size={17} /><span>DueWatch does not display a provider as connected unless the application has a real configured connection path.</span></div>
+      <div className="ov2-truth-note"><ShieldCheck size={17} /><span>A linked provider is not automatically current. DueWatch only upgrades Stripe to current after a complete, fresh sync.</span></div>
     </div>
   )
 }
