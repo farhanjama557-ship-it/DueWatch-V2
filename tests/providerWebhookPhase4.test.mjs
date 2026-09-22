@@ -160,7 +160,7 @@ test('webhook and processor have no ledger, promise, approval or send write path
 test('processor requires service-role authority and re-fetches before provider-object write', () => {
   assert.match(processor, /verifiedJwtRole\(req\) !== 'service_role'/)
   const fetchAt = processor.indexOf('fetch(retrieveUrl')
-  const writeAt = processor.indexOf("from('provider_objects')")
+  const writeAt = processor.indexOf('const { data: providerObject, error: objectError }')
   assert.ok(fetchAt >= 0)
   assert.ok(writeAt > fetchAt)
 })
