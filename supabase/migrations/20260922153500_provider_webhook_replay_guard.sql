@@ -4,7 +4,7 @@
 
 begin;
 
-create unique index provider_webhook_events_unattributed_event_uniq
+create unique index if not exists provider_webhook_events_unattributed_event_uniq
   on public.provider_webhook_events(provider, provider_event_id)
   where connection_id is null;
 
