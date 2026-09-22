@@ -168,6 +168,6 @@ test('processor requires service-role authority and re-fetches before provider-o
 test('unattributed webhook replay is absorbed by a partial unique index', () => {
   assert.match(
     replayMigration,
-    /create unique index provider_webhook_events_unattributed_event_uniq[\s\S]*\(provider, provider_event_id\)[\s\S]*where connection_id is null;/i,
+    /create unique index(?: if not exists)? provider_webhook_events_unattributed_event_uniq[\s\S]*\(provider, provider_event_id\)[\s\S]*where connection_id is null;/i,
   )
 })
