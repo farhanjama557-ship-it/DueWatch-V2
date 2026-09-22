@@ -155,8 +155,8 @@ test('provider processor persists proposals/exceptions only after provider objec
     new URL('../supabase/functions/provider-processor/index.ts', import.meta.url),
     'utf8',
   )
-  const objectWrite = source.indexOf("from('provider_objects')")
-  const linkingCall = source.indexOf('syncInvoiceLinkProposals({')
+  const objectWrite = source.indexOf('const { data: providerObject, error: objectError }')
+  const linkingCall = source.indexOf('const linking = await syncInvoiceLinkProposals({')
   assert.ok(objectWrite >= 0)
   assert.ok(linkingCall > objectWrite)
   assert.match(source, /from\('provider_object_links'\)/)
